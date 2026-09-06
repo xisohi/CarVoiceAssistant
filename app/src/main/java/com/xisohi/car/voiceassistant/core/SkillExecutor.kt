@@ -17,6 +17,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import androidx.core.content.ContextCompat
 import com.xisohi.car.voiceassistant.core.autoinput.AmapInputHandler
+import com.xisohi.car.voiceassistant.core.autoinput.BaiduMapInputHandler
 import com.xisohi.car.voiceassistant.core.autoinput.MusicFreeInputHandler
 import java.net.URLEncoder
 import java.text.SimpleDateFormat
@@ -342,7 +343,9 @@ class SkillExecutor(private val context: Context) {
      * 2. [高德车机版 专用] androidauto://, com.autonavi.amapauto
      *    - 车机版不支持 URI 自动填入搜索框，需配合 [AmapInputHandler] 无障碍服务
      *    - 支持的 URI scheme 是 androidauto（不是 amapauto 也不是 androidamap）
-     * 3. [百度地图] baidumap://, com.baidu.BaiduMap
+     * 3. [百度地图汽车版] baidumap://, com.baidu.naviauto
+     *    - 汽车版包名是 com.baidu.naviauto（不是普通版的 com.baidu.BaiduMap）
+     *    - 支持 baidumap:// scheme，尝试 URI 自动填入，失败则用无障碍服务
      * 4. [通用] 系统 geo: 协议
      *
      * 修改高德车机版相关逻辑时，只改第 2 层，不要影响其他层。
@@ -361,7 +364,7 @@ class SkillExecutor(private val context: Context) {
             return ExecutionResult(true, "正在用高德地图导航到${dest}")
         }
 
-        // 2. 高德车机版（优化）
+        // 2. 高德车机版（URI + 无障碍服务自动填入）
         // ⚠️ 关键：先设置待输入的目的地（无障碍服务会监听）
         AmapInputHandler.setPendingDestination(dest)
         // 同时复制到剪贴板作为兜底
@@ -394,19 +397,45 @@ class SkillExecutor(private val context: Context) {
         for (intent in amapAutoIntents) {
             if (tryStartActivity(intent)) {
                 // ✅ 成功拉起高德车机版
-                // 无障碍服务会在搜索页打开后自动填入dest并搜索
+                // 主动触发一次无障碍事件处理（高德地图主界面可能不自动触发事件）
+                AutoInputService.triggerAfterDelay(2000)
                 return ExecutionResult(true, "正在为您搜索${dest}")
             }
         }
 
-        // 3. 百度地图
-        val baidu = Intent(Intent.ACTION_VIEW).apply {
-            data = Uri.parse("baidumap://map/direction?destination=$encoded&mode=driving&src=voiceassistant")
-            setPackage("com.baidu.BaiduMap")
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
-        if (tryStartActivity(baidu)) {
-            return ExecutionResult(true, "正在用百度地图导航到${dest}")
+        // 3. 百度地图汽车版（包名 com.baidu.naviauto，支持 baidumap:// scheme）
+        // 先设置待输入的目的地（无障碍服务会监听，URI 自动填入失败时兜底）
+        BaiduMapInputHandler.setPendingDestination(dest)
+        // 同时复制到剪贴板作为兜底
+        copyToClipboard("导航目的地", dest)
+
+        val baiduIntents = listOf(
+            // 方式1：直接导航（最理想）
+            Intent(Intent.ACTION_VIEW).apply {
+                data = Uri.parse("baidumap://map/direction?destination=$encoded&mode=driving&src=voiceassistant")
+                setPackage("com.baidu.naviauto")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            },
+            // 方式2：搜索 POI
+            Intent(Intent.ACTION_VIEW).apply {
+                data = Uri.parse("baidumap://map/search?query=$encoded&src=voiceassistant")
+                setPackage("com.baidu.naviauto")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            },
+            // 方式3：地理编码
+            Intent(Intent.ACTION_VIEW).apply {
+                data = Uri.parse("baidumap://map/geocoder?address=$encoded&src=voiceassistant")
+                setPackage("com.baidu.naviauto")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+        )
+
+        for (intent in baiduIntents) {
+            if (tryStartActivity(intent)) {
+                // ✅ 成功拉起百度地图汽车版
+                // 如果 URI 能自动填入最好，否则无障碍服务会在搜索页打开后自动填入
+                return ExecutionResult(true, "正在用百度地图搜索${dest}")
+            }
         }
 
         // 4. 兜底：直接启动主界面
@@ -443,6 +472,16 @@ class SkillExecutor(private val context: Context) {
         }
     }
 
+    /** 检查应用是否已安装 */
+    private fun isAppInstalled(packageName: String): Boolean {
+        return try {
+            context.packageManager.getPackageInfo(packageName, 0)
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
     /** 复制文本到剪贴板 */
     private fun copyToClipboard(label: String, text: String) {
         try {
@@ -456,8 +495,9 @@ class SkillExecutor(private val context: Context) {
 
     /** 应用名到包名/Action 的映射表 */
     private val appMap = mapOf(
-        // 地图
-        "百度地图" to "com.baidu.BaiduMap",
+        // 地图（汽车版包名）
+        "百度地图" to "com.baidu.naviauto",
+        "百度地图汽车版" to "com.baidu.naviauto",
         "高德地图" to "com.autonavi.amapauto",
         "高德" to "com.autonavi.amapauto",
         // 音乐
