@@ -3,10 +3,13 @@ package com.xisohi.car.voiceassistant.core
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.graphics.Path
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import com.xisohi.car.voiceassistant.core.autoinput.AmapInputHandler
+import com.xisohi.car.voiceassistant.core.autoinput.BaiduMapInputHandler
 import com.xisohi.car.voiceassistant.core.autoinput.MusicFreeInputHandler
 
 /**
@@ -14,6 +17,7 @@ import com.xisohi.car.voiceassistant.core.autoinput.MusicFreeInputHandler
  *
  * 本类只负责事件分发和手势执行，具体 APP 的操作逻辑由独立的 Handler 实现：
  * - [AmapInputHandler]：高德地图车机版（导航自动填入）
+ * - [BaiduMapInputHandler]：百度地图汽车版（导航自动填入）
  * - [MusicFreeInputHandler]：MusicFree（搜索播放）
  *
  * 新增 APP 支持时：
@@ -68,6 +72,14 @@ class AutoInputService : AccessibilityService() {
             service.dispatchGesture(gesture, null, null)
             Log.d(TAG, "模拟长按: ($x, $y), 时长=${duration}ms")
         }
+
+        /**
+         * 主动触发一次事件处理（用于拉起 APP 后，界面没有自动触发无障碍事件的情况）。
+         * @param delayMs 延迟毫秒数
+         */
+        fun triggerAfterDelay(delayMs: Long) {
+            instance?.triggerAfterDelay(delayMs)
+        }
     }
 
     override fun onServiceConnected() {
@@ -80,15 +92,19 @@ class AutoInputService : AccessibilityService() {
     /** 已注册的 APP 处理器列表 */
     private val handlers = listOf(
         AmapInputHandler(),
+        BaiduMapInputHandler(),
         MusicFreeInputHandler()
     )
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
         val packageName = event.packageName?.toString() ?: return
-        val rootNode = rootInActiveWindow ?: return
+        val rootNode = rootInActiveWindow
+        if (rootNode == null) {
+            return
+        }
         currentRootNode = rootNode
 
-        // 分发给对应 APP 的 Handler
+        // 分发给对应 APP 的 Handler（只有有 pendingTask 时才处理）
         for (handler in handlers) {
             if (handler.targetPackage == packageName && handler.hasPendingTask()) {
                 Log.d(TAG, "分发事件给 ${handler.targetPackage}")
@@ -96,6 +112,50 @@ class AutoInputService : AccessibilityService() {
                 return
             }
         }
+    }
+
+    /**
+     * 主动触发一次事件处理（用于拉起 APP 后，界面没有自动触发无障碍事件的情况）。
+     * 延迟指定毫秒后，检查当前窗口，如果有 pendingTask，就调用 handle 方法。
+     */
+    fun triggerAfterDelay(delayMs: Long) {
+        Handler(Looper.getMainLooper()).postDelayed({
+            try {
+                val rootNode = rootInActiveWindow
+                val packageName = rootNode?.packageName?.toString()
+                if (rootNode != null && packageName != null) {
+                    currentRootNode = rootNode
+                    Log.d(TAG, "主动触发: pkg=$packageName")
+                    for (handler in handlers) {
+                        if (handler.targetPackage == packageName && handler.hasPendingTask()) {
+                            Log.d(TAG, "主动分发给 ${handler.targetPackage}")
+                            handler.handle(AccessibilityEvent.obtain(), rootNode)
+                            return@postDelayed
+                        }
+                    }
+                } else {
+                    Log.d(TAG, "主动触发: rootNode 为 null，重试一次")
+                    // 再延迟一次
+                    Handler(Looper.getMainLooper()).postDelayed({
+                        try {
+                            val root2 = rootInActiveWindow
+                            val pkg2 = root2?.packageName?.toString()
+                            if (root2 != null && pkg2 != null) {
+                                currentRootNode = root2
+                                for (handler in handlers) {
+                                    if (handler.targetPackage == pkg2 && handler.hasPendingTask()) {
+                                        handler.handle(AccessibilityEvent.obtain(), root2)
+                                        return@postDelayed
+                                    }
+                                }
+                            }
+                        } catch (_: Exception) {}
+                    }, 1500)
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "主动触发失败: ${e.message}")
+            }
+        }, delayMs)
     }
 
     override fun onInterrupt() {
