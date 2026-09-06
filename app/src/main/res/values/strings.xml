@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">车载语音助手</string>
+    <string name="accessibility_description">用于在高德地图车机版中自动填入语音识别出的导航目的地，无需手动输入。</string>
 </resources>

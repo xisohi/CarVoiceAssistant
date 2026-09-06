@@ -10,7 +10,11 @@ import android.media.AudioManager
 import android.net.Uri
 import android.net.wifi.WifiManager
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.text.TextUtils
+import android.content.ClipData
+import android.content.ClipboardManager
 import androidx.core.content.ContextCompat
 import java.net.URLEncoder
 import java.text.SimpleDateFormat
@@ -104,69 +108,175 @@ class SkillExecutor(private val context: Context) {
 
     // ---------- 媒体 ----------
 
+    private val mainHandler = Handler(Looper.getMainLooper())
+
     /**
      * 音乐控制。
-     * PLAY 操作：先尝试启动默认音乐播放器，再发送播放按键。
-     * PAUSE/NEXT/PREVIOUS：直接发送媒体按键（控制当前活跃播放器）。
+     * PLAY 操作：先启动音乐播放器，延迟 1.5 秒再发播放按键（等 MediaSession 初始化）。
+     * PAUSE/NEXT/PREVIOUS：立即发送媒体按键。
+     * 按键同时通过 dispatchMediaKeyEvent 和 ACTION_MEDIA_BUTTON 广播发送，增加成功率。
      */
     private fun mediaKey(keyCode: Int): ExecutionResult {
         val label = when (keyCode) {
-            android.view.KeyEvent.KEYCODE_MEDIA_PLAY -> "已播放"
+            android.view.KeyEvent.KEYCODE_MEDIA_PLAY -> "正在打开音乐"
             android.view.KeyEvent.KEYCODE_MEDIA_PAUSE -> "已暂停"
             android.view.KeyEvent.KEYCODE_MEDIA_NEXT -> "下一首"
             android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS -> "上一首"
             else -> "好的"
         }
         return try {
-            // PLAY 时先尝试启动默认音乐播放器（避免后台没有播放器时按键无人接收）
             if (keyCode == android.view.KeyEvent.KEYCODE_MEDIA_PLAY) {
+                // 启动播放器，延迟后再发播放按键（给 MediaSession 初始化时间）
                 launchMusicPlayer()
+                mainHandler.postDelayed({ dispatchMediaKey(keyCode) }, 2500)
+            } else {
+                dispatchMediaKey(keyCode)
             }
-            // 发送媒体按键到当前活跃的 MediaSession
-            val down = android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, keyCode)
-            val up = android.view.KeyEvent(android.view.KeyEvent.ACTION_UP, keyCode)
-            audioManager.dispatchMediaKeyEvent(down)
-            audioManager.dispatchMediaKeyEvent(up)
             ExecutionResult(true, label)
         } catch (e: Exception) {
             ExecutionResult(false, "音乐控制失败：${e.message ?: "未知错误"}")
         }
     }
 
-    /** 尝试启动系统默认音乐播放器，失败则静默忽略 */
+    /** 发送媒体按键：dispatchMediaKeyEvent + 指定包名的 ACTION_MEDIA_BUTTON 广播 */
+    private fun dispatchMediaKey(keyCode: Int) {
+        val down = android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, keyCode)
+        val up = android.view.KeyEvent(android.view.KeyEvent.ACTION_UP, keyCode)
+        try {
+            audioManager.dispatchMediaKeyEvent(down)
+            audioManager.dispatchMediaKeyEvent(up)
+        } catch (_: Exception) {
+        }
+        // Android 9+ 不指定包名的媒体按键广播会被系统拦截，
+        // 需要逐个指定常见播放器包名发送
+        val packages = listOf(
+            "fun.upup.musicfree",
+            "com.netease.cloudmusic",
+            "com.tencent.qqmusic",
+            "com.kugou.android",
+            "cn.kuwo.player"
+        )
+        for (pkg in packages) {
+            try {
+                val downIntent = Intent(Intent.ACTION_MEDIA_BUTTON)
+                    .setPackage(pkg)
+                    .putExtra(Intent.EXTRA_KEY_EVENT, down)
+                val upIntent = Intent(Intent.ACTION_MEDIA_BUTTON)
+                    .setPackage(pkg)
+                    .putExtra(Intent.EXTRA_KEY_EVENT, up)
+                context.sendBroadcast(downIntent)
+                context.sendBroadcast(upIntent)
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    /** 尝试启动音乐播放器：先默认播放器，再依次尝试常见播放器包名 */
     private fun launchMusicPlayer() {
+        // 1. 系统默认音乐播放器
         try {
             val intent = Intent(Intent.ACTION_MAIN).apply {
                 addCategory(Intent.CATEGORY_APP_MUSIC)
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             context.startActivity(intent)
+            return
         } catch (_: Exception) {
-            // 没有默认音乐播放器，忽略；dispatchMediaKeyEvent 仍可能控制后台播放器
+            // 没有默认播放器，继续尝试具体包名
         }
+
+        // 2. 依次尝试常见音乐播放器包名
+        val packages = listOf(
+            "fun.upup.musicfree",          // MusicFree
+            "com.netease.cloudmusic",      // 网易云音乐
+            "com.tencent.qqmusic",         // QQ音乐
+            "com.kugou.android",           // 酷狗音乐
+            "cn.kuwo.player",              // 酷我音乐
+            "com.android.music"            // 系统音乐
+        )
+        for (pkg in packages) {
+            try {
+                val intent = context.packageManager.getLaunchIntentForPackage(pkg)
+                if (intent != null) {
+                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    context.startActivity(intent)
+                    return
+                }
+            } catch (_: Exception) {
+                // 这个包名不存在，继续试下一个
+            }
+        }
+        // 都没找到：忽略，dispatchMediaKeyEvent 仍可能控制后台播放器
     }
 
     // ---------- 导航 ----------
 
     /**
-     * 拉起导航。优先尝试高德地图、百度地图的专用协议，
-     * 都不可用时回退到 geo: 系统通用协议（会弹出应用选择器）。
+     * 拉起导航。依次尝试：
+     * 1. 高德地图手机版 (androidamap://, com.autonavi.minimap)
+     * 2. 高德地图车机版 (amapauto:// / androidamap://, com.autonavi.amapauto)
+     * 3. 百度地图 (baidumap://, com.baidu.BaiduMap)
+     * 4. 系统 geo: 通用协议（不指定包名，让系统选择）
      */
     private fun navigate(dest: String): ExecutionResult {
         if (dest.isBlank()) return ExecutionResult(false, "请告诉我目的地")
         val encoded = URLEncoder.encode(dest, "UTF-8")
 
-        // 1. 高德地图
-        val amap = Intent(Intent.ACTION_VIEW).apply {
+        // 1. 高德地图手机版
+        val amapMobile = Intent(Intent.ACTION_VIEW).apply {
             data = Uri.parse("androidamap://route?sourceApplication=voiceassistant&dname=$encoded&dev=0&t=0")
             setPackage("com.autonavi.minimap")
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
-        if (tryStartActivity(amap)) {
+        if (tryStartActivity(amapMobile)) {
             return ExecutionResult(true, "正在用高德地图导航到${dest}")
         }
 
-        // 2. 百度地图
+        // 2. 高德地图车机版（androidauto:// URI，poi 搜索可打开搜索页）
+        // 设置待自动输入的目的地（无障碍服务会在搜索页打开后自动填入并搜索）
+        AutoInputService.setPendingDestination(dest)
+        // 同时复制到剪贴板作为兜底
+        copyToClipboard("导航目的地", dest)
+        val amapAutoIntents = listOf(
+            // poi 搜索（已验证可打开搜索页；同时通过 extra 尝试传关键词，部分版本可能支持）
+            Intent(Intent.ACTION_VIEW).apply {
+                data = Uri.parse("androidauto://poi?keyword=$encoded")
+                setPackage("com.autonavi.amapauto")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                putExtra("keyword", dest)
+                putExtra("query", dest)
+                putExtra("search", dest)
+                putExtra(Intent.EXTRA_TEXT, dest)
+            },
+            // 导航（多种参数名备选，可能在某些版本可用）
+            Intent(Intent.ACTION_VIEW).apply {
+                data = Uri.parse("androidauto://navi?to=$encoded")
+                setPackage("com.autonavi.amapauto")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            },
+            Intent(Intent.ACTION_VIEW).apply {
+                data = Uri.parse("androidauto://navi?destination=$encoded")
+                setPackage("com.autonavi.amapauto")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            },
+            Intent(Intent.ACTION_VIEW).apply {
+                data = Uri.parse("androidauto://navigation?destination=$encoded")
+                setPackage("com.autonavi.amapauto")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            },
+            Intent(Intent.ACTION_VIEW).apply {
+                data = Uri.parse("androidauto://route?destination=$encoded")
+                setPackage("com.autonavi.amapauto")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+        )
+        for (intent in amapAutoIntents) {
+            if (tryStartActivity(intent)) {
+                return ExecutionResult(true, "正在为您搜索${dest}")
+            }
+        }
+
+        // 3. 百度地图
         val baidu = Intent(Intent.ACTION_VIEW).apply {
             data = Uri.parse("baidumap://map/direction?destination=$encoded&mode=driving&src=voiceassistant")
             setPackage("com.baidu.BaiduMap")
@@ -176,13 +286,25 @@ class SkillExecutor(private val context: Context) {
             return ExecutionResult(true, "正在用百度地图导航到${dest}")
         }
 
-        // 3. 回退：系统 geo: 协议
+        // 4. 回退：系统 geo: 协议（不指定包名，让系统选择能处理的地图应用）
         val geo = Intent(Intent.ACTION_VIEW, Uri.parse("geo:0,0?q=$encoded")).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
-        return if (tryStartActivity(geo)) {
-            ExecutionResult(true, "正在为您导航到${dest}")
-        } else {
+        if (tryStartActivity(geo)) {
+            return ExecutionResult(true, "正在为您导航到${dest}")
+        }
+
+        // 5. 最终兜底：直接启动高德车机版主界面（车机版可能不支持标准 URI 协议）
+        return try {
+            val launchIntent = context.packageManager.getLaunchIntentForPackage("com.autonavi.amapauto")
+            if (launchIntent != null) {
+                launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                context.startActivity(launchIntent)
+                ExecutionResult(true, "已打开高德地图，请手动输入目的地：${dest}")
+            } else {
+                ExecutionResult(false, "未找到可用的导航应用，请先安装高德或百度地图")
+            }
+        } catch (e: Exception) {
             ExecutionResult(false, "未找到可用的导航应用，请先安装高德或百度地图")
         }
     }
@@ -190,10 +312,27 @@ class SkillExecutor(private val context: Context) {
     /** 尝试启动 Activity，成功返回 true；没有能处理的应用时返回 false */
     private fun tryStartActivity(intent: Intent): Boolean {
         return try {
+            // 先检查是否有能处理的 Activity
+            val resolveInfo = context.packageManager.resolveActivity(intent, 0)
+            if (resolveInfo == null) {
+                android.util.Log.w("SkillExecutor", "无应用处理: ${intent.data} (pkg=${intent.`package`})")
+                return false
+            }
+            android.util.Log.d("SkillExecutor", "拉起: ${intent.data} -> ${resolveInfo.activityInfo.packageName}/${resolveInfo.activityInfo.name}")
             context.startActivity(intent)
             true
         } catch (e: Exception) {
+            android.util.Log.w("SkillExecutor", "启动失败: ${intent.data}, 错误: ${e.message}")
             false
+        }
+    }
+
+    /** 复制文本到剪贴板 */
+    private fun copyToClipboard(label: String, text: String) {
+        try {
+            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            clipboard.setPrimaryClip(ClipData.newPlainText(label, text))
+        } catch (_: Exception) {
         }
     }
 

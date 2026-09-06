@@ -14,7 +14,7 @@ import org.vosk.Recognizer
  * 唤醒词引擎（Vosk 自由识别 + 关键词匹配）。
  *
  * 不用 grammar 限定模式：vosk-model-small-cn 是基于字的模型，
- * grammar 要求词必须在词表中，"你好小乐"这类词组会被忽略
+ * grammar 要求词必须在词表中，"小爱同学"这类词组会被忽略
  * （日志会报 "Ignoring word missing in vocabulary"）。
  *
  * 改为自由识别，在 partialResult / result 中检查是否包含唤醒词。
@@ -22,7 +22,7 @@ import org.vosk.Recognizer
  * Recognizer，保证同时只有一个 Vosk Recognizer 在跑，内存可控。
  *
  * 模型：与 ASR 共用同一个 Vosk 中文模型（vosk-model-small-cn-0.22）。
- * 唤醒词：当前硬编码为 ["你好小乐"]，后续可改为从配置文件读取。
+ * 唤醒词：当前硬编码为 ["小爱同学"]，后续可改为从配置文件读取。
  */
 class WakeWordEngine(private val context: Context) {
 
@@ -32,7 +32,7 @@ class WakeWordEngine(private val context: Context) {
 
     companion object {
         /** 唤醒词列表（可扩展为从配置文件读取） */
-        val WAKE_WORDS = listOf("你好小乐")
+        val WAKE_WORDS = listOf("小爱同学")
         private const val SAMPLE_RATE = 16000
         private const val CHUNK_SIZE = 512
     }
@@ -53,7 +53,7 @@ class WakeWordEngine(private val context: Context) {
         val modelDir = ModelManager.findAsrModelDir(context) ?: return false
         return try {
             model = Model(modelDir.absolutePath)
-            // 自由识别（不用 grammar），small-cn 基于字，能输出"你好小乐"
+            // 自由识别（不用 grammar），small-cn 基于字，能输出"小爱同学"
             recognizer = Recognizer(model, SAMPLE_RATE.toFloat())
 
             running = true

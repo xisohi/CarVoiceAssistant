@@ -1,15 +1,22 @@
 package com.xisohi.car.voiceassistant
 
 import android.Manifest
+import android.accessibilityservice.AccessibilityServiceInfo
+import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.provider.Settings
+import android.view.accessibility.AccessibilityManager
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import com.xisohi.car.voiceassistant.core.AutoInputService
 import com.xisohi.car.voiceassistant.core.VoiceAssistantService
 import com.xisohi.car.voiceassistant.databinding.ActivityMainBinding
 import com.xisohi.car.voiceassistant.download.ModelDownloader
@@ -50,6 +57,7 @@ class MainActivity : AppCompatActivity() {
 
         ensurePermissions()
         refreshModelState()
+        refreshPermissionState()
 
         binding.btnDownload.setOnClickListener { startDownload() }
         binding.btnToggleService.setOnClickListener {
@@ -57,17 +65,29 @@ class MainActivity : AppCompatActivity() {
                 VoiceAssistantService.stop(this)
             } else {
                 if (ModelManager.isModelReady(this)) {
+                    // 检查悬浮窗权限
+                    if (!canDrawOverlays()) {
+                        toast("请先授予悬浮窗权限")
+                        openOverlaySettings()
+                        return@setOnClickListener
+                    }
                     VoiceAssistantService.start(this)
                 } else {
                     toast("请先下载离线语音包")
                 }
             }
         }
+
+        // 无障碍服务授权按钮
+        binding.btnAccessibility.setOnClickListener {
+            openAccessibilitySettings()
+        }
     }
 
     override fun onResume() {
         super.onResume()
         handler.post(stateRefresher)
+        refreshPermissionState()
     }
 
     override fun onPause() {
@@ -104,6 +124,59 @@ class MainActivity : AppCompatActivity() {
             binding.tvModelState.text = "未检测到离线语音包"
             binding.btnDownload.isEnabled = true
         }
+    }
+
+    // ---------- 权限状态 ----------
+
+    private fun refreshPermissionState() {
+        // 悬浮窗权限
+        if (canDrawOverlays()) {
+            binding.tvOverlayState.text = "● 已授权"
+        } else {
+            binding.tvOverlayState.text = "○ 未授权（点击授权）"
+        }
+        // 无障碍服务
+        if (isAccessibilityEnabled()) {
+            binding.tvAccessibilityState.text = "● 已启用（导航自动填入）"
+            binding.btnAccessibility.text = "无障碍服务已启用"
+        } else {
+            binding.tvAccessibilityState.text = "○ 未启用（导航需手动输入）"
+            binding.btnAccessibility.text = "去启用无障碍服务"
+        }
+    }
+
+    private fun canDrawOverlays(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            Settings.canDrawOverlays(this)
+        } else {
+            true
+        }
+    }
+
+    private fun openOverlaySettings() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val intent = Intent(
+                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                Uri.parse("package:$packageName")
+            )
+            startActivity(intent)
+        }
+    }
+
+    private fun isAccessibilityEnabled(): Boolean {
+        val am = getSystemService(Context.ACCESSIBILITY_SERVICE) as AccessibilityManager
+        val enabledServices = am.getEnabledAccessibilityServiceList(
+            AccessibilityServiceInfo.FEEDBACK_ALL_MASK
+        )
+        return enabledServices.any {
+            it.resolveInfo?.serviceInfo?.packageName == packageName
+        }
+    }
+
+    private fun openAccessibilitySettings() {
+        val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+        startActivity(intent)
+        toast("请在列表中找到「车载语音助手」并启用")
     }
 
     // ---------- 首次下载 ----------

@@ -41,6 +41,7 @@ class VoiceAssistantService : Service() {
     companion object {
         const val ACTION_START = "com.xisohi.car.voiceassistant.action.START"
         const val ACTION_STOP = "com.xisohi.car.voiceassistant.action.STOP"
+        const val ACTION_WAKE_TRIGGER = "com.xisohi.car.voiceassistant.action.WAKE_TRIGGER"
         private const val CHANNEL_ID = "voice_assistant"
         private const val NOTIF_ID = 1
         private const val MAX_RECORD_MS = 10_000L
@@ -108,10 +109,22 @@ class VoiceAssistantService : Service() {
                 stopSelf()
                 return START_NOT_STICKY
             }
+            ACTION_WAKE_TRIGGER -> {
+                // 悬浮球点击触发唤醒
+                if (currentState == State.IDLE) {
+                    onWakeWord()
+                }
+                return START_STICKY
+            }
         }
         startForegroundCompat()
         currentState = State.IDLE
         resumeWake()
+        // 启动悬浮窗
+        try {
+            FloatViewService.start(this)
+        } catch (_: Exception) {
+        }
         return START_STICKY
     }
 
@@ -208,6 +221,7 @@ class VoiceAssistantService : Service() {
             val startMs = SystemClock.elapsedRealtime()
             var lastPartial = ""
 
+            var finalText = ""
             try {
                 loop@ while (true) {
                     val n = record.read(shortBuf, 0, shortBuf.size)
@@ -227,9 +241,8 @@ class VoiceAssistantService : Service() {
                         break@loop
                     }
                 }
-                val finalText = recognizer.finish()
+                finalText = recognizer.finish()
                 android.util.Log.d("VoiceService", "最终识别文本: '$finalText'")
-                withContext(Dispatchers.Main) { handleText(finalText) }
             } finally {
                 try {
                     record.stop()
@@ -239,6 +252,8 @@ class VoiceAssistantService : Service() {
                 recognizer.release()
                 recognitionJob = null
             }
+            // 必须在麦克风释放后再处理结果，否则恢复唤醒时 AudioRecord 抢不到麦克风
+            withContext(Dispatchers.Main) { handleText(finalText) }
         }
     }
 
