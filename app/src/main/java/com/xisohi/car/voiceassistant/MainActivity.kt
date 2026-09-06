@@ -65,6 +65,8 @@ class MainActivity : AppCompatActivity() {
         refreshPermissionState()
 
         binding.btnDownload.setOnClickListener { startDownload() }
+        // MainActivity.kt - 增强启动检查
+
         binding.btnToggleService.setOnClickListener {
             if (VoiceAssistantService.isRunning) {
                 VoiceAssistantService.stop(this)
@@ -76,8 +78,13 @@ class MainActivity : AppCompatActivity() {
                         openOverlaySettings()
                         return@setOnClickListener
                     }
+                    // ✅ 提示启用无障碍服务（如果未启用）
+                    if (!isAccessibilityEnabled()) {
+                        toast("建议启用无障碍服务以获得完整的导航自动输入体验")
+                        // 可以选择强制跳转到无障碍设置
+                        // openAccessibilitySettings()
+                    }
                     VoiceAssistantService.start(this)
-                    // 启动服务后关闭主界面，回到桌面，只保留悬浮窗
                     handler.postDelayed({ finish() }, 500)
                 } else {
                     toast("请先下载离线语音包")

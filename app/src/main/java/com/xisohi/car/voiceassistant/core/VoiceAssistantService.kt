@@ -353,26 +353,40 @@ class VoiceAssistantService : Service() {
                 }
                 return
             }
-            // 读取搜索结果
+            // 搜索完成后再多等 2 秒，确保搜索结果页加载完成
+            kotlinx.coroutines.delay(2000)
+            // 点击"单曲"分类，切换到歌曲列表视图
+            val clickedSingle = MusicFreeInputHandler.clickSingleTab()
+            android.util.Log.d("VoiceService", "点击'单曲'分类结果: $clickedSingle")
+            // 等待歌曲列表加载
+            kotlinx.coroutines.delay(3000)
+            // 读取搜索结果（自动跳过音乐源名称行，只识别真正的歌曲）
             val results = MusicFreeInputHandler.getSearchResults()
-            if (results.isEmpty()) {
+            // 如果没有结果，尝试不点击分类直接读取
+            val finalResults = if (results.isEmpty()) {
+                android.util.Log.d("VoiceService", "点击分类后无结果，尝试直接读取")
+                MusicFreeInputHandler.getSearchResults()
+            } else {
+                results
+            }
+            if (finalResults.isEmpty()) {
                 withContext(Dispatchers.Main) {
                     ttsEngine.speak("没有找到相关歌曲")
                 }
                 return
             }
             // 进入多轮对话选择状态
-            pendingSongResults = results
+            pendingSongResults = finalResults
             isWaitingForSongSelection = true
             // 播报结果列表
             val prompt = buildString {
-                append("找到${results.size}首，")
-                results.take(5).forEachIndexed { index, song ->
+                append("找到${finalResults.size}首，")
+                finalResults.take(5).forEachIndexed { index, song ->
                     append("第${index + 1}首，${song.title}")
                     if (song.artist.isNotEmpty()) append("，${song.artist}")
                     append("；")
                 }
-                if (results.size > 5) append("等${results.size}首。")
+                if (finalResults.size > 5) append("等${finalResults.size}首。")
                 append("请问播放第几首？")
             }
             android.util.Log.d("VoiceService", "搜索结果播报: $prompt")

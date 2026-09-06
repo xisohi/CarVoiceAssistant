@@ -351,7 +351,7 @@ class SkillExecutor(private val context: Context) {
         if (dest.isBlank()) return ExecutionResult(false, "请告诉我目的地")
         val encoded = URLEncoder.encode(dest, "UTF-8")
 
-        // 1. 高德地图手机版
+        // 1. 高德手机版（不变）
         val amapMobile = Intent(Intent.ACTION_VIEW).apply {
             data = Uri.parse("androidamap://route?sourceApplication=voiceassistant&dname=$encoded&dev=0&t=0")
             setPackage("com.autonavi.minimap")
@@ -361,46 +361,40 @@ class SkillExecutor(private val context: Context) {
             return ExecutionResult(true, "正在用高德地图导航到${dest}")
         }
 
-        // 2. 高德地图车机版（androidauto:// URI，poi 搜索可打开搜索页）
-        // 设置待自动输入的目的地（无障碍服务会在搜索页打开后自动填入并搜索）
+        // 2. 高德车机版（优化）
+        // ⚠️ 关键：先设置待输入的目的地（无障碍服务会监听）
         AmapInputHandler.setPendingDestination(dest)
         // 同时复制到剪贴板作为兜底
         copyToClipboard("导航目的地", dest)
+
+        // 使用多个URI尝试，增加成功率
         val amapAutoIntents = listOf(
-            // poi 搜索（已验证可打开搜索页；同时通过 extra 尝试传关键词，部分版本可能支持）
+            // 方式1：poi搜索（最常用）
             Intent(Intent.ACTION_VIEW).apply {
                 data = Uri.parse("androidauto://poi?keyword=$encoded")
                 setPackage("com.autonavi.amapauto")
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 putExtra("keyword", dest)
                 putExtra("query", dest)
-                putExtra("search", dest)
-                putExtra(Intent.EXTRA_TEXT, dest)
             },
-            // 导航（多种参数名备选，可能在某些版本可用）
-            Intent(Intent.ACTION_VIEW).apply {
-                data = Uri.parse("androidauto://navi?to=$encoded")
-                setPackage("com.autonavi.amapauto")
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            },
+            // 方式2：直接导航（部分版本支持）
             Intent(Intent.ACTION_VIEW).apply {
                 data = Uri.parse("androidauto://navi?destination=$encoded")
                 setPackage("com.autonavi.amapauto")
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             },
+            // 方式3：搜索页（备用）
             Intent(Intent.ACTION_VIEW).apply {
-                data = Uri.parse("androidauto://navigation?destination=$encoded")
-                setPackage("com.autonavi.amapauto")
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            },
-            Intent(Intent.ACTION_VIEW).apply {
-                data = Uri.parse("androidauto://route?destination=$encoded")
+                data = Uri.parse("androidauto://search?keyword=$encoded")
                 setPackage("com.autonavi.amapauto")
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
         )
+
         for (intent in amapAutoIntents) {
             if (tryStartActivity(intent)) {
+                // ✅ 成功拉起高德车机版
+                // 无障碍服务会在搜索页打开后自动填入dest并搜索
                 return ExecutionResult(true, "正在为您搜索${dest}")
             }
         }
@@ -415,26 +409,19 @@ class SkillExecutor(private val context: Context) {
             return ExecutionResult(true, "正在用百度地图导航到${dest}")
         }
 
-        // 4. 回退：系统 geo: 协议（不指定包名，让系统选择能处理的地图应用）
-        val geo = Intent(Intent.ACTION_VIEW, Uri.parse("geo:0,0?q=$encoded")).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
-        if (tryStartActivity(geo)) {
-            return ExecutionResult(true, "正在为您导航到${dest}")
-        }
-
-        // 5. 最终兜底：直接启动高德车机版主界面（车机版可能不支持标准 URI 协议）
+        // 4. 兜底：直接启动主界面
         return try {
             val launchIntent = context.packageManager.getLaunchIntentForPackage("com.autonavi.amapauto")
             if (launchIntent != null) {
                 launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 context.startActivity(launchIntent)
-                ExecutionResult(true, "已打开高德地图，请手动输入目的地：${dest}")
+                // ⚠️ 启动主界面后，无障碍服务仍然会检测到搜索框并自动填入
+                ExecutionResult(true, "已打开高德地图，正在为您搜索${dest}")
             } else {
-                ExecutionResult(false, "未找到可用的导航应用，请先安装高德或百度地图")
+                ExecutionResult(false, "未找到高德地图车机版，请先安装")
             }
         } catch (e: Exception) {
-            ExecutionResult(false, "未找到可用的导航应用，请先安装高德或百度地图")
+            ExecutionResult(false, "打开导航失败：${e.message}")
         }
     }
 

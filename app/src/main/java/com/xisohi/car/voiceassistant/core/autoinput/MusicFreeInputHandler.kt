@@ -123,21 +123,111 @@ class MusicFreeInputHandler : AutoInputHandler() {
             }
         }
 
+        /**
+         * 点击"单曲"分类标签，切换到歌曲列表视图。
+         * 搜索结果页默认显示分类标签（单曲/专辑/作者/歌单）和音乐源，
+         * 需要先点击"单曲"才能看到真正的歌曲列表。
+         * @return 是否成功点击
+         */
+        fun clickSingleTab(): Boolean {
+            val rootNode = AutoInputService.currentRootNode ?: return false
+            return try {
+                val tab = findTextNode(rootNode, "单曲")
+                if (tab != null) {
+                    Log.d(TAG, "找到'单曲'分类，点击")
+                    // 先尝试 ACTION_CLICK
+                    tab.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    // 再用手势点击
+                    val rect = Rect()
+                    tab.getBoundsInScreen(rect)
+                    val centerX = (rect.left + rect.right) / 2f
+                    val centerY = (rect.top + rect.bottom) / 2f
+                    AutoInputService.tap(centerX, centerY)
+                    true
+                } else {
+                    Log.w(TAG, "未找到'单曲'分类")
+                    false
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "点击'单曲'分类失败: ${e.message}")
+                false
+            }
+        }
+
+        /** 按文本查找节点（精确匹配） */
+        private fun findTextNode(node: AccessibilityNodeInfo, text: String): AccessibilityNodeInfo? {
+            val nodeText = node.text?.toString()?.trim() ?: ""
+            if (nodeText == text) return node
+            for (i in 0 until node.childCount) {
+                val child = node.getChild(i) ?: continue
+                val found = findTextNode(child, text)
+                if (found != null) return found
+            }
+            return null
+        }
+
+        /**
+         * 点击指定的音乐源（如"酷我"、"酷狗音乐"、"bilibili"等）。
+         * 搜索结果页按音乐源分组，需要先点击音乐源才能看到该源下的完整歌曲列表。
+         * @param sourceName 音乐源名称
+         * @return 是否成功点击
+         */
+        fun clickMusicSource(sourceName: String): Boolean {
+            val rootNode = AutoInputService.currentRootNode ?: return false
+            return try {
+                val source = findTextNode(rootNode, sourceName)
+                if (source != null) {
+                    Log.d(TAG, "找到音乐源'$sourceName'，点击")
+                    // 先尝试 ACTION_CLICK
+                    source.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    // 再用手势点击
+                    val rect = Rect()
+                    source.getBoundsInScreen(rect)
+                    val centerX = (rect.left + rect.right) / 2f
+                    val centerY = (rect.top + rect.bottom) / 2f
+                    AutoInputService.tap(centerX, centerY)
+                    true
+                } else {
+                    Log.w(TAG, "未找到音乐源'$sourceName'")
+                    false
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "点击音乐源'$sourceName'失败: ${e.message}")
+                false
+            }
+        }
+
         /** 递归收集搜索结果 */
         private fun collectSearchResults(node: AccessibilityNodeInfo, results: MutableList<SongInfo>, max: Int) {
             if (results.size >= max) return
             // 搜索结果通常是可点击的 ViewGroup，包含歌曲名和歌手名
             if (node.isClickable && node.childCount > 0) {
-                val desc = node.contentDescription?.toString() ?: ""
-                val text = node.text?.toString() ?: ""
-                // 跳过搜索框、搜索按钮、历史记录等
-                if (desc.contains("搜索") || text.contains("搜索") ||
-                    text == "历史记录" || text == "清空" ||
-                    node.className == "android.widget.EditText") {
-                    // 继续遍历子节点
-                } else if (desc.isNotEmpty() || hasSongText(node)) {
+                val desc = node.contentDescription?.toString()?.trim() ?: ""
+                val text = node.text?.toString()?.trim() ?: ""
+                // 跳过搜索框、搜索按钮、清空按钮、历史记录等 UI 元素
+                val isUiElement = desc.contains("搜索") || text.contains("搜索") ||
+                    desc.contains("清空") || text.contains("清空") ||
+                    text == "历史记录" || desc == "历史记录" ||
+                    node.className == "android.widget.EditText"
+                if (!isUiElement && (desc.isNotEmpty() || hasSongText(node))) {
                     val song = parseSongInfo(node, results.size + 1)
-                    if (song != null && results.none { it.title == song.title && it.artist == song.artist }) {
+                    // 过滤掉无效结果：
+                    // - 标题为空、只有换行符
+                    // - title == artist（分类标签如"单曲-单曲"、音乐源如"酷我-酷我"）
+                    // - 已知的分类标签和音乐源（作为标题）
+                    // - 歌手名是音乐源名称（如"小城故事-酷我"，这是音乐源分组，不是真正的歌曲）
+                    // - 已存在的重复结果
+                    val musicSources = listOf("酷我", "酷狗音乐", "bilibili", "网易音乐",
+                        "开心汽水", "猫耳FM", "咪咕音乐", "QQ音乐", "千千音乐", "5sing",
+                        "酷我畅听", "酷狗", "网易云音乐", "咪咕", "汽水音乐")
+                    val isCategoryOrSource = song?.title == song?.artist ||
+                        song?.title in listOf("单曲", "专辑", "作者", "歌单") + musicSources ||
+                        song?.artist in musicSources
+                    if (song != null &&
+                        song.title.isNotBlank() &&
+                        song.title != "\n" &&
+                        !isCategoryOrSource &&
+                        results.none { it.title == song.title && it.artist == song.artist }) {
                         results.add(song)
                     }
                 }
@@ -170,7 +260,8 @@ class MusicFreeInputHandler : AutoInputHandler() {
                     return SongInfo(title, artist, index)
                 }
             }
-            // 从子 TextView 提取，第一个是歌曲名，第二个是歌手名
+            // 从子 TextView 提取
+            // MusicFree 搜索结果结构：子[0]=歌曲名, 子[1]=音乐源(酷我/酷狗...), 子[2]=歌手名-专辑名
             val texts = mutableListOf<String>()
             for (i in 0 until node.childCount) {
                 val child = node.getChild(i) ?: continue
@@ -180,7 +271,21 @@ class MusicFreeInputHandler : AutoInputHandler() {
             }
             if (texts.isNotEmpty()) {
                 val title = texts[0]
-                val artist = if (texts.size > 1) texts[1] else ""
+                // 判断是否是 MusicFree 搜索结果结构（第二个是音乐源名称）
+                val musicSources = listOf("酷我", "酷狗音乐", "bilibili", "网易音乐",
+                    "开心汽水", "猫耳FM", "咪咕音乐", "QQ音乐", "千千音乐", "5sing",
+                    "酷我畅听", "酷狗", "网易云音乐", "咪咕", "汽水音乐", "腾讯音乐", "千千")
+                val isMusicFreeStructure = texts.size >= 3 && texts[1] in musicSources
+                val artist = if (isMusicFreeStructure) {
+                    // 第三个是歌手名-专辑名，只取歌手名部分（"-"前面的部分）
+                    val fullArtist = texts[2]
+                    val dashIndex = fullArtist.indexOf(" - ")
+                    if (dashIndex > 0) fullArtist.substring(0, dashIndex).trim() else fullArtist.trim()
+                } else if (texts.size > 1) {
+                    texts[1]
+                } else {
+                    ""
+                }
                 return SongInfo(title, artist, index)
             }
             return null
@@ -197,12 +302,16 @@ class MusicFreeInputHandler : AutoInputHandler() {
         private fun collectClickableSongNodes(node: AccessibilityNodeInfo, results: MutableList<AccessibilityNodeInfo>, max: Int) {
             if (results.size >= max) return
             if (node.isClickable && node.childCount > 0) {
-                val desc = node.contentDescription?.toString() ?: ""
-                val text = node.text?.toString() ?: ""
-                if (!desc.contains("搜索") && !text.contains("搜索") &&
-                    text != "历史记录" && text != "清空" &&
-                    node.className != "android.widget.EditText" &&
-                    (desc.isNotEmpty() || hasSongText(node))) {
+                val desc = node.contentDescription?.toString()?.trim() ?: ""
+                val text = node.text?.toString()?.trim() ?: ""
+                // 排除搜索框、搜索按钮、清空按钮、历史记录等 UI 元素
+                val isUiElement = desc.contains("搜索") || text.contains("搜索") ||
+                    desc.contains("清空") || text.contains("清空") ||
+                    text == "历史记录" || desc == "历史记录" ||
+                    node.className == "android.widget.EditText"
+                // 排除只有换行符或空白的节点
+                val hasValidContent = (desc.isNotEmpty() && desc != "\n") || hasSongText(node)
+                if (!isUiElement && hasValidContent) {
                     results.add(node)
                 }
             }
@@ -320,7 +429,7 @@ class MusicFreeInputHandler : AutoInputHandler() {
             val result = editText.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, setArgs)
             Log.d(TAG, "ACTION_SET_TEXT 返回: $result")
             currentStep = Step.NEED_CLICK_SEARCH
-            // 等待文本设置完成，然后验证
+            // 等待文本设置完成（延长到 1.5 秒，确保 React Native 处理了文本变化），然后验证并触发搜索
             handler.postDelayed({
                 try {
                     val currentRoot = AutoInputService.currentRootNode
@@ -332,7 +441,7 @@ class MusicFreeInputHandler : AutoInputHandler() {
                     Log.w(TAG, "验证文本失败: ${e.message}")
                     isProcessing = false
                 }
-            }, 800)
+            }, 1500)
         } else {
             Log.d(TAG, "未找到搜索框，等待...")
         }
@@ -346,31 +455,65 @@ class MusicFreeInputHandler : AutoInputHandler() {
     // ---------- 阶段4：点击搜索按钮 ----------
 
     private fun handleClickSearch(rootNode: AccessibilityNodeInfo) {
-        // 查找"搜索"按钮（ViewGroup with desc='搜索'）
-        val searchButton = findClickableByDesc(rootNode, "搜索")
+        // 精确查找搜索按钮（desc='搜索'），排除搜索框（desc='搜索框'）
+        val searchButton = findExactSearchButton(rootNode)
         if (searchButton != null) {
-            Log.d(TAG, "找到搜索按钮，点击")
+            val rect = Rect()
+            searchButton.getBoundsInScreen(rect)
+            val centerX = (rect.left + rect.right) / 2f
+            val centerY = (rect.top + rect.bottom) / 2f
+            Log.d(TAG, "触发搜索: ACTION_CLICK + 手势点击 ($centerX, $centerY), 边界: $rect")
             isProcessing = true
+            // 方式1：ACTION_CLICK
             searchButton.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            // 方式2：dispatchGesture 点击中心点
+            AutoInputService.tap(centerX, centerY)
+            // 方式3：点击内部的 TextView（React Native 点击事件可能绑定在 TextView 上）
+            for (i in 0 until searchButton.childCount) {
+                val child = searchButton.getChild(i)
+                if (child?.className == "android.widget.TextView" && child.text == "搜索") {
+                    val childRect = Rect()
+                    child.getBoundsInScreen(childRect)
+                    val childX = (childRect.left + childRect.right) / 2f
+                    val childY = (childRect.top + childRect.bottom) / 2f
+                    Log.d(TAG, "额外点击内部 TextView: ($childX, $childY)")
+                    AutoInputService.tap(childX, childY)
+                    break
+                }
+            }
             currentStep = Step.NEED_CLICK_RESULT
-            // 搜索完成，等待外部调用 getSearchResults() 和 clickSearchResult()
+            // 等待搜索结果加载（延长到 5 秒）
             handler.postDelayed({
                 isProcessing = false
                 Log.d(TAG, "搜索完成，等待用户选择")
-            }, 2000)
+            }, 5000)
         } else {
             Log.d(TAG, "未找到搜索按钮，尝试回车搜索")
             val editText = findEditTextByDesc(rootNode, "搜索框")
             if (editText != null) {
                 isProcessing = true
+                editText.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
                 inputText(editText, "\n")
                 currentStep = Step.NEED_CLICK_RESULT
                 handler.postDelayed({
                     isProcessing = false
                     Log.d(TAG, "搜索完成，等待用户选择")
-                }, 2000)
+                }, 5000)
             }
         }
+    }
+
+    /** 精确查找搜索按钮（desc='搜索'），排除搜索框（desc='搜索框'） */
+    private fun findExactSearchButton(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        val desc = node.contentDescription?.toString()?.trim() ?: ""
+        // 精确匹配 desc='搜索'，排除'搜索框'
+        if (node.isClickable && desc == "搜索") return node
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            val found = findExactSearchButton(child)
+            if (found != null) return found
+        }
+        return null
     }
 
     private fun handleClickSearchDelayed() {
