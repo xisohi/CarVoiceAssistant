@@ -30,12 +30,26 @@ class AmapInputHandler : AutoInputHandler() {
         /** 设置待自动输入的导航目的地（导航功能启动时调用） */
         fun setPendingDestination(dest: String) {
             pendingDestination = dest
-            Log.d(TAG, "设置待输入目的地: $dest")
+            currentStep = Step.NEED_CLICK_SEARCH_BOX
+            Log.d(TAG, "设置待输入目的地: $dest, 阶段: NEED_CLICK_SEARCH_BOX")
         }
 
         fun clearPendingDestination() {
             pendingDestination = null
+            currentStep = Step.IDLE
         }
+
+        /** 处理阶段 */
+        private enum class Step {
+            IDLE,                       // 空闲
+            NEED_CLICK_SEARCH_BOX,      // 需要点击主界面搜索框（打开搜索页）
+            NEED_CLICK_SEARCH_INPUT,    // 需要点击搜索页的输入框（获取焦点）
+            NEED_INPUT_TEXT,             // 需要输入目的地
+            NEED_CLICK_SEARCH_BUTTON     // 需要点击搜索按钮（键盘搜索键）
+        }
+
+        @Volatile
+        private var currentStep = Step.IDLE
     }
 
     override val targetPackage = PACKAGE
@@ -45,50 +59,115 @@ class AmapInputHandler : AutoInputHandler() {
 
     override fun clearPendingTask() {
         pendingDestination = null
+        currentStep = Step.IDLE
     }
 
     override fun handle(event: AccessibilityEvent, rootNode: AccessibilityNodeInfo) {
-        val dest = pendingDestination ?: return
+        val dest = pendingDestination
+        if (dest == null) {
+            Log.d(TAG, "handle 被调用，但 pendingDestination 为空，跳过")
+            return
+        }
+        Log.d(TAG, "handle 被触发，待输入目的地: $dest, 阶段: $currentStep, 事件类型: ${event.eventType}")
+
         try {
-            // 多种方式查找搜索框
-            val editText = findEditTextByMultipleStrategies(rootNode)
-            if (editText != null) {
-                Log.d(TAG, "找到搜索框，当前文本: '${editText.text}'")
+            val rect = android.graphics.Rect()
+            rootNode.getBoundsInScreen(rect)
+            val screenWidth = rect.width()
+            val screenHeight = rect.height()
 
-                // 清空已有文本
-                val clearArgs = Bundle()
-                clearArgs.putCharSequence(
-                    AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
-                    ""
-                )
-                editText.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, clearArgs)
+            when (currentStep) {
+                Step.NEED_CLICK_SEARCH_BOX -> {
+                    // 主界面是 MapView，没有可访问性节点，直接点击搜索框的屏幕位置
+                    val searchBoxX = screenWidth / 2f
+                    val searchBoxY = screenHeight * 0.09f
+                    Log.d(TAG, "点击主界面搜索框: ($searchBoxX, $searchBoxY)")
+                    AutoInputService.tap(searchBoxX, searchBoxY)
+                    currentStep = Step.NEED_CLICK_SEARCH_INPUT
+                    // 延迟 2 秒后主动触发，点击搜索页输入框
+                    handler.postDelayed({
+                        try {
+                            val currentRoot = AutoInputService.currentRootNode
+                            if (currentRoot != null && pendingDestination != null) {
+                                handle(AccessibilityEvent.obtain(), currentRoot)
+                            }
+                        } catch (_: Exception) {}
+                    }, 2000)
+                }
 
-                // 设置目的地
-                val setArgs = Bundle()
-                setArgs.putCharSequence(
-                    AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
-                    dest
-                )
-                editText.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, setArgs)
-                Log.d(TAG, "已填入目的地: $dest")
+                Step.NEED_CLICK_SEARCH_INPUT -> {
+                    // 搜索页已打开，点击输入框获取焦点
+                    val inputX = screenWidth / 2f
+                    val inputY = screenHeight * 0.09f
+                    Log.d(TAG, "点击搜索页输入框: ($inputX, $inputY)")
+                    AutoInputService.tap(inputX, inputY)
+                    currentStep = Step.NEED_INPUT_TEXT
+                    // 延迟 1 秒后长按输入框，弹出粘贴菜单
+                    handler.postDelayed({
+                        try {
+                            val currentRoot = AutoInputService.currentRootNode
+                            if (currentRoot != null && pendingDestination != null) {
+                                handle(AccessibilityEvent.obtain(), currentRoot)
+                            }
+                        } catch (_: Exception) {}
+                    }, 1000)
+                }
 
-                // 延迟点击搜索按钮
-                handler.postDelayed({
-                    try {
-                        val currentRoot = AutoInputService.currentRootNode
-                        if (currentRoot != null) {
-                            triggerSearch(currentRoot)
+                Step.NEED_INPUT_TEXT -> {
+                    // 先把目的地复制到剪贴板
+                    copyToClipboard("导航目的地", dest)
+                    // 长按输入框，弹出粘贴菜单
+                    val inputX = screenWidth / 2f
+                    val inputY = screenHeight * 0.09f
+                    Log.d(TAG, "长按输入框弹出粘贴菜单: ($inputX, $inputY), 目的地: $dest")
+                    AutoInputService.longPress(inputX, inputY, 1000)
+                    currentStep = Step.NEED_CLICK_SEARCH_BUTTON
+                    // 延迟 1 秒后点击粘贴按钮位置（通常在输入框下方）
+                    handler.postDelayed({
+                        try {
+                            // 粘贴按钮通常在弹出菜单的第一个选项，位置在输入框左下方
+                            val pasteX = screenWidth * 0.15f
+                            val pasteY = screenHeight * 0.16f
+                            Log.d(TAG, "点击粘贴按钮: ($pasteX, $pasteY)")
+                            AutoInputService.tap(pasteX, pasteY)
+
+                            // 再延迟 1.5 秒后点击键盘搜索键
+                            handler.postDelayed({
+                                try {
+                                    // 键盘搜索键通常在右下角
+                                    val searchKeyX = screenWidth * 0.88f
+                                    val searchKeyY = screenHeight * 0.88f
+                                    Log.d(TAG, "点击键盘搜索键: ($searchKeyX, $searchKeyY)")
+                                    AutoInputService.tap(searchKeyX, searchKeyY)
+                                    pendingDestination = null
+                                    currentStep = Step.IDLE
+                                } catch (e: Exception) {
+                                    Log.w(TAG, "点击搜索键失败: ${e.message}")
+                                }
+                            }, 1500)
+                        } catch (e: Exception) {
+                            Log.w(TAG, "点击粘贴失败: ${e.message}")
                         }
-                    } catch (_: Exception) {
-                    }
-                }, 500)
-                pendingDestination = null
-            } else {
-                Log.w(TAG, "未找到搜索框，尝试dump UI树")
-                dumpNodeTree(rootNode, 0, 3, TAG)
+                    }, 1000)
+                }
+
+                else -> {
+                    Log.d(TAG, "阶段: $currentStep，不处理")
+                }
             }
         } catch (e: Exception) {
             Log.w(TAG, "自动输入失败: ${e.message}")
+        }
+    }
+
+    /** 复制文本到剪贴板 */
+    private fun copyToClipboard(label: String, text: String) {
+        try {
+            val clipboard = AutoInputService.serviceContext?.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+            clipboard.setPrimaryClip(android.content.ClipData.newPlainText(label, text))
+            Log.d(TAG, "已复制到剪贴板: $text")
+        } catch (e: Exception) {
+            Log.w(TAG, "复制到剪贴板失败: ${e.message}")
         }
     }
 
