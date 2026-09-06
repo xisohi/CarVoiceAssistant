@@ -1,0 +1,6 @@
+<resources>
+    <style name="Theme.CarVoiceAssistant" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/brand_blue</item>
+        <item name="android:statusBarColor">@color/brand_blue</item>
+    </style>
+</resources>
