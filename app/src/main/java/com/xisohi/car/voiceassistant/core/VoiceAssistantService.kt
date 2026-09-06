@@ -109,7 +109,16 @@ class VoiceAssistantService : Service() {
 
                 override fun onSpeakDone() {
                     currentState = State.IDLE
-                    resumeWake()
+                    // 如果在多轮对话选择状态（等待用户选择歌曲），播报完成后启动新的识别，
+                    // 而不是恢复唤醒监听，这样用户说"第一首"会被 handleText 正确处理
+                    if (isWaitingForSongSelection) {
+                        android.util.Log.d("VoiceService", "选择状态下播报完成，停止唤醒并启动新识别")
+                        // 必须先停止 WakeWord，释放麦克风，否则 startRecognition 会报 AudioRecord status -38
+                        wakeWordEngine.stop()
+                        startRecognition()
+                    } else {
+                        resumeWake()
+                    }
                 }
             }
         }
@@ -390,8 +399,16 @@ class VoiceAssistantService : Service() {
                 append("请问播放第几首？")
             }
             android.util.Log.d("VoiceService", "搜索结果播报: $prompt")
+            android.util.Log.d("VoiceService", "TTS 可用性: isReady=${ttsEngine.isReady}")
             withContext(Dispatchers.Main) {
-                ttsEngine.speak(prompt)
+                // 如果 TTS 不可用，直接启动识别（用户看不到播报，但可以直接说"第一首"）
+                if (!ttsEngine.isReady) {
+                    android.util.Log.w("VoiceService", "TTS 不可用，跳过播报，直接启动识别")
+                    wakeWordEngine.stop()
+                    startRecognition()
+                } else {
+                    ttsEngine.speak(prompt)
+                }
             }
         } catch (e: Exception) {
             android.util.Log.w("VoiceService", "等待搜索结果失败: ${e.message}")
