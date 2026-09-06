@@ -1,131 +1,104 @@
 package com.xisohi.car.voiceassistant.core
 
 import android.accessibilityservice.AccessibilityService
-import android.os.Bundle
+import android.accessibilityservice.GestureDescription
+import android.graphics.Path
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import com.xisohi.car.voiceassistant.core.autoinput.AmapInputHandler
+import com.xisohi.car.voiceassistant.core.autoinput.MusicFreeInputHandler
 
 /**
- * 无障碍服务：自动在高德地图车机版搜索框中填入目的地并触发搜索。
+ * 无障碍服务：自动操作第三方 APP。
  *
- * 工作流程：
- * 1. 导航功能启动时，通过静态方法 setPendingDestination() 设置待输入的目的地
- * 2. 无障碍服务监听窗口变化，检测到高德车机版搜索页（含"请输入目的地"编辑框）
- * 3. 自动填入目的地文本，然后触发搜索（点击搜索按钮或发送回车）
+ * 本类只负责事件分发和手势执行，具体 APP 的操作逻辑由独立的 Handler 实现：
+ * - [AmapInputHandler]：高德地图车机版（导航自动填入）
+ * - [MusicFreeInputHandler]：MusicFree（搜索播放）
  *
- * 需要用户在系统设置中授权无障碍服务。
+ * 新增 APP 支持时：
+ * 1. 在 [autoinput] 包下新建一个 Handler，继承 [com.xisohi.car.voiceassistant.core.autoinput.AutoInputHandler]
+ * 2. 在本类的 [handlers] 列表中注册
+ * 3. 不要修改其他 APP 的 Handler
  */
 class AutoInputService : AccessibilityService() {
 
     companion object {
         private const val TAG = "AutoInputService"
-        private const val TARGET_PACKAGE = "com.autonavi.amapauto"
 
+        /** 当前窗口根节点（供 Handler 延迟回调时使用） */
         @Volatile
-        private var pendingDestination: String? = null
+        var currentRootNode: AccessibilityNodeInfo? = null
+            private set
 
-        /** 设置待自动输入的目的地（导航功能启动时调用） */
-        fun setPendingDestination(dest: String) {
-            pendingDestination = dest
-            Log.d(TAG, "设置待输入目的地: $dest")
+        /** 服务 Context（供 Handler 使用，如操作剪贴板） */
+        @Volatile
+        var serviceContext: android.content.Context? = null
+            private set
+
+        /** 服务实例（供 Handler 调用 dispatchGesture 等服务方法） */
+        @Volatile
+        private var instance: AutoInputService? = null
+
+        /**
+         * 模拟点击指定坐标。
+         * @param x 屏幕 x 坐标
+         * @param y 屏幕 y 坐标
+         */
+        fun tap(x: Float, y: Float) {
+            val service = instance ?: return
+            val path = Path().apply { moveTo(x, y) }
+            val stroke = GestureDescription.StrokeDescription(path, 0, 50)
+            val gesture = GestureDescription.Builder().addStroke(stroke).build()
+            service.dispatchGesture(gesture, null, null)
+            Log.d(TAG, "模拟点击: ($x, $y)")
         }
 
-        /** 清除待输入目的地 */
-        fun clearPendingDestination() {
-            pendingDestination = null
+        /**
+         * 模拟长按指定坐标（弹出系统菜单，如粘贴）。
+         * @param x 屏幕 x 坐标
+         * @param y 屏幕 y 坐标
+         * @param duration 长按时长（毫秒），默认 800ms
+         */
+        fun longPress(x: Float, y: Float, duration: Long = 800) {
+            val service = instance ?: return
+            val path = Path().apply { moveTo(x, y) }
+            val stroke = GestureDescription.StrokeDescription(path, 0, duration)
+            val gesture = GestureDescription.Builder().addStroke(stroke).build()
+            service.dispatchGesture(gesture, null, null)
+            Log.d(TAG, "模拟长按: ($x, $y), 时长=${duration}ms")
         }
     }
+
+    override fun onServiceConnected() {
+        super.onServiceConnected()
+        instance = this
+        serviceContext = this
+        Log.d(TAG, "无障碍服务已连接")
+    }
+
+    /** 已注册的 APP 处理器列表 */
+    private val handlers = listOf(
+        AmapInputHandler(),
+        MusicFreeInputHandler()
+    )
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
-        val dest = pendingDestination ?: return
-        if (event.packageName != TARGET_PACKAGE) return
+        val packageName = event.packageName?.toString() ?: return
+        val rootNode = rootInActiveWindow ?: return
+        currentRootNode = rootNode
 
-        try {
-            val rootNode = rootInActiveWindow ?: return
-            // 查找搜索框（EditText，含"请输入目的地"hint）
-            val editText = findEditText(rootNode)
-            if (editText != null) {
-                Log.d(TAG, "找到搜索框，输入目的地: $dest")
-                inputText(editText, dest)
-                // 延迟触发搜索
-                android.os.Handler(mainLooper).postDelayed({
-                    try {
-                        triggerSearch(rootInActiveWindow)
-                    } catch (_: Exception) {
-                    }
-                }, 500)
-                pendingDestination = null
+        // 分发给对应 APP 的 Handler
+        for (handler in handlers) {
+            if (handler.targetPackage == packageName && handler.hasPendingTask()) {
+                Log.d(TAG, "分发事件给 ${handler.targetPackage}")
+                handler.handle(event, rootNode)
+                return
             }
-        } catch (e: Exception) {
-            Log.w(TAG, "自动输入失败: ${e.message}")
         }
     }
 
-    /** 查找可输入的 EditText */
-    private fun findEditText(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
-        if (node.className == "android.widget.EditText") {
-            return node
-        }
-        for (i in 0 until node.childCount) {
-            val child = node.getChild(i) ?: continue
-            val found = findEditText(child)
-            if (found != null) return found
-        }
-        return null
+    override fun onInterrupt() {
+        currentRootNode = null
     }
-
-    /** 在 EditText 中输入文本 */
-    private fun inputText(editText: AccessibilityNodeInfo, text: String) {
-        val arguments = Bundle()
-        arguments.putCharSequence(
-            AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
-            text
-        )
-        editText.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)
-    }
-
-    /** 触发搜索：点击搜索按钮，或发送回车 */
-    private fun triggerSearch(rootNode: AccessibilityNodeInfo?) {
-        if (rootNode == null) return
-        // 查找"搜索"按钮
-        val searchButton = findButtonByText(rootNode, "搜索")
-        if (searchButton != null) {
-            Log.d(TAG, "点击搜索按钮")
-            searchButton.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-            return
-        }
-        // 没找到搜索按钮，给搜索框发送回车
-        val editText = findEditText(rootNode)
-        if (editText != null) {
-            Log.d(TAG, "发送回车触发搜索")
-            editText.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-            android.os.Handler(mainLooper).postDelayed({
-                try {
-                    val arguments = Bundle()
-                    arguments.putCharSequence(
-                        AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
-                        "\n"
-                    )
-                    editText.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)
-                } catch (_: Exception) {
-                }
-            }, 200)
-        }
-    }
-
-    /** 按文本查找按钮 */
-    private fun findButtonByText(node: AccessibilityNodeInfo, text: String): AccessibilityNodeInfo? {
-        if (node.text?.contains(text) == true && node.isClickable) {
-            return node
-        }
-        for (i in 0 until node.childCount) {
-            val child = node.getChild(i) ?: continue
-            val found = findButtonByText(child, text)
-            if (found != null) return found
-        }
-        return null
-    }
-
-    override fun onInterrupt() {}
 }

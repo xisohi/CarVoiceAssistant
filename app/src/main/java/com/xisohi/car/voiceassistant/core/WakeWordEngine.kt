@@ -99,7 +99,7 @@ class WakeWordEngine(private val context: Context) {
                 if (text.isNotEmpty()) {
                     Log.d("WakeWord", "识别文本: '$text' (endpoint=$endpoint)")
                 }
-                // 去掉空格后再匹配（Vosk 可能在词之间加空格，如"你好 小乐"）
+                // 去掉空格后再匹配（Vosk 可能在词之间加空格，如"小爱 同学"）
                 val normalized = text.replace(" ", "")
                 if (normalized.isNotEmpty() && WAKE_WORDS.any { normalized.contains(it) }) {
                     Log.i("WakeWord", "命中唤醒词: $text")

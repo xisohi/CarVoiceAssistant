@@ -16,6 +16,8 @@ import android.text.TextUtils
 import android.content.ClipData
 import android.content.ClipboardManager
 import androidx.core.content.ContextCompat
+import com.xisohi.car.voiceassistant.core.autoinput.AmapInputHandler
+import com.xisohi.car.voiceassistant.core.autoinput.MusicFreeInputHandler
 import java.net.URLEncoder
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -55,6 +57,7 @@ class SkillExecutor(private val context: Context) {
             "volume.down" -> adjustVolume(false)
             "volume.mute" -> setMute(true)
             "media.play" -> mediaKey(android.view.KeyEvent.KEYCODE_MEDIA_PLAY)
+            "media.search_play" -> searchAndPlay(intent.params["query"] ?: "")
             "media.pause" -> mediaKey(android.view.KeyEvent.KEYCODE_MEDIA_PAUSE)
             "media.next" -> mediaKey(android.view.KeyEvent.KEYCODE_MEDIA_NEXT)
             "media.prev" -> mediaKey(android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS)
@@ -71,6 +74,7 @@ class SkillExecutor(private val context: Context) {
             "ask.time" -> ExecutionResult(true, "现在是" + SimpleDateFormat("HH点mm分", Locale.CHINA).format(Date()))
             "ask.help" -> ExecutionResult(true, "可以试试说：把音量调到五十、播放音乐、导航去机场、打开空调、关闭车窗")
             "ask.weather" -> ExecutionResult(true, "离线模式下暂时查不了天气，建议联网后使用")
+            "app.open" -> openApp(intent.params["app"] ?: "")
             else -> ExecutionResult(false, "这个指令我还不支持")
         }
     } catch (e: Exception) {
@@ -112,13 +116,13 @@ class SkillExecutor(private val context: Context) {
 
     /**
      * 音乐控制。
-     * PLAY 操作：先启动音乐播放器，延迟 1.5 秒再发播放按键（等 MediaSession 初始化）。
+     * PLAY 操作：先启动 MusicFree 播放器，延迟 3 秒再发播放按键（等 MusicService 初始化）。
      * PAUSE/NEXT/PREVIOUS：立即发送媒体按键。
-     * 按键同时通过 dispatchMediaKeyEvent 和 ACTION_MEDIA_BUTTON 广播发送，增加成功率。
+     * 按键直接发送给 react-native-track-player 的 MusicService，最可靠。
      */
     private fun mediaKey(keyCode: Int): ExecutionResult {
         val label = when (keyCode) {
-            android.view.KeyEvent.KEYCODE_MEDIA_PLAY -> "正在打开音乐"
+            android.view.KeyEvent.KEYCODE_MEDIA_PLAY -> "正在播放音乐"
             android.view.KeyEvent.KEYCODE_MEDIA_PAUSE -> "已暂停"
             android.view.KeyEvent.KEYCODE_MEDIA_NEXT -> "下一首"
             android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS -> "上一首"
@@ -126,9 +130,9 @@ class SkillExecutor(private val context: Context) {
         }
         return try {
             if (keyCode == android.view.KeyEvent.KEYCODE_MEDIA_PLAY) {
-                // 启动播放器，延迟后再发播放按键（给 MediaSession 初始化时间）
+                // 启动播放器，延迟后再发播放按键（给 MusicService 初始化时间）
                 launchMusicPlayer()
-                mainHandler.postDelayed({ dispatchMediaKey(keyCode) }, 2500)
+                mainHandler.postDelayed({ dispatchMediaKey(keyCode) }, 3000)
             } else {
                 dispatchMediaKey(keyCode)
             }
@@ -138,7 +142,16 @@ class SkillExecutor(private val context: Context) {
         }
     }
 
-    /** 发送媒体按键：dispatchMediaKeyEvent + 指定包名的 ACTION_MEDIA_BUTTON 广播 */
+    /**
+     * 发送媒体按键。
+     *
+     * 三层策略（按优先级）：
+     * 1. [MusicFree 专用] 直接发送给 react-native-track-player 的 MusicService（最可靠）
+     * 2. [通用] AudioManager.dispatchMediaKeyEvent（系统级媒体按键）
+     * 3. [通用] 逐个指定常见播放器包名发送 ACTION_MEDIA_BUTTON 广播
+     *
+     * 修改 MusicFree 相关逻辑时，只改第 1 层，不要影响第 2、3 层的通用逻辑。
+     */
     private fun dispatchMediaKey(keyCode: Int) {
         val down = android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, keyCode)
         val up = android.view.KeyEvent(android.view.KeyEvent.ACTION_UP, keyCode)
@@ -147,10 +160,28 @@ class SkillExecutor(private val context: Context) {
             audioManager.dispatchMediaKeyEvent(up)
         } catch (_: Exception) {
         }
-        // Android 9+ 不指定包名的媒体按键广播会被系统拦截，
-        // 需要逐个指定常见播放器包名发送
+
+        // 直接发送给 MusicFree 的 react-native-track-player MusicService（最可靠）
+        try {
+            val component = android.content.ComponentName(
+                "fun.upup.musicfree",
+                "com.doublesymmetry.trackplayer.service.MusicService"
+            )
+            val downIntent = Intent(Intent.ACTION_MEDIA_BUTTON)
+                .setComponent(component)
+                .putExtra(Intent.EXTRA_KEY_EVENT, down)
+            val upIntent = Intent(Intent.ACTION_MEDIA_BUTTON)
+                .setComponent(component)
+                .putExtra(Intent.EXTRA_KEY_EVENT, up)
+            context.sendBroadcast(downIntent)
+            context.sendBroadcast(upIntent)
+            android.util.Log.d("SkillExecutor", "已发送媒体按键给 MusicFree MusicService: $keyCode")
+        } catch (e: Exception) {
+            android.util.Log.w("SkillExecutor", "发送给 MusicService 失败: ${e.message}")
+        }
+
+        // 兼容其他播放器：逐个指定常见播放器包名发送
         val packages = listOf(
-            "fun.upup.musicfree",
             "com.netease.cloudmusic",
             "com.tencent.qqmusic",
             "com.kugou.android",
@@ -171,9 +202,30 @@ class SkillExecutor(private val context: Context) {
         }
     }
 
-    /** 尝试启动音乐播放器：先默认播放器，再依次尝试常见播放器包名 */
+    /**
+     * 启动音乐播放器。
+     *
+     * 优先级：
+     * 1. [MusicFree 专用] fun.upup.musicfree（用户已安装，控制最可靠）
+     * 2. [通用] 系统默认音乐播放器
+     * 3. [通用] 网易云 / QQ音乐 / 酷狗 / 酷我 / 系统音乐
+     *
+     * 修改 MusicFree 相关逻辑时，只改第 1 层。
+     */
     private fun launchMusicPlayer() {
-        // 1. 系统默认音乐播放器
+        // 1. 优先启动 MusicFree（用户已安装，控制最可靠）
+        try {
+            val intent = context.packageManager.getLaunchIntentForPackage("fun.upup.musicfree")
+            if (intent != null) {
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                context.startActivity(intent)
+                android.util.Log.d("SkillExecutor", "已启动 MusicFree")
+                return
+            }
+        } catch (_: Exception) {
+        }
+
+        // 2. 系统默认音乐播放器
         try {
             val intent = Intent(Intent.ACTION_MAIN).apply {
                 addCategory(Intent.CATEGORY_APP_MUSIC)
@@ -182,12 +234,10 @@ class SkillExecutor(private val context: Context) {
             context.startActivity(intent)
             return
         } catch (_: Exception) {
-            // 没有默认播放器，继续尝试具体包名
         }
 
-        // 2. 依次尝试常见音乐播放器包名
+        // 3. 依次尝试其他常见音乐播放器
         val packages = listOf(
-            "fun.upup.musicfree",          // MusicFree
             "com.netease.cloudmusic",      // 网易云音乐
             "com.tencent.qqmusic",         // QQ音乐
             "com.kugou.android",           // 酷狗音乐
@@ -203,20 +253,99 @@ class SkillExecutor(private val context: Context) {
                     return
                 }
             } catch (_: Exception) {
-                // 这个包名不存在，继续试下一个
             }
         }
-        // 都没找到：忽略，dispatchMediaKeyEvent 仍可能控制后台播放器
+    }
+
+    /**
+     * [MusicFree 专用] 启动歌曲搜索（不自动播放，等待用户选择）。
+     *
+     * 工作流程：
+     * 1. 调用 [MusicFreeInputHandler.setPendingMusicSearch] 设置待搜索关键词
+     * 2. 启动 MusicFree
+     * 3. 无障碍服务 [MusicFreeInputHandler] 自动打开搜索页、输入关键词、点击搜索
+     * 4. 搜索完成后，外部调用 [MusicFreeInputHandler.getSearchResults] 读取结果列表
+     * 5. 用户选择后，调用 [selectSong] 播放指定序号
+     *
+     * 注意：本方法仅适用于 MusicFree。如需支持其他播放器，
+     * 请新建独立的 Handler，不要修改本方法。
+     */
+    private fun searchAndPlay(query: String): ExecutionResult {
+        val cleanQuery = query.trim()
+        if (cleanQuery.isEmpty()) return ExecutionResult(false, "没听清歌曲名")
+
+        return try {
+            // 设置待搜索的关键词（无障碍服务会自动操作）
+            MusicFreeInputHandler.setPendingMusicSearch(cleanQuery)
+            // 启动 MusicFree
+            val intent = context.packageManager.getLaunchIntentForPackage("fun.upup.musicfree")
+            if (intent != null) {
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                context.startActivity(intent)
+                android.util.Log.d("SkillExecutor", "已启动 MusicFree，待搜索: $cleanQuery")
+                ExecutionResult(true, "正在搜索「$cleanQuery」")
+            } else {
+                MusicFreeInputHandler.clearPendingMusicSearch()
+                ExecutionResult(false, "未安装 MusicFree")
+            }
+        } catch (e: Exception) {
+            MusicFreeInputHandler.clearPendingMusicSearch()
+            ExecutionResult(false, "搜索失败：${e.message}")
+        }
+    }
+
+    /**
+     * [MusicFree 专用] 播放指定序号的搜索结果。
+     *
+     * @param indexStr 序号字符串（如"3"、"第三首"）
+     * @return 执行结果
+     */
+    fun selectSong(indexStr: String): ExecutionResult {
+        val index = parseSongIndex(indexStr)
+        if (index <= 0) return ExecutionResult(false, "请说第几首，比如第三首")
+
+        return try {
+            val success = MusicFreeInputHandler.clickSearchResult(index)
+            if (success) {
+                ExecutionResult(true, "好的，播放第${indexStr}首")
+            } else {
+                ExecutionResult(false, "没有找到第${indexStr}首，请重新选择")
+            }
+        } catch (e: Exception) {
+            ExecutionResult(false, "播放失败：${e.message}")
+        }
+    }
+
+    /** 解析歌曲序号（支持"3"、"第三首"、"两首"等） */
+    private fun parseSongIndex(str: String): Int {
+        val clean = str.trim()
+        // 纯数字
+        clean.toIntOrNull()?.let { return it }
+        // 中文数字
+        val cnNum = mapOf(
+            "一" to 1, "二" to 2, "两" to 2, "三" to 3, "四" to 4,
+            "五" to 5, "六" to 6, "七" to 7, "八" to 8, "九" to 9, "十" to 10
+        )
+        for ((cn, num) in cnNum) {
+            if (clean.contains(cn)) return num
+        }
+        return 0
     }
 
     // ---------- 导航 ----------
 
     /**
-     * 拉起导航。依次尝试：
-     * 1. 高德地图手机版 (androidamap://, com.autonavi.minimap)
-     * 2. 高德地图车机版 (amapauto:// / androidamap://, com.autonavi.amapauto)
-     * 3. 百度地图 (baidumap://, com.baidu.BaiduMap)
-     * 4. 系统 geo: 通用协议（不指定包名，让系统选择）
+     * 拉起导航。
+     *
+     * 优先级：
+     * 1. [高德手机版] androidamap://, com.autonavi.minimap
+     * 2. [高德车机版 专用] androidauto://, com.autonavi.amapauto
+     *    - 车机版不支持 URI 自动填入搜索框，需配合 [AmapInputHandler] 无障碍服务
+     *    - 支持的 URI scheme 是 androidauto（不是 amapauto 也不是 androidamap）
+     * 3. [百度地图] baidumap://, com.baidu.BaiduMap
+     * 4. [通用] 系统 geo: 协议
+     *
+     * 修改高德车机版相关逻辑时，只改第 2 层，不要影响其他层。
      */
     private fun navigate(dest: String): ExecutionResult {
         if (dest.isBlank()) return ExecutionResult(false, "请告诉我目的地")
@@ -234,7 +363,7 @@ class SkillExecutor(private val context: Context) {
 
         // 2. 高德地图车机版（androidauto:// URI，poi 搜索可打开搜索页）
         // 设置待自动输入的目的地（无障碍服务会在搜索页打开后自动填入并搜索）
-        AutoInputService.setPendingDestination(dest)
+        AmapInputHandler.setPendingDestination(dest)
         // 同时复制到剪贴板作为兜底
         copyToClipboard("导航目的地", dest)
         val amapAutoIntents = listOf(
@@ -333,6 +462,98 @@ class SkillExecutor(private val context: Context) {
             val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
             clipboard.setPrimaryClip(ClipData.newPlainText(label, text))
         } catch (_: Exception) {
+        }
+    }
+
+    // ---------- 打开应用 ----------
+
+    /** 应用名到包名/Action 的映射表 */
+    private val appMap = mapOf(
+        // 地图
+        "百度地图" to "com.baidu.BaiduMap",
+        "高德地图" to "com.autonavi.amapauto",
+        "高德" to "com.autonavi.amapauto",
+        // 音乐
+        "音乐" to "fun.upup.musicfree",
+        "MusicFree" to "fun.upup.musicfree",
+        "网易云音乐" to "com.netease.cloudmusic",
+        "网易云" to "com.netease.cloudmusic",
+        "QQ音乐" to "com.tencent.qqmusic",
+        "酷狗音乐" to "com.kugou.android",
+        "酷狗" to "com.kugou.android",
+        // 设置
+        "设置" to "com.android.settings",
+        "系统设置" to "com.android.settings",
+        // 浏览器
+        "浏览器" to "com.android.browser",
+    )
+
+    /** 设置项到 Settings Action 的映射 */
+    private val settingsActionMap = mapOf(
+        "蓝牙" to android.provider.Settings.ACTION_BLUETOOTH_SETTINGS,
+        "WiFi" to android.provider.Settings.ACTION_WIFI_SETTINGS,
+        "wifi" to android.provider.Settings.ACTION_WIFI_SETTINGS,
+        "网络" to android.provider.Settings.ACTION_WIRELESS_SETTINGS,
+        "显示" to android.provider.Settings.ACTION_DISPLAY_SETTINGS,
+        "声音" to android.provider.Settings.ACTION_SOUND_SETTINGS,
+        "应用" to android.provider.Settings.ACTION_APPLICATION_SETTINGS,
+        "存储" to android.provider.Settings.ACTION_INTERNAL_STORAGE_SETTINGS,
+    )
+
+    /**
+     * 打开指定应用。
+     * 优先匹配已知应用包名；其次匹配设置项 Action；最后尝试模糊匹配已安装应用。
+     */
+    private fun openApp(appName: String): ExecutionResult {
+        val name = appName.trim()
+        if (name.isEmpty()) return ExecutionResult(false, "没听清要打开什么")
+
+        // 1. 精确匹配已知应用
+        val packageName = appMap[name]
+        if (packageName != null) {
+            return launchByPackage(packageName, name)
+        }
+
+        // 2. 匹配设置项（如"打开蓝牙"→ 蓝牙设置页）
+        val settingsAction = settingsActionMap[name]
+        if (settingsAction != null) {
+            return try {
+                val intent = Intent(settingsAction)
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                context.startActivity(intent)
+                ExecutionResult(true, "已打开${name}设置")
+            } catch (e: Exception) {
+                ExecutionResult(false, "打开${name}设置失败")
+            }
+        }
+
+        // 3. 模糊匹配已安装应用（应用名包含关键词）
+        val pm = context.packageManager
+        val apps = pm.getInstalledApplications(0)
+        val matched = apps.firstOrNull { appInfo ->
+            val label = pm.getApplicationLabel(appInfo).toString()
+            label.contains(name) || name.contains(label)
+        }
+        if (matched != null) {
+            return launchByPackage(matched.packageName, pm.getApplicationLabel(matched).toString())
+        }
+
+        return ExecutionResult(false, "未找到应用「$name」")
+    }
+
+    /** 通过包名启动应用 */
+    private fun launchByPackage(packageName: String, displayName: String): ExecutionResult {
+        return try {
+            val intent = context.packageManager.getLaunchIntentForPackage(packageName)
+            if (intent != null) {
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                context.startActivity(intent)
+                ExecutionResult(true, "已打开$displayName")
+            } else {
+                ExecutionResult(false, "未安装$displayName")
+            }
+        } catch (e: Exception) {
+            ExecutionResult(false, "打开$displayName 失败：${e.message}")
         }
     }
 

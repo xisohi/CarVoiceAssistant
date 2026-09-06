@@ -159,6 +159,33 @@
                     android:layout_height="wrap_content"
                     android:text="去启用无障碍服务"
                     android:layout_marginTop="10dp" />
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="#E4E3DD"
+                    android:layout_marginTop="12dp"
+                    android:layout_marginBottom="8dp" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="开机自启动"
+                        android:textSize="14sp" />
+
+                    <androidx.appcompat.widget.SwitchCompat
+                        android:id="@+id/switchAutoStart"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:checked="true" />
+                </LinearLayout>
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 

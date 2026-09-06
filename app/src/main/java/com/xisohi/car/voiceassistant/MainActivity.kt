@@ -33,6 +33,11 @@ import java.util.Locale
 
 class MainActivity : AppCompatActivity() {
 
+    companion object {
+        private const val PREFS_NAME = "voice_assistant_prefs"
+        private const val KEY_AUTO_START = "auto_start_on_boot"
+    }
+
     private lateinit var binding: ActivityMainBinding
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val handler = Handler(Looper.getMainLooper())
@@ -72,6 +77,8 @@ class MainActivity : AppCompatActivity() {
                         return@setOnClickListener
                     }
                     VoiceAssistantService.start(this)
+                    // 启动服务后关闭主界面，回到桌面，只保留悬浮窗
+                    handler.postDelayed({ finish() }, 500)
                 } else {
                     toast("请先下载离线语音包")
                 }
@@ -81,6 +88,14 @@ class MainActivity : AppCompatActivity() {
         // 无障碍服务授权按钮
         binding.btnAccessibility.setOnClickListener {
             openAccessibilitySettings()
+        }
+
+        // 开机自启开关
+        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+        binding.switchAutoStart.isChecked = prefs.getBoolean(KEY_AUTO_START, true)
+        binding.switchAutoStart.setOnCheckedChangeListener { _, isChecked ->
+            prefs.edit().putBoolean(KEY_AUTO_START, isChecked).apply()
+            toast(if (isChecked) "已开启开机自启动" else "已关闭开机自启动")
         }
     }
 

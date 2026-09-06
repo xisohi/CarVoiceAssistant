@@ -15,6 +15,8 @@ import android.os.IBinder
 import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import com.xisohi.car.voiceassistant.R
+import com.xisohi.car.voiceassistant.core.autoinput.MusicFreeInputHandler
+import com.xisohi.car.voiceassistant.core.autoinput.SongInfo
 import com.xisohi.car.voiceassistant.download.ModelManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -54,6 +56,16 @@ class VoiceAssistantService : Service() {
             private set
 
         val isRunning: Boolean get() = instance != null
+
+        // ---------- 多轮对话状态 ----------
+        /** 当前等待选择的搜索结果列表（音乐搜索后进入选择状态） */
+        @Volatile
+        private var pendingSongResults: List<SongInfo>? = null
+
+        /** 是否在等待用户选择歌曲（多轮对话状态） */
+        @Volatile
+        var isWaitingForSongSelection: Boolean = false
+            private set
 
         fun start(context: Context) {
             val intent = Intent(context, VoiceAssistantService::class.java)
@@ -264,6 +276,28 @@ class VoiceAssistantService : Service() {
             ttsEngine.speak("没有听清，请再说一遍")
             return
         }
+
+        // ---------- 多轮对话：等待选择歌曲 ----------
+        if (isWaitingForSongSelection) {
+            val index = parseSongIndexFromText(text)
+            if (index > 0) {
+                android.util.Log.d("VoiceService", "多轮对话：选择第 $index 首")
+                val result = skillExecutor.selectSong(index.toString())
+                android.util.Log.i("VoiceService", "选择结果: handled=${result.handled}, spoken='${result.spoken}'")
+                if (result.handled) {
+                    // 选择成功，退出多轮对话状态
+                    pendingSongResults = null
+                    isWaitingForSongSelection = false
+                }
+                ttsEngine.speak(result.spoken)
+                return
+            }
+            // 用户说了其他内容，取消选择状态，正常处理
+            android.util.Log.d("VoiceService", "取消歌曲选择状态")
+            pendingSongResults = null
+            isWaitingForSongSelection = false
+        }
+
         val intent = intentParser.parse(text)
         if (intent == null) {
             android.util.Log.w("VoiceService", "未匹配到意图: '$text'")
@@ -276,9 +310,97 @@ class VoiceAssistantService : Service() {
             resumeWake()
             return
         }
+
+        // ---------- 音乐搜索：进入多轮对话 ----------
+        if (intent.action == "media.search_play") {
+            val result = skillExecutor.execute(intent)
+            android.util.Log.i("VoiceService", "搜索结果: handled=${result.handled}, spoken='${result.spoken}'")
+            ttsEngine.speak(result.spoken)
+            if (result.handled) {
+                // 异步等待搜索完成，然后播报结果列表
+                scope.launch(Dispatchers.IO) {
+                    waitForSearchResultsAndPrompt()
+                }
+            }
+            return
+        }
+
         val result = skillExecutor.execute(intent)
         android.util.Log.i("VoiceService", "执行结果: handled=${result.handled}, spoken='${result.spoken}'")
         ttsEngine.speak(result.spoken)
+    }
+
+    /**
+     * 异步等待音乐搜索完成，然后播报结果列表，进入多轮对话选择状态。
+     */
+    private suspend fun waitForSearchResultsAndPrompt() {
+        try {
+            // 轮询等待搜索完成，最多等 15 秒
+            var waited = 0L
+            val interval = 500L
+            val maxWait = 15000L
+            while (waited < maxWait) {
+                if (MusicFreeInputHandler.isSearchCompleted()) {
+                    break
+                }
+                kotlinx.coroutines.delay(interval)
+                waited += interval
+            }
+            if (!MusicFreeInputHandler.isSearchCompleted()) {
+                android.util.Log.w("VoiceService", "搜索超时")
+                withContext(Dispatchers.Main) {
+                    ttsEngine.speak("搜索超时，请重试")
+                }
+                return
+            }
+            // 读取搜索结果
+            val results = MusicFreeInputHandler.getSearchResults()
+            if (results.isEmpty()) {
+                withContext(Dispatchers.Main) {
+                    ttsEngine.speak("没有找到相关歌曲")
+                }
+                return
+            }
+            // 进入多轮对话选择状态
+            pendingSongResults = results
+            isWaitingForSongSelection = true
+            // 播报结果列表
+            val prompt = buildString {
+                append("找到${results.size}首，")
+                results.take(5).forEachIndexed { index, song ->
+                    append("第${index + 1}首，${song.title}")
+                    if (song.artist.isNotEmpty()) append("，${song.artist}")
+                    append("；")
+                }
+                if (results.size > 5) append("等${results.size}首。")
+                append("请问播放第几首？")
+            }
+            android.util.Log.d("VoiceService", "搜索结果播报: $prompt")
+            withContext(Dispatchers.Main) {
+                ttsEngine.speak(prompt)
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("VoiceService", "等待搜索结果失败: ${e.message}")
+        }
+    }
+
+    /** 从文本中解析歌曲序号（多轮对话用） */
+    private fun parseSongIndexFromText(text: String): Int {
+        val clean = text.trim()
+        // 纯数字
+        clean.toIntOrNull()?.let { if (it in 1..10) return it }
+        // "第X首" 格式
+        val match = Regex("第([一二三四五六七八九十两\\d]{1,3})首").find(clean)
+        if (match != null) {
+            val numStr = match.groupValues[1]
+            numStr.toIntOrNull()?.let { return it }
+            val cnNum = mapOf(
+                "一" to 1, "二" to 2, "两" to 2, "三" to 3, "四" to 4,
+                "五" to 5, "六" to 6, "七" to 7, "八" to 8, "九" to 9, "十" to 10
+            )
+            cnNum[numStr]?.let { return it }
+        }
+        return 0
     }
 
     // ---------- 生命周期 ----------
