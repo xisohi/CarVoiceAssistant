@@ -78,7 +78,6 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         super.onDestroy()
         scope.cancel()
-        super.onDestroy()
     }
 
     // ---------- UI 刷新 ----------
@@ -116,11 +115,14 @@ class MainActivity : AppCompatActivity() {
         scope.launch {
             try {
                 val pack = ModelDownloader(this@MainActivity).download { p ->
-                    binding.progressDownload.isIndeterminate = false
-                    binding.progressDownload.max = 100
-                    binding.progressDownload.progress = (p.fraction * 100).toInt()
-                    binding.tvModelState.text =
-                        "下载中 ${p.bytesDownloaded / 1024 / 1024}MB / ${p.totalBytes / 1024 / 1024}MB"
+                    // 下载回调在 IO 线程，必须切回主线程更新 UI
+                    runOnUiThread {
+                        binding.progressDownload.isIndeterminate = false
+                        binding.progressDownload.max = 100
+                        binding.progressDownload.progress = (p.fraction * 100).toInt()
+                        binding.tvModelState.text =
+                            "下载中 ${p.bytesDownloaded / 1024 / 1024}MB / ${p.totalBytes / 1024 / 1024}MB"
+                    }
                 }
                 log("下载完成（${pack.length() / 1024 / 1024}MB），正在解压…")
                 ModelInstaller.install(this@MainActivity, pack)

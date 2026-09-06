@@ -22,11 +22,8 @@ android {
             abiFilters += listOf("armeabi-v7a", "arm64-v8a", "x86_64", "x86")
         }
 
-        // Picovoice AccessKey：到 console.picovoice.ai 免费申请后替换
-        buildConfigField("String", "PICOVOICE_ACCESS_KEY", "\"REPLACE_WITH_YOUR_ACCESS_KEY\"")
-
         // 首次下载模型包的地址（可换成你自己的 CDN）
-        buildConfigField("String", "MODEL_PACK_URL", "\"https://example.com/voice-assistant/models-v1.zip\"")
+        buildConfigField("String", "MODEL_PACK_URL", "\"https://lcjly.cn/car/models.zip\"")
         buildConfigField("String", "MODEL_PACK_MD5", "\"\"")
 
         // 默认离线 TTS 引擎包名（可选，系统引擎为空字符串时用系统默认）
@@ -67,9 +64,6 @@ dependencies {
     // 断点续传下载
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
-    // 离线语音识别（含 armeabi-v7a 原生库）
+    // 离线语音识别（含 armeabi-v7a 原生库），同时用于唤醒（grammar 模式）和识别
     implementation("com.alphacephei:vosk-android:0.3.47")
-
-    // 离线唤醒词（含 armeabi-v7a 原生库）
-    implementation("ai.picovoice:porcupine-android:3.0.2")
 }

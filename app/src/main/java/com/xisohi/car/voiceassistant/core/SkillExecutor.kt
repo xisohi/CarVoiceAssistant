@@ -104,29 +104,96 @@ class SkillExecutor(private val context: Context) {
 
     // ---------- 媒体 ----------
 
-    /** 通过媒体按键广播控制当前音乐（部分车机有效；生产环境建议接厂商媒体 SDK） */
+    /**
+     * 音乐控制。
+     * PLAY 操作：先尝试启动默认音乐播放器，再发送播放按键。
+     * PAUSE/NEXT/PREVIOUS：直接发送媒体按键（控制当前活跃播放器）。
+     */
     private fun mediaKey(keyCode: Int): ExecutionResult {
-        val down = Intent(Intent.ACTION_MEDIA_BUTTON)
-            .putExtra(Intent.EXTRA_KEY_EVENT, android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, keyCode))
-        val up = Intent(Intent.ACTION_MEDIA_BUTTON)
-            .putExtra(Intent.EXTRA_KEY_EVENT, android.view.KeyEvent(android.view.KeyEvent.ACTION_UP, keyCode))
-        context.sendBroadcast(down)
-        context.sendBroadcast(up)
-        return ExecutionResult(true, "好的")
+        val label = when (keyCode) {
+            android.view.KeyEvent.KEYCODE_MEDIA_PLAY -> "已播放"
+            android.view.KeyEvent.KEYCODE_MEDIA_PAUSE -> "已暂停"
+            android.view.KeyEvent.KEYCODE_MEDIA_NEXT -> "下一首"
+            android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS -> "上一首"
+            else -> "好的"
+        }
+        return try {
+            // PLAY 时先尝试启动默认音乐播放器（避免后台没有播放器时按键无人接收）
+            if (keyCode == android.view.KeyEvent.KEYCODE_MEDIA_PLAY) {
+                launchMusicPlayer()
+            }
+            // 发送媒体按键到当前活跃的 MediaSession
+            val down = android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, keyCode)
+            val up = android.view.KeyEvent(android.view.KeyEvent.ACTION_UP, keyCode)
+            audioManager.dispatchMediaKeyEvent(down)
+            audioManager.dispatchMediaKeyEvent(up)
+            ExecutionResult(true, label)
+        } catch (e: Exception) {
+            ExecutionResult(false, "音乐控制失败：${e.message ?: "未知错误"}")
+        }
+    }
+
+    /** 尝试启动系统默认音乐播放器，失败则静默忽略 */
+    private fun launchMusicPlayer() {
+        try {
+            val intent = Intent(Intent.ACTION_MAIN).apply {
+                addCategory(Intent.CATEGORY_APP_MUSIC)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(intent)
+        } catch (_: Exception) {
+            // 没有默认音乐播放器，忽略；dispatchMediaKeyEvent 仍可能控制后台播放器
+        }
     }
 
     // ---------- 导航 ----------
 
+    /**
+     * 拉起导航。优先尝试高德地图、百度地图的专用协议，
+     * 都不可用时回退到 geo: 系统通用协议（会弹出应用选择器）。
+     */
     private fun navigate(dest: String): ExecutionResult {
         if (dest.isBlank()) return ExecutionResult(false, "请告诉我目的地")
         val encoded = URLEncoder.encode(dest, "UTF-8")
-        val geo = Intent(Intent.ACTION_VIEW, Uri.parse("geo:0,0?q=$encoded"))
-        geo.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+
+        // 1. 高德地图
+        val amap = Intent(Intent.ACTION_VIEW).apply {
+            data = Uri.parse("androidamap://route?sourceApplication=voiceassistant&dname=$encoded&dev=0&t=0")
+            setPackage("com.autonavi.minimap")
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        if (tryStartActivity(amap)) {
+            return ExecutionResult(true, "正在用高德地图导航到${dest}")
+        }
+
+        // 2. 百度地图
+        val baidu = Intent(Intent.ACTION_VIEW).apply {
+            data = Uri.parse("baidumap://map/direction?destination=$encoded&mode=driving&src=voiceassistant")
+            setPackage("com.baidu.BaiduMap")
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        if (tryStartActivity(baidu)) {
+            return ExecutionResult(true, "正在用百度地图导航到${dest}")
+        }
+
+        // 3. 回退：系统 geo: 协议
+        val geo = Intent(Intent.ACTION_VIEW, Uri.parse("geo:0,0?q=$encoded")).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        return if (tryStartActivity(geo)) {
+            ExecutionResult(true, "正在为您导航到${dest}")
+        } else {
+            ExecutionResult(false, "未找到可用的导航应用，请先安装高德或百度地图")
+        }
+    }
+
+    /** 尝试启动 Activity，成功返回 true；没有能处理的应用时返回 false */
+    private fun tryStartActivity(intent: Intent): Boolean {
         return try {
-            context.startActivity(geo)
-            ExecutionResult(true, "正在为您导航到$dest")
+            context.startActivity(intent)
+            true
         } catch (e: Exception) {
-            ExecutionResult(false, "未找到可用的导航应用")
+            false
         }
     }
 
@@ -161,7 +228,7 @@ class SkillExecutor(private val context: Context) {
         if (degree == null) return ExecutionResult(false, "没听清温度数值")
         val provider = carControlProvider
         return if (provider != null && provider.setTemperature(degree)) {
-            ExecutionResult(true, "空调已调到$degree度")
+            ExecutionResult(true, "空调已调到${degree}度")
         } else {
             ExecutionResult(
                 false,
@@ -174,7 +241,7 @@ class SkillExecutor(private val context: Context) {
         val provider = carControlProvider
         return if (provider != null) {
             val ok = if (open) provider.openWindow(position) else provider.closeWindow(position)
-            if (ok) ExecutionResult(true, "已${if (open) "打开" else "关闭"}$position车窗")
+            if (ok) ExecutionResult(true, "已${if (open) "打开" else "关闭"}${position}车窗")
             else ExecutionResult(false, "车窗控制失败")
         } else {
             ExecutionResult(

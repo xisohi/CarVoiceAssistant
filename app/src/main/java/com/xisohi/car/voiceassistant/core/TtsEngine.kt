@@ -60,7 +60,12 @@ class TtsEngine(context: Context) : TextToSpeech.OnInitListener {
     val isReady: Boolean get() = ready
 
     fun speak(text: String) {
-        if (!ready) return
+        if (!ready) {
+            // TTS 不可用（未初始化或缺少中文语音数据）：立即回调结束，
+            // 避免调用方状态卡在 SPEAKING/PROCESSING 无法恢复唤醒
+            listener?.onSpeakDone()
+            return
+        }
         val utteranceId = UUID.randomUUID().toString()
         tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
     }

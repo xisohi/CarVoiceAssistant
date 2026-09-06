@@ -9,8 +9,7 @@ import java.util.zip.ZipFile
  *
  * 模型包目录约定：
  *   models.zip
- *   ├── asr/model/          Vosk 中文模型根（am/ conf/ graph/ 等）
- *   └── kws/xxx.ppn         自定义唤醒词（可选）
+ *   └── asr/model/          Vosk 中文模型根（am/ conf/ graph/ 等，唤醒+识别共用）
  */
 object ModelInstaller {
 

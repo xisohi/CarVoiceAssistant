@@ -36,7 +36,9 @@ class IntentParser(context: Context) {
 
     /** 解析文本，命中返回 [VoiceIntent]，否则 null */
     fun parse(text: String): VoiceIntent? {
-        val trimmed = text.trim()
+        // 去掉所有空格：Vosk 识别结果可能在词之间加空格（如"播放 音乐"），
+        // 而 intents.json 里的正则是无空格的（如"播放音乐"）
+        val trimmed = text.replace(" ", "").trim()
         if (trimmed.isEmpty()) return null
         for (rule in rules) {
             for (pattern in rule.patterns) {

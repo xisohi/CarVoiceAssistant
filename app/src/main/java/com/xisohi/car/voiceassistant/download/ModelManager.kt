@@ -9,8 +9,7 @@ import java.io.File
  * 目录结构（应用私有目录，无需存储权限）：
  *   filesDir/va/
  *     models/            模型包解压根目录
- *       asr/             Vosk 模型（解压后为 asr/model/）
- *       kws/             自定义唤醒词 .ppn（可选，无则用 SDK 内置词）
+ *       asr/             Vosk 模型（解压后为 asr/model/，唤醒和识别共用）
  *     packages/          下载的模型包 zip 缓存
  *     config/            意图规则等可热更新配置
  */
@@ -55,12 +54,5 @@ object ModelManager {
             if (f.isDirectory && File(f, "am").exists()) return f
         }
         return null
-    }
-
-    /** 自定义唤醒词 .ppn（本地 kws/ 目录），无则返回 null 表示用 SDK 内置词 */
-    fun customWakeWord(context: Context): File? {
-        val kws = File(modelsDir(context), "kws")
-        if (!kws.isDirectory) return null
-        return kws.listFiles { f -> f.extension.equals("ppn", true) }?.firstOrNull()
     }
 }

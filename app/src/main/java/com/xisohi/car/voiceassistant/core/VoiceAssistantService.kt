@@ -32,7 +32,7 @@ import kotlinx.coroutines.withContext
  *   → PROCESSING（解析+执行）→ SPEAKING（TTS 播报）→ IDLE
  *
  * 播报期间暂停唤醒监听（防回声误触发）；唤醒后会先停掉
- * Porcupine 的采集，再开识别采集，避免两个 AudioRecord 抢麦克风。
+ * 唤醒引擎的采集，再开识别采集，避免两个 AudioRecord 抢麦克风。
  */
 class VoiceAssistantService : Service() {
 
@@ -158,7 +158,7 @@ class VoiceAssistantService : Service() {
         }
         if (!ok) {
             currentState = State.IDLE
-            // AccessKey 未配置或唤醒词缺失：UI 会有明确提示
+            // 唤醒模型未就绪（kws/ 目录缺文件）：UI 会有明确提示
         }
     }
 
@@ -179,9 +179,10 @@ class VoiceAssistantService : Service() {
             return
         }
         // TTS 异步初始化，未就绪时仅跳过播报，识别照常进行
-        val grammar = intentParser.grammarPhrases()
+        // 不用 grammar 限定：vosk-model-small-cn 基于字，grammar 中的词组大多不在词表中会被忽略，
+        // 自由识别 + IntentParser 正则匹配反而更可靠。
         recognitionJob = scope.launch(Dispatchers.IO) {
-            val recognizer = SpeechRecognizer.create(modelDir, grammar)
+            val recognizer = SpeechRecognizer.create(modelDir, null)
             val minBuf = AudioRecord.getMinBufferSize(
                 SpeechRecognizer.SAMPLE_RATE.toInt(),
                 AudioFormat.CHANNEL_IN_MONO,
@@ -201,20 +202,33 @@ class VoiceAssistantService : Service() {
             )
             currentState = State.LISTENING
             record.startRecording()
+            android.util.Log.d("VoiceService", "开始录音识别")
             val shortBuf = ShortArray(512)
             val byteBuf = ByteArray(1024)
             val startMs = SystemClock.elapsedRealtime()
+            var lastPartial = ""
 
             try {
                 loop@ while (true) {
                     val n = record.read(shortBuf, 0, shortBuf.size)
                     if (n <= 0) continue
                     shortsToBytes(shortBuf, n, byteBuf)
-                    recognizer.feed(byteBuf, n * 2)
-                    if (recognizer.isEndpoint()) break@loop
-                    if (SystemClock.elapsedRealtime() - startMs > MAX_RECORD_MS) break@loop
+                    val partial = recognizer.feed(byteBuf, n * 2)
+                    if (!partial.isNullOrEmpty() && partial != lastPartial) {
+                        lastPartial = partial
+                        android.util.Log.d("VoiceService", "识别中: '$partial'")
+                    }
+                    if (recognizer.isEndpoint()) {
+                        android.util.Log.d("VoiceService", "检测到端点，结束录音 (${SystemClock.elapsedRealtime() - startMs}ms)")
+                        break@loop
+                    }
+                    if (SystemClock.elapsedRealtime() - startMs > MAX_RECORD_MS) {
+                        android.util.Log.d("VoiceService", "录音超时 (${MAX_RECORD_MS}ms)，结束录音")
+                        break@loop
+                    }
                 }
                 val finalText = recognizer.finish()
+                android.util.Log.d("VoiceService", "最终识别文本: '$finalText'")
                 withContext(Dispatchers.Main) { handleText(finalText) }
             } finally {
                 try {
@@ -230,21 +244,25 @@ class VoiceAssistantService : Service() {
 
     private fun handleText(text: String) {
         currentState = State.PROCESSING
+        android.util.Log.d("VoiceService", "识别文本: '$text'")
         if (text.isBlank()) {
             ttsEngine.speak("没有听清，请再说一遍")
             return
         }
         val intent = intentParser.parse(text)
         if (intent == null) {
+            android.util.Log.w("VoiceService", "未匹配到意图: '$text'")
             ttsEngine.speak("没听懂，可以试试说：把音量调到五十、播放音乐、导航去机场")
             return
         }
+        android.util.Log.i("VoiceService", "匹配意图: ${intent.action}, 参数: ${intent.params}")
         if (intent.action == "app.cancel") {
             currentState = State.IDLE
             resumeWake()
             return
         }
         val result = skillExecutor.execute(intent)
+        android.util.Log.i("VoiceService", "执行结果: handled=${result.handled}, spoken='${result.spoken}'")
         ttsEngine.speak(result.spoken)
     }
 
