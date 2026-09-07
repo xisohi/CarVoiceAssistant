@@ -2,6 +2,7 @@ package com.xisohi.car.voiceassistant
 
 import android.Manifest
 import android.accessibilityservice.AccessibilityServiceInfo
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -16,7 +17,6 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
-import com.xisohi.car.voiceassistant.core.AutoInputService
 import com.xisohi.car.voiceassistant.core.VoiceAssistantService
 import com.xisohi.car.voiceassistant.databinding.ActivityMainBinding
 import com.xisohi.car.voiceassistant.download.ModelDownloader
@@ -36,6 +36,7 @@ class MainActivity : AppCompatActivity() {
     companion object {
         private const val PREFS_NAME = "voice_assistant_prefs"
         private const val KEY_AUTO_START = "auto_start_on_boot"
+        private const val KEY_WAKE_WORD = "wake_word"
     }
 
     private lateinit var binding: ActivityMainBinding
@@ -63,26 +64,22 @@ class MainActivity : AppCompatActivity() {
         ensurePermissions()
         refreshModelState()
         refreshPermissionState()
+        loadWakeWord()
 
         binding.btnDownload.setOnClickListener { startDownload() }
-        // MainActivity.kt - 增强启动检查
 
         binding.btnToggleService.setOnClickListener {
             if (VoiceAssistantService.isRunning) {
                 VoiceAssistantService.stop(this)
             } else {
                 if (ModelManager.isModelReady(this)) {
-                    // 检查悬浮窗权限
                     if (!canDrawOverlays()) {
                         toast("请先授予悬浮窗权限")
                         openOverlaySettings()
                         return@setOnClickListener
                     }
-                    // ✅ 提示启用无障碍服务（如果未启用）
                     if (!isAccessibilityEnabled()) {
                         toast("建议启用无障碍服务以获得完整的导航自动输入体验")
-                        // 可以选择强制跳转到无障碍设置
-                        // openAccessibilitySettings()
                     }
                     VoiceAssistantService.start(this)
                     handler.postDelayed({ finish() }, 500)
@@ -92,7 +89,6 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // 无障碍服务授权按钮
         binding.btnAccessibility.setOnClickListener {
             openAccessibilitySettings()
         }
@@ -104,12 +100,34 @@ class MainActivity : AppCompatActivity() {
             prefs.edit().putBoolean(KEY_AUTO_START, isChecked).apply()
             toast(if (isChecked) "已开启开机自启动" else "已关闭开机自启动")
         }
+
+        // ---------- 唤醒词设置 ----------
+        binding.btnSaveWakeWord.setOnClickListener {
+            val newWord = binding.etWakeWord.text.toString().trim()
+            if (newWord.isEmpty()) {
+                toast("唤醒词不能为空")
+                return@setOnClickListener
+            }
+            // 保存
+            prefs.edit().putString(KEY_WAKE_WORD, newWord).apply()
+            toast("唤醒词已保存")
+            // 如果服务在运行，重启服务使新唤醒词生效
+            if (VoiceAssistantService.isRunning) {
+                VoiceAssistantService.stop(this)
+                // 延迟重新启动，确保完全停止
+                handler.postDelayed({
+                    VoiceAssistantService.start(this)
+                    toast("服务已重启，新唤醒词生效")
+                }, 500)
+            }
+        }
     }
 
     override fun onResume() {
         super.onResume()
         handler.post(stateRefresher)
         refreshPermissionState()
+        loadWakeWord()
     }
 
     override fun onPause() {
@@ -123,7 +141,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ---------- UI 刷新 ----------
-
     private fun refreshServiceState() {
         val running = VoiceAssistantService.isRunning
         binding.tvServiceState.text = if (running) "● 运行中" else "○ 已停止"
@@ -148,16 +165,12 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // ---------- 权限状态 ----------
-
     private fun refreshPermissionState() {
-        // 悬浮窗权限
         if (canDrawOverlays()) {
             binding.tvOverlayState.text = "● 已授权"
         } else {
             binding.tvOverlayState.text = "○ 未授权（点击授权）"
         }
-        // 无障碍服务
         if (isAccessibilityEnabled()) {
             binding.tvAccessibilityState.text = "● 已启用（导航自动填入）"
             binding.btnAccessibility.text = "无障碍服务已启用"
@@ -167,6 +180,13 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun loadWakeWord() {
+        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+        val saved = prefs.getString(KEY_WAKE_WORD, "小爱同学") ?: "小爱同学"
+        binding.etWakeWord.setText(saved)
+    }
+
+    // ---------- 权限及设置跳转 ----------
     private fun canDrawOverlays(): Boolean {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             Settings.canDrawOverlays(this)
@@ -195,14 +215,29 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // 修复：使用字符串常量替代 Settings.EXTRA_ACCESSIBILITY_SERVICE_COMPONENT_NAME
     private fun openAccessibilitySettings() {
-        val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
-        startActivity(intent)
-        toast("请在列表中找到「车载语音助手」并启用")
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                // 直接跳转到本服务（部分系统支持），使用字符串常量避免编译错误
+                val extraKey = "android.provider.extra.ACCESSIBILITY_SERVICE_COMPONENT_NAME"
+                intent.putExtra(
+                    extraKey,
+                    ComponentName(packageName, "com.xisohi.car.voiceassistant.core.AutoInputService").flattenToString()
+                )
+                startActivity(intent)
+                toast("请找到「车载语音助手」并开启无障碍服务")
+            } else {
+                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            }
+        } catch (e: Exception) {
+            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            toast("请在辅助功能列表中找到并启用本应用")
+        }
     }
 
     // ---------- 首次下载 ----------
-
     private fun startDownload() {
         binding.btnDownload.isEnabled = false
         binding.progressDownload.isIndeterminate = true
@@ -210,7 +245,6 @@ class MainActivity : AppCompatActivity() {
         scope.launch {
             try {
                 val pack = ModelDownloader(this@MainActivity).download { p ->
-                    // 下载回调在 IO 线程，必须切回主线程更新 UI
                     runOnUiThread {
                         binding.progressDownload.isIndeterminate = false
                         binding.progressDownload.max = 100
@@ -235,7 +269,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ---------- 日志与权限 ----------
-
     private fun log(msg: String) {
         val time = SimpleDateFormat("HH:mm:ss", Locale.CHINA).format(Date())
         binding.tvLog.append("[$time] $msg\n")
