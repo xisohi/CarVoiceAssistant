@@ -36,7 +36,6 @@ class MainActivity : AppCompatActivity() {
     companion object {
         private const val PREFS_NAME = "voice_assistant_prefs"
         private const val KEY_AUTO_START = "auto_start_on_boot"
-        private const val KEY_WAKE_WORD = "wake_word"
     }
 
     private lateinit var binding: ActivityMainBinding
@@ -64,7 +63,6 @@ class MainActivity : AppCompatActivity() {
         ensurePermissions()
         refreshModelState()
         refreshPermissionState()
-        loadWakeWord()
 
         binding.btnDownload.setOnClickListener { startDownload() }
 
@@ -100,34 +98,12 @@ class MainActivity : AppCompatActivity() {
             prefs.edit().putBoolean(KEY_AUTO_START, isChecked).apply()
             toast(if (isChecked) "已开启开机自启动" else "已关闭开机自启动")
         }
-
-        // ---------- 唤醒词设置 ----------
-        binding.btnSaveWakeWord.setOnClickListener {
-            val newWord = binding.etWakeWord.text.toString().trim()
-            if (newWord.isEmpty()) {
-                toast("唤醒词不能为空")
-                return@setOnClickListener
-            }
-            // 保存
-            prefs.edit().putString(KEY_WAKE_WORD, newWord).apply()
-            toast("唤醒词已保存")
-            // 如果服务在运行，重启服务使新唤醒词生效
-            if (VoiceAssistantService.isRunning) {
-                VoiceAssistantService.stop(this)
-                // 延迟重新启动，确保完全停止
-                handler.postDelayed({
-                    VoiceAssistantService.start(this)
-                    toast("服务已重启，新唤醒词生效")
-                }, 500)
-            }
-        }
     }
 
     override fun onResume() {
         super.onResume()
         handler.post(stateRefresher)
         refreshPermissionState()
-        loadWakeWord()
     }
 
     override fun onPause() {
@@ -180,12 +156,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun loadWakeWord() {
-        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-        val saved = prefs.getString(KEY_WAKE_WORD, "小爱同学") ?: "小爱同学"
-        binding.etWakeWord.setText(saved)
-    }
-
     // ---------- 权限及设置跳转 ----------
     private fun canDrawOverlays(): Boolean {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
@@ -215,12 +185,10 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // 修复：使用字符串常量替代 Settings.EXTRA_ACCESSIBILITY_SERVICE_COMPONENT_NAME
     private fun openAccessibilitySettings() {
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
-                // 直接跳转到本服务（部分系统支持），使用字符串常量避免编译错误
                 val extraKey = "android.provider.extra.ACCESSIBILITY_SERVICE_COMPONENT_NAME"
                 intent.putExtra(
                     extraKey,

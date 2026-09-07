@@ -68,31 +68,10 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="唤醒方式：说下方设置的唤醒词"
+                    android:text="唤醒方式：小娜/你好小娜/小娜小娜"
                     android:textSize="11sp"
                     android:textColor="#6B7280"
                     android:layout_marginTop="6dp" />
-
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:layout_marginTop="16dp">
-
-                    <EditText
-                        android:id="@+id/etWakeWord"
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:hint="输入唤醒词（如：你好小爱）"
-                        android:text="小爱同学" />
-
-                    <Button
-                        android:id="@+id/btnSaveWakeWord"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="保存" />
-                </LinearLayout>
 
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/btnToggleService"
