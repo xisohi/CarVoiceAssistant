@@ -28,16 +28,6 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/**
- * 常驻语音助手前台服务。
- *
- * 状态机：
- *   IDLE（唤醒监听中）→ 唤醒 → LISTENING（采集+识别）
- *   → PROCESSING（解析+执行）→ SPEAKING（TTS 播报）→ IDLE
- *
- * 播报期间暂停唤醒监听（防回声误触发）；唤醒后会先停掉
- * 唤醒引擎的采集，再开识别采集，避免两个 AudioRecord 抢麦克风。
- */
 class VoiceAssistantService : Service() {
 
     enum class State { IDLE, LISTENING, PROCESSING, SPEAKING }
@@ -59,7 +49,6 @@ class VoiceAssistantService : Service() {
 
         val isRunning: Boolean get() = instance != null
 
-        // ---------- 多轮对话状态 ----------
         @Volatile
         private var pendingSongResults: List<SongInfo>? = null
 
@@ -68,8 +57,7 @@ class VoiceAssistantService : Service() {
             private set
 
         fun start(context: Context) {
-            val intent = Intent(context, VoiceAssistantService::class.java)
-                .setAction(ACTION_START)
+            val intent = Intent(context, VoiceAssistantService::class.java).setAction(ACTION_START)
             if (Build.VERSION.SDK_INT >= 26) {
                 context.startForegroundService(intent)
             } else {
@@ -108,7 +96,6 @@ class VoiceAssistantService : Service() {
 
                 override fun onSpeakDone() {
                     currentState = State.IDLE
-                    // 多轮选择状态播报完成后，启动识别
                     if (isWaitingForSongSelection) {
                         android.util.Log.d("VoiceService", "选择状态下播报完成，停止唤醒并启动新识别")
                         wakeWordEngine.stop()
@@ -147,42 +134,32 @@ class VoiceAssistantService : Service() {
     private fun startForegroundCompat() {
         val notification = buildNotification("语音助手运行中")
         if (Build.VERSION.SDK_INT >= 29) {
-            startForeground(
-                NOTIF_ID, notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
-            )
+            startForeground(NOTIF_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
         } else {
             startForeground(NOTIF_ID, notification)
         }
     }
 
     private fun buildNotification(text: String): Notification {
-        val builder = NotificationCompat.Builder(this, CHANNEL_ID)
+        return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_mic)
             .setContentTitle(getString(R.string.app_name))
             .setContentText(text)
             .setOngoing(true)
-        return builder.build()
+            .build()
     }
 
     private fun createChannel() {
         if (Build.VERSION.SDK_INT >= 26) {
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                "语音助手",
-                NotificationManager.IMPORTANCE_LOW
-            )
-            val nm = getSystemService(NotificationManager::class.java)
-            nm.createNotificationChannel(channel)
+            val channel = NotificationChannel(CHANNEL_ID, "语音助手", NotificationManager.IMPORTANCE_LOW)
+            getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
         }
     }
 
-    // ---------- 唤醒 ----------
-
     private fun resumeWake() {
         if (recognitionJob?.isActive == true) return
-        // 回到空闲状态，延迟清除字幕（让用户看到最后结果）
-        mainHandler.postDelayed({ FloatViewService.updateSubtitle("") }, 5000)
+        // 延迟清除字幕（5秒后清除）
+        scheduleSubtitleClear(5000)
         val ok = wakeWordEngine.start { _ ->
             onWakeWord()
         }
@@ -191,15 +168,25 @@ class VoiceAssistantService : Service() {
         }
     }
 
+    // 统一的字幕清除调度，避免重复任务
+    private fun scheduleSubtitleClear(delayMs: Long) {
+        mainHandler.removeCallbacks(clearSubtitleRunnable)
+        mainHandler.postDelayed(clearSubtitleRunnable, delayMs)
+    }
+
+    private val clearSubtitleRunnable = Runnable {
+        FloatViewService.updateSubtitle("")
+    }
+
     private fun onWakeWord() {
         if (currentState != State.IDLE) return
-        // 清空旧字幕
+        // 清除旧字幕
         FloatViewService.updateSubtitle("")
+        // 取消任何待清除任务
+        mainHandler.removeCallbacks(clearSubtitleRunnable)
         wakeWordEngine.stop()
         startRecognition()
     }
-
-    // ---------- 识别 ----------
 
     private fun startRecognition() {
         val modelDir = ModelManager.findAsrModelDir(this)
@@ -245,32 +232,27 @@ class VoiceAssistantService : Service() {
                     if (!partial.isNullOrEmpty() && partial != lastPartial) {
                         lastPartial = partial
                         android.util.Log.d("VoiceService", "识别中: '$partial'")
-                        // ✅ 实时更新字幕
                         withContext(Dispatchers.Main) {
                             FloatViewService.updateSubtitle("💬 $partial")
                         }
                     }
                     if (recognizer.isEndpoint()) {
-                        android.util.Log.d("VoiceService", "检测到端点，结束录音 (${SystemClock.elapsedRealtime() - startMs}ms)")
+                        android.util.Log.d("VoiceService", "检测到端点")
                         break@loop
                     }
                     if (SystemClock.elapsedRealtime() - startMs > MAX_RECORD_MS) {
-                        android.util.Log.d("VoiceService", "录音超时 (${MAX_RECORD_MS}ms)，结束录音")
+                        android.util.Log.d("VoiceService", "录音超时")
                         break@loop
                     }
                 }
                 finalText = recognizer.finish()
                 android.util.Log.d("VoiceService", "最终识别文本: '$finalText'")
             } finally {
-                try {
-                    record.stop()
-                } catch (_: Exception) {
-                }
+                try { record.stop() } catch (_: Exception) {}
                 record.release()
                 recognizer.release()
                 recognitionJob = null
             }
-            // 必须在麦克风释放后再处理结果
             withContext(Dispatchers.Main) { handleText(finalText) }
         }
     }
@@ -278,32 +260,43 @@ class VoiceAssistantService : Service() {
     private fun handleText(text: String) {
         currentState = State.PROCESSING
         android.util.Log.d("VoiceService", "识别文本: '$text'")
-        // ✅ 显示用户说的话
         FloatViewService.updateSubtitle("👉 $text")
+        // 先调度一个清除（15秒后强制清除，避免卡住）
+        scheduleSubtitleClear(15000)
 
         if (text.isBlank()) {
             FloatViewService.updateSubtitle("❌ 没有听清")
             ttsEngine.speak("没有听清，请再说一遍")
+            // 即使TTS未就绪，也会在 resumeWake 中清除，但需要确保 resumeWake 被调用。
+            // 由于 speak 可能不会触发回调，我们直接延迟调用 resumeWake
+            mainHandler.postDelayed({
+                if (currentState != State.IDLE) {
+                    currentState = State.IDLE
+                    resumeWake()
+                }
+            }, 3000)
             return
         }
 
-        // ---------- 多轮对话：等待选择歌曲 ----------
+        // 多轮对话选择
         if (isWaitingForSongSelection) {
             val index = parseSongIndexFromText(text)
             if (index > 0) {
                 android.util.Log.d("VoiceService", "多轮对话：选择第 $index 首")
                 val result = skillExecutor.selectSong(index.toString())
-                android.util.Log.i("VoiceService", "选择结果: handled=${result.handled}, spoken='${result.spoken}'")
                 if (result.handled) {
                     pendingSongResults = null
                     isWaitingForSongSelection = false
                 }
                 FloatViewService.updateSubtitle("✅ ${result.spoken}")
                 ttsEngine.speak(result.spoken)
+                // 如果TTS不可用，直接恢复
+                if (!ttsEngine.isReady) {
+                    currentState = State.IDLE
+                    resumeWake()
+                }
                 return
             }
-            // 用户说了其他内容，取消选择状态
-            android.util.Log.d("VoiceService", "取消歌曲选择状态")
             pendingSongResults = null
             isWaitingForSongSelection = false
         }
@@ -313,6 +306,10 @@ class VoiceAssistantService : Service() {
             android.util.Log.w("VoiceService", "未匹配到意图: '$text'")
             FloatViewService.updateSubtitle("❌ 没听懂")
             ttsEngine.speak("没听懂，可以试试说：把音量调到五十、播放音乐、导航去机场")
+            if (!ttsEngine.isReady) {
+                currentState = State.IDLE
+                resumeWake()
+            }
             return
         }
         android.util.Log.i("VoiceService", "匹配意图: ${intent.action}, 参数: ${intent.params}")
@@ -323,15 +320,20 @@ class VoiceAssistantService : Service() {
             return
         }
 
-        // ---------- 音乐搜索 ----------
+        // 音乐搜索
         if (intent.action == "media.search_play") {
             val result = skillExecutor.execute(intent)
-            android.util.Log.i("VoiceService", "搜索结果: handled=${result.handled}, spoken='${result.spoken}'")
             FloatViewService.updateSubtitle("⏳ ${result.spoken}")
             ttsEngine.speak(result.spoken)
             if (result.handled) {
                 scope.launch(Dispatchers.IO) {
                     waitForSearchResultsAndPrompt()
+                }
+            } else {
+                // 执行失败，恢复
+                if (!ttsEngine.isReady) {
+                    currentState = State.IDLE
+                    resumeWake()
                 }
             }
             return
@@ -343,85 +345,75 @@ class VoiceAssistantService : Service() {
 
         if (result.spoken.isBlank()) {
             currentState = State.IDLE
-            mainHandler.postDelayed({ FloatViewService.updateSubtitle("") }, 3000)
             resumeWake()
             return
         }
 
         ttsEngine.speak(result.spoken)
-
-        // 保险：15秒后如果状态还是 SPEAKING，强制恢复
-        mainHandler.removeCallbacksAndMessages(null)
-        mainHandler.postDelayed({
-            if (currentState == State.SPEAKING) {
-                android.util.Log.w("VoiceService", "TTS超时，强制恢复唤醒")
-                currentState = State.IDLE
-                FloatViewService.updateSubtitle("")
-                resumeWake()
-            }
-        }, 15000)
+        // 如果TTS未就绪，直接恢复
+        if (!ttsEngine.isReady) {
+            currentState = State.IDLE
+            resumeWake()
+        }
+        // 否则由TTS回调恢复
     }
 
-    /**
-     * 异步等待音乐搜索完成，然后播报结果列表，进入多轮对话选择状态。
-     */
     private suspend fun waitForSearchResultsAndPrompt() {
         try {
             var waited = 0L
             val interval = 500L
             val maxWait = 15000L
             while (waited < maxWait) {
-                if (MusicFreeInputHandler.isSearchCompleted()) {
-                    break
-                }
+                if (MusicFreeInputHandler.isSearchCompleted()) break
                 kotlinx.coroutines.delay(interval)
                 waited += interval
             }
             if (!MusicFreeInputHandler.isSearchCompleted()) {
-                android.util.Log.w("VoiceService", "搜索超时")
                 withContext(Dispatchers.Main) {
                     FloatViewService.updateSubtitle("❌ 搜索超时")
                     ttsEngine.speak("搜索超时，请重试")
+                    if (!ttsEngine.isReady) {
+                        currentState = State.IDLE
+                        resumeWake()
+                    }
                 }
                 return
             }
             kotlinx.coroutines.delay(2000)
-            val clickedSingle = MusicFreeInputHandler.clickSingleTab()
-            android.util.Log.d("VoiceService", "点击'单曲'分类结果: $clickedSingle")
+            MusicFreeInputHandler.clickSingleTab()
             kotlinx.coroutines.delay(3000)
-            val results = MusicFreeInputHandler.getSearchResults()
-            val finalResults = if (results.isEmpty()) {
-                android.util.Log.d("VoiceService", "点击分类后无结果，尝试直接读取")
-                MusicFreeInputHandler.getSearchResults()
-            } else {
-                results
+            var results = MusicFreeInputHandler.getSearchResults()
+            if (results.isEmpty()) {
+                results = MusicFreeInputHandler.getSearchResults()
             }
-            if (finalResults.isEmpty()) {
+            if (results.isEmpty()) {
                 withContext(Dispatchers.Main) {
                     FloatViewService.updateSubtitle("❌ 没有找到相关歌曲")
                     ttsEngine.speak("没有找到相关歌曲")
+                    if (!ttsEngine.isReady) {
+                        currentState = State.IDLE
+                        resumeWake()
+                    }
                 }
                 return
             }
-            pendingSongResults = finalResults
+            pendingSongResults = results
             isWaitingForSongSelection = true
 
             val prompt = buildString {
-                append("找到${finalResults.size}首，")
-                finalResults.take(5).forEachIndexed { index, song ->
+                append("找到${results.size}首，")
+                results.take(5).forEachIndexed { index, song ->
                     append("第${index + 1}首，${song.title}")
                     if (song.artist.isNotEmpty()) append("，${song.artist}")
                     append("；")
                 }
-                if (finalResults.size > 5) append("等${finalResults.size}首。")
+                if (results.size > 5) append("等${results.size}首。")
                 append("请问播放第几首？")
             }
-            android.util.Log.d("VoiceService", "搜索结果播报: $prompt")
             withContext(Dispatchers.Main) {
-                // 显示搜索结果提示
-                FloatViewService.updateSubtitle("🎵 找到 ${finalResults.size} 首，请说第几首")
+                FloatViewService.updateSubtitle("🎵 找到 ${results.size} 首，请说第几首")
                 if (!ttsEngine.isReady) {
-                    android.util.Log.w("VoiceService", "TTS 不可用，跳过播报，直接启动识别")
+                    android.util.Log.w("VoiceService", "TTS不可用，跳过播报，直接启动识别")
                     wakeWordEngine.stop()
                     startRecognition()
                 } else {
@@ -432,6 +424,8 @@ class VoiceAssistantService : Service() {
             android.util.Log.w("VoiceService", "等待搜索结果失败: ${e.message}")
             withContext(Dispatchers.Main) {
                 FloatViewService.updateSubtitle("❌ 搜索出错")
+                currentState = State.IDLE
+                resumeWake()
             }
         }
     }
@@ -452,19 +446,15 @@ class VoiceAssistantService : Service() {
         return 0
     }
 
-    // ---------- 生命周期 ----------
-
     override fun onDestroy() {
         instance = null
         currentState = State.IDLE
         recognitionJob?.cancel()
         scope.cancel()
-        try {
-            wakeWordEngine.stop()
-        } catch (_: Exception) {
-        }
+        try { wakeWordEngine.stop() } catch (_: Exception) {}
         ttsEngine.shutdown()
         FloatViewService.updateSubtitle("")
+        mainHandler.removeCallbacks(clearSubtitleRunnable)
         super.onDestroy()
     }
 

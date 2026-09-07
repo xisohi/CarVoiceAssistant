@@ -20,7 +20,7 @@
         android:layout_height="wrap_content"
         android:text="语音助手"
         android:textColor="#FFFFFF"
-        android:textSize="10sp"
+        android:textSize="8sp"
         android:layout_marginTop="2dp" />
-    
+
 </LinearLayout>
