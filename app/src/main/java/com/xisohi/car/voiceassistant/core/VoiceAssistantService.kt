@@ -12,6 +12,8 @@ import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.os.Build
 import android.os.IBinder
+import android.os.Looper
+import android.os.Handler
 import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import com.xisohi.car.voiceassistant.R
@@ -84,7 +86,7 @@ class VoiceAssistantService : Service() {
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
-
+    private val mainHandler = Handler(Looper.getMainLooper())
     private lateinit var wakeWordEngine: WakeWordEngine
     private lateinit var intentParser: IntentParser
     private lateinit var skillExecutor: SkillExecutor
@@ -336,7 +338,25 @@ class VoiceAssistantService : Service() {
 
         val result = skillExecutor.execute(intent)
         android.util.Log.i("VoiceService", "执行结果: handled=${result.handled}, spoken='${result.spoken}'")
+
+        if (result.spoken.isBlank()) {
+            // 没有播报内容，直接恢复
+            currentState = State.IDLE
+            resumeWake()
+            return
+        }
+
         ttsEngine.speak(result.spoken)
+
+// 保险：15秒后如果状态还是 SPEAKING，强制恢复
+        mainHandler.removeCallbacksAndMessages(null)
+        mainHandler.postDelayed({
+            if (currentState == State.SPEAKING) {
+                android.util.Log.w("VoiceService", "TTS超时，强制恢复唤醒")
+                currentState = State.IDLE
+                resumeWake()
+            }
+        }, 15000)
     }
 
     /**

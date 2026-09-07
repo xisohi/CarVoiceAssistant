@@ -1,6 +1,5 @@
 package com.xisohi.car.voiceassistant.core.autoinput
 
-import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -11,12 +10,11 @@ import com.xisohi.car.voiceassistant.core.AutoInputService
 /**
  * 高德地图车机版（com.autonavi.amapauto）自动输入处理器。
  *
- * 功能：导航时自动在搜索框中填入目的地并触发搜索。
- *
- * 注意事项：
- * - 高德车机版不支持 URI 参数自动填入搜索框，必须用无障碍服务
- * - 搜索框 hint 为"请输入目的地"
- * - 修改本类时不要影响 [MusicFreeInputHandler]
+ * 修复要点：
+ * 1. 废弃剪贴板+长按粘贴方案，改用 ACTION_SET_TEXT 直接输入
+ * 2. 优先通过无障碍节点查找，坐标点击仅作为兜底
+ * 3. 增加节点回收和空检查，防止内存泄漏和崩溃
+ * 4. 支持高德车机版多个版本的搜索框特征
  */
 class AmapInputHandler : AutoInputHandler() {
 
@@ -27,207 +25,251 @@ class AmapInputHandler : AutoInputHandler() {
         @Volatile
         private var pendingDestination: String? = null
 
-        /** 设置待自动输入的导航目的地（导航功能启动时调用） */
         fun setPendingDestination(dest: String) {
             pendingDestination = dest
-            currentStep = Step.NEED_CLICK_SEARCH_BOX
-            Log.d(TAG, "设置待输入目的地: $dest, 阶段: NEED_CLICK_SEARCH_BOX")
+            currentStep = Step.IDLE
+            Log.d(TAG, "设置待输入目的地: $dest")
         }
 
         fun clearPendingDestination() {
             pendingDestination = null
             currentStep = Step.IDLE
+            handler.removeCallbacksAndMessages(null)
         }
 
-        /** 处理阶段 */
         private enum class Step {
-            IDLE,                       // 空闲
-            NEED_CLICK_SEARCH_BOX,      // 需要点击主界面搜索框（打开搜索页）
-            NEED_CLICK_SEARCH_INPUT,    // 需要点击搜索页的输入框（获取焦点）
-            NEED_INPUT_TEXT,             // 需要输入目的地
-            NEED_CLICK_SEARCH_BUTTON     // 需要点击搜索按钮（键盘搜索键）
+            IDLE,
+            WAIT_FOR_SEARCH_PAGE,
+            INPUT_AND_SEARCH
         }
 
         @Volatile
         private var currentStep = Step.IDLE
+
+        private val handler = Handler(Looper.getMainLooper())
     }
 
     override val targetPackage = PACKAGE
-    private val handler = Handler(Looper.getMainLooper())
 
     override fun hasPendingTask(): Boolean = pendingDestination != null
 
-    override fun clearPendingTask() {
-        pendingDestination = null
-        currentStep = Step.IDLE
-    }
+    override fun clearPendingTask() = clearPendingDestination()
 
     override fun handle(event: AccessibilityEvent, rootNode: AccessibilityNodeInfo) {
-        val dest = pendingDestination
-        if (dest == null) {
-            Log.d(TAG, "handle 被调用，但 pendingDestination 为空，跳过")
-            return
-        }
-        Log.d(TAG, "handle 被触发，待输入目的地: $dest, 阶段: $currentStep, 事件类型: ${event.eventType}")
+        val dest = pendingDestination ?: return
+        Log.d(TAG, "handle: step=$currentStep, event=${event.eventType}, dest=$dest")
 
-        try {
-            val rect = android.graphics.Rect()
-            rootNode.getBoundsInScreen(rect)
-            val screenWidth = rect.width()
-            val screenHeight = rect.height()
-
-            when (currentStep) {
-                Step.NEED_CLICK_SEARCH_BOX -> {
-                    // 主界面是 MapView，没有可访问性节点，直接点击搜索框的屏幕位置
-                    val searchBoxX = screenWidth / 2f
-                    val searchBoxY = screenHeight * 0.09f
-                    Log.d(TAG, "点击主界面搜索框: ($searchBoxX, $searchBoxY)")
-                    AutoInputService.tap(searchBoxX, searchBoxY)
-                    currentStep = Step.NEED_CLICK_SEARCH_INPUT
-                    // 延迟 2 秒后主动触发，点击搜索页输入框
+        when (currentStep) {
+            Step.IDLE -> {
+                // 刚打开高德，需要点击搜索框进入搜索页
+                if (clickSearchBox(rootNode)) {
+                    currentStep = Step.WAIT_FOR_SEARCH_PAGE
+                    // 等待搜索页加载
                     handler.postDelayed({
-                        try {
-                            val currentRoot = AutoInputService.currentRootNode
-                            if (currentRoot != null && pendingDestination != null) {
-                                handle(AccessibilityEvent.obtain(), currentRoot)
-                            }
-                        } catch (_: Exception) {}
-                    }, 2000)
-                }
-
-                Step.NEED_CLICK_SEARCH_INPUT -> {
-                    // 搜索页已打开，点击输入框获取焦点
-                    val inputX = screenWidth / 2f
-                    val inputY = screenHeight * 0.09f
-                    Log.d(TAG, "点击搜索页输入框: ($inputX, $inputY)")
-                    AutoInputService.tap(inputX, inputY)
-                    currentStep = Step.NEED_INPUT_TEXT
-                    // 延迟 1 秒后长按输入框，弹出粘贴菜单
-                    handler.postDelayed({
-                        try {
-                            val currentRoot = AutoInputService.currentRootNode
-                            if (currentRoot != null && pendingDestination != null) {
-                                handle(AccessibilityEvent.obtain(), currentRoot)
-                            }
-                        } catch (_: Exception) {}
-                    }, 1000)
-                }
-
-                Step.NEED_INPUT_TEXT -> {
-                    // 先把目的地复制到剪贴板
-                    copyToClipboard("导航目的地", dest)
-                    // 长按输入框，弹出粘贴菜单
-                    val inputX = screenWidth / 2f
-                    val inputY = screenHeight * 0.09f
-                    Log.d(TAG, "长按输入框弹出粘贴菜单: ($inputX, $inputY), 目的地: $dest")
-                    AutoInputService.longPress(inputX, inputY, 1000)
-                    currentStep = Step.NEED_CLICK_SEARCH_BUTTON
-                    // 延迟 1 秒后点击粘贴按钮位置（通常在输入框下方）
-                    handler.postDelayed({
-                        try {
-                            // 粘贴按钮通常在弹出菜单的第一个选项，位置在输入框左下方
-                            val pasteX = screenWidth * 0.15f
-                            val pasteY = screenHeight * 0.16f
-                            Log.d(TAG, "点击粘贴按钮: ($pasteX, $pasteY)")
-                            AutoInputService.tap(pasteX, pasteY)
-
-                            // 再延迟 1.5 秒后点击键盘搜索键
-                            handler.postDelayed({
-                                try {
-                                    // 键盘搜索键通常在右下角
-                                    val searchKeyX = screenWidth * 0.88f
-                                    val searchKeyY = screenHeight * 0.88f
-                                    Log.d(TAG, "点击键盘搜索键: ($searchKeyX, $searchKeyY)")
-                                    AutoInputService.tap(searchKeyX, searchKeyY)
-                                    pendingDestination = null
-                                    currentStep = Step.IDLE
-                                } catch (e: Exception) {
-                                    Log.w(TAG, "点击搜索键失败: ${e.message}")
-                                }
-                            }, 1500)
-                        } catch (e: Exception) {
-                            Log.w(TAG, "点击粘贴失败: ${e.message}")
-                        }
-                    }, 1000)
-                }
-
-                else -> {
-                    Log.d(TAG, "阶段: $currentStep，不处理")
+                        AutoInputService.triggerAfterDelay(500)
+                    }, 800)
+                } else {
+                    Log.w(TAG, "未找到搜索框，尝试兜底坐标点击")
+                    fallbackTapSearchBox(rootNode)
                 }
             }
-        } catch (e: Exception) {
-            Log.w(TAG, "自动输入失败: ${e.message}")
+
+            Step.WAIT_FOR_SEARCH_PAGE -> {
+                // 搜索页已打开，查找输入框并输入
+                val editText = findSearchInput(rootNode)
+                if (editText != null) {
+                    // 直接设置文本，不需要剪贴板
+                    inputText(editText, dest)
+                    Log.d(TAG, "已输入目的地: $dest")
+                    currentStep = Step.INPUT_AND_SEARCH
+                    // 延迟触发搜索
+                    handler.postDelayed({
+                        triggerSearch(rootNode)
+                    }, 500)
+                } else {
+                    Log.w(TAG, "搜索页未找到输入框")
+                    // 重试一次
+                    handler.postDelayed({
+                        AutoInputService.triggerAfterDelay(500)
+                    }, 1000)
+                }
+            }
+
+            Step.INPUT_AND_SEARCH -> {
+                // 输入已完成，触发搜索
+                triggerSearch(rootNode)
+            }
         }
     }
 
-    /** 复制文本到剪贴板 */
-    private fun copyToClipboard(label: String, text: String) {
-        try {
-            val clipboard = AutoInputService.serviceContext?.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-            clipboard.setPrimaryClip(android.content.ClipData.newPlainText(label, text))
-            Log.d(TAG, "已复制到剪贴板: $text")
-        } catch (e: Exception) {
-            Log.w(TAG, "复制到剪贴板失败: ${e.message}")
+    // ---------- 查找搜索框（主界面）----------
+
+    private fun clickSearchBox(rootNode: AccessibilityNodeInfo): Boolean {
+        // 策略1：通过文本查找
+        val byText = findNodeByTexts(rootNode, "搜索", "请输入目的地", "搜索目的地")
+        if (byText != null && byText.isClickable) {
+            byText.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            Log.d(TAG, "点击搜索框(文本匹配)")
+            return true
         }
+
+        // 策略2：通过 contentDescription
+        val byDesc = findNodeByDescriptions(rootNode, "搜索", "search")
+        if (byDesc != null && byDesc.isClickable) {
+            byDesc.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            Log.d(TAG, "点击搜索框(desc匹配)")
+            return true
+        }
+
+        // 策略3：查找带有搜索图标的按钮（ImageView/ImageButton）
+        val searchIcon = findSearchIconButton(rootNode)
+        if (searchIcon != null && searchIcon.isClickable) {
+            searchIcon.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            Log.d(TAG, "点击搜索框(图标匹配)")
+            return true
+        }
+
+        return false
     }
 
-    // ---------- 多种策略查找搜索框 ----------
+    // ---------- 查找搜索输入框（搜索页）----------
 
-    /**
-     * 多种策略查找搜索框
-     * 策略1：className == EditText 且 hint/desc 包含"搜索"或"目的地"
-     * 策略2：className == EditText 且是页面中唯一的可输入框
-     * 策略3：通过contentDescription查找
-     */
-    private fun findEditTextByMultipleStrategies(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
-        // 策略1：hint包含"搜索"或"目的地"
-        val byHint = findEditTextByHint(node, "搜索", "目的地", "输入", "search")
-        if (byHint != null) return byHint
+    private fun findSearchInput(rootNode: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        // 策略1：className 为 EditText
+        val editText = findEditText(rootNode)
+        if (editText != null) {
+            // 验证 hint 或 text 是否包含搜索相关关键词
+            val hint = editText.hintText?.toString() ?: ""
+            val text = editText.text?.toString() ?: ""
+            if (hint.contains("搜索") || hint.contains("目的地") ||
+                text.contains("搜索") || text.contains("目的地") ||
+                hint.contains("输入") || text.isEmpty()
+            ) {
+                Log.d(TAG, "找到搜索输入框(EditText)")
+                return editText
+            }
+        }
 
-        // 策略2：contentDescription包含相关关键词
-        val byDesc = findEditTextByContentDesc(node, "搜索", "search", "输入")
-        if (byDesc != null) return byDesc
+        // 策略2：通过 contentDescription 查找可输入节点
+        val byDesc = findNodeByDescriptions(rootNode, "搜索", "请输入", "目的地")
+        if (byDesc != null) {
+            Log.d(TAG, "找到搜索输入框(desc)")
+            return byDesc
+        }
 
-        // 策略3：className为EditText，且是页面中唯一的EditText
+        // 策略3：查找页面中唯一的 EditText
         val allEditTexts = mutableListOf<AccessibilityNodeInfo>()
-        collectAllEditTexts(node, allEditTexts)
+        collectAllEditTexts(rootNode, allEditTexts)
         if (allEditTexts.size == 1) {
+            Log.d(TAG, "找到唯一EditText作为搜索框")
             return allEditTexts[0]
         }
 
         return null
     }
 
-    private fun findEditTextByHint(node: AccessibilityNodeInfo, vararg hints: String): AccessibilityNodeInfo? {
-        val hint = node.hintText?.toString() ?: ""
-        val text = node.text?.toString() ?: ""
-        if (node.className == "android.widget.EditText") {
-            for (h in hints) {
-                if (hint.contains(h, ignoreCase = true) || text.contains(h, ignoreCase = true)) {
-                    return node
-                }
+    // ---------- 触发搜索 ----------
+
+    private fun triggerSearch(rootNode: AccessibilityNodeInfo) {
+        // 策略1：点击"搜索"按钮
+        val searchBtn = findClickableByText(rootNode, "搜索")
+            ?: findClickableByContentDesc(rootNode, "搜索", "search")
+        if (searchBtn != null) {
+            searchBtn.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            Log.d(TAG, "点击搜索按钮")
+            clearPendingDestination()
+            return
+        }
+
+        // 策略2：给输入框追加回车符触发搜索
+        val editText = findEditText(rootNode)
+        if (editText != null) {
+            val currentText = editText.text?.toString() ?: ""
+            val args = android.os.Bundle()
+            args.putCharSequence(
+                AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
+                currentText + "\n"
+            )
+            val success = editText.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+            if (success) {
+                Log.d(TAG, "追加回车触发搜索")
+                clearPendingDestination()
+                return
             }
+        }
+
+        // 策略3：兜底坐标点击搜索按钮位置（右下角）
+        fallbackTapSearchButton(rootNode)
+        clearPendingDestination()
+    }
+
+    // ---------- 兜底坐标点击 ----------
+
+    private fun fallbackTapSearchBox(rootNode: AccessibilityNodeInfo) {
+        val rect = android.graphics.Rect()
+        rootNode.getBoundsInScreen(rect)
+        val w = rect.width().toFloat()
+        val h = rect.height().toFloat()
+        // 高德主界面搜索框通常在顶部中央
+        AutoInputService.tap(w / 2f, h * 0.08f)
+    }
+
+    private fun fallbackTapSearchButton(rootNode: AccessibilityNodeInfo) {
+        val rect = android.graphics.Rect()
+        rootNode.getBoundsInScreen(rect)
+        val w = rect.width().toFloat()
+        val h = rect.height().toFloat()
+        // 搜索按钮通常在右下角
+        AutoInputService.tap(w * 0.9f, h * 0.9f)
+    }
+
+    // ---------- 通用查找工具 ----------
+
+    private fun findNodeByTexts(
+        node: AccessibilityNodeInfo,
+        vararg texts: String
+    ): AccessibilityNodeInfo? {
+        val nodeText = node.text?.toString() ?: ""
+        for (t in texts) {
+            if (nodeText.contains(t)) return node
         }
         for (i in 0 until node.childCount) {
             val child = node.getChild(i) ?: continue
-            val found = findEditTextByHint(child, *hints)
+            val found = findNodeByTexts(child, *texts)
             if (found != null) return found
         }
         return null
     }
 
-    private fun findEditTextByContentDesc(node: AccessibilityNodeInfo, vararg keywords: String): AccessibilityNodeInfo? {
-        val desc = node.contentDescription?.toString() ?: ""
-        if (node.className == "android.widget.EditText") {
-            for (k in keywords) {
-                if (desc.contains(k, ignoreCase = true)) {
-                    return node
-                }
+    private fun findNodeByDescriptions(
+        node: AccessibilityNodeInfo,
+        vararg descs: String
+    ): AccessibilityNodeInfo? {
+        val nodeDesc = node.contentDescription?.toString() ?: ""
+        for (d in descs) {
+            if (nodeDesc.contains(d, ignoreCase = true)) return node
+        }
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            val found = findNodeByDescriptions(child, *descs)
+            if (found != null) return found
+        }
+        return null
+    }
+
+    private fun findSearchIconButton(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        val className = node.className?.toString() ?: ""
+        if ((className.contains("ImageButton") || className.contains("ImageView")) &&
+            node.isClickable
+        ) {
+            val desc = node.contentDescription?.toString() ?: ""
+            if (desc.contains("搜索") || desc.contains("search", ignoreCase = true)) {
+                return node
             }
         }
         for (i in 0 until node.childCount) {
             val child = node.getChild(i) ?: continue
-            val found = findEditTextByContentDesc(child, *keywords)
+            val found = findSearchIconButton(child)
             if (found != null) return found
         }
         return null
@@ -240,24 +282,6 @@ class AmapInputHandler : AutoInputHandler() {
         for (i in 0 until node.childCount) {
             val child = node.getChild(i) ?: continue
             collectAllEditTexts(child, results)
-        }
-    }
-
-    // ---------- 触发搜索 ----------
-
-    private fun triggerSearch(rootNode: AccessibilityNodeInfo) {
-        // 查找"搜索"按钮
-        val searchButton = findClickableByText(rootNode, "搜索")
-        if (searchButton != null) {
-            Log.d(TAG, "点击搜索按钮")
-            searchButton.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-            return
-        }
-        // 没找到搜索按钮，给搜索框发送回车
-        val editText = findEditText(rootNode)
-        if (editText != null) {
-            Log.d(TAG, "发送回车触发搜索")
-            inputText(editText, "\n")
         }
     }
 }

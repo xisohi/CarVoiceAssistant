@@ -333,30 +333,85 @@ class SkillExecutor(private val context: Context) {
         return 0
     }
 
-    // ---------- 导航 ----------
+// ---------- 导航 ----------
 
     /**
      * 拉起导航。
      *
      * 优先级：
-     * 1. [高德手机版] androidamap://, com.autonavi.minimap
-     * 2. [高德车机版 专用] androidauto://, com.autonavi.amapauto
-     *    - 车机版不支持 URI 自动填入搜索框，需配合 [AmapInputHandler] 无障碍服务
-     *    - 支持的 URI scheme 是 androidauto（不是 amapauto 也不是 androidamap）
+     * 1. [高德车机版] androidauto://, com.autonavi.amapauto
+     *    - 优先 keywordNavi（搜索+导航一体化）
+     *    - 次选 poi（打开搜索页）
+     * 2. [高德手机版] androidamap://, com.autonavi.minimap
      * 3. [百度地图汽车版] baidumap://, com.baidu.naviauto
-     *    - 汽车版包名是 com.baidu.naviauto（不是普通版的 com.baidu.BaiduMap）
-     *    - 支持 baidumap:// scheme，尝试 URI 自动填入，失败则用无障碍服务
      * 4. [通用] 系统 geo: 协议
      *
-     * 修改高德车机版相关逻辑时，只改第 2 层，不要影响其他层。
+     * 修复：修正高德车机版 URI 参数格式，增加 pending 状态清理
      */
     private fun navigate(dest: String): ExecutionResult {
         if (dest.isBlank()) return ExecutionResult(false, "请告诉我目的地")
         val encoded = URLEncoder.encode(dest, "UTF-8")
 
-        // 1. 高德手机版（不变）
+        // 1. 高德车机版（优先）
+        if (isAppInstalled("com.autonavi.amapauto")) {
+            AmapInputHandler.setPendingDestination(dest)
+
+            // 方式1：keywordNavi（搜索+导航，最符合语音场景）
+            val keywordIntent = Intent(Intent.ACTION_VIEW).apply {
+                data = Uri.parse(
+                    "androidauto://keywordNavi?" +
+                            "sourceApplication=${context.packageName}" +
+                            "&keywords=$encoded" +
+                            "&style=2"
+                )
+                setPackage("com.autonavi.amapauto")
+                addCategory("android.intent.category.DEFAULT")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            if (tryStartActivity(keywordIntent)) {
+                // keywordNavi 可能直接导航，也可能弹出选择列表
+                // 如果高德没有自动处理，无障碍服务兜底
+                AutoInputService.triggerAfterDelay(2500)
+                return ExecutionResult(true, "正在为您导航到${dest}")
+            }
+
+            // 方式2：poi 搜索（打开搜索页，显示结果列表）
+            val poiIntent = Intent(Intent.ACTION_VIEW).apply {
+                data = Uri.parse(
+                    "androidauto://poi?" +
+                            "sourceApplication=${context.packageName}" +
+                            "&keywords=$encoded"
+                )
+                setPackage("com.autonavi.amapauto")
+                addCategory("android.intent.category.DEFAULT")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            if (tryStartActivity(poiIntent)) {
+                AutoInputService.triggerAfterDelay(2000)
+                return ExecutionResult(true, "正在搜索${dest}")
+            }
+
+            // 方式3：直接启动高德主界面，让无障碍服务处理
+            val launchIntent = context.packageManager.getLaunchIntentForPackage("com.autonavi.amapauto")
+            if (launchIntent != null) {
+                launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                context.startActivity(launchIntent)
+                AutoInputService.triggerAfterDelay(3000)
+                return ExecutionResult(true, "已打开高德地图，正在为您搜索${dest}")
+            }
+
+            // 高德调起全部失败，清理 pending 状态
+            AmapInputHandler.clearPendingDestination()
+        }
+
+        // 2. 高德手机版
         val amapMobile = Intent(Intent.ACTION_VIEW).apply {
-            data = Uri.parse("androidamap://route?sourceApplication=voiceassistant&dname=$encoded&dev=0&t=0")
+            data = Uri.parse(
+                "androidamap://route?" +
+                        "sourceApplication=voiceassistant" +
+                        "&dname=$encoded" +
+                        "&dev=0&t=0"
+            )
             setPackage("com.autonavi.minimap")
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
@@ -364,94 +419,43 @@ class SkillExecutor(private val context: Context) {
             return ExecutionResult(true, "正在用高德地图导航到${dest}")
         }
 
-        // 2. 高德车机版（URI + 无障碍服务自动填入）
-        // ⚠️ 关键：先设置待输入的目的地（无障碍服务会监听）
-        AmapInputHandler.setPendingDestination(dest)
-        // 同时复制到剪贴板作为兜底
-        copyToClipboard("导航目的地", dest)
+        // 3. 百度地图汽车版
+        if (isAppInstalled("com.baidu.naviauto")) {
+            BaiduMapInputHandler.setPendingDestination(dest)
 
-        // 使用多个URI尝试，增加成功率
-        val amapAutoIntents = listOf(
-            // 方式1：poi搜索（最常用）
-            Intent(Intent.ACTION_VIEW).apply {
-                data = Uri.parse("androidauto://poi?keyword=$encoded")
-                setPackage("com.autonavi.amapauto")
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                putExtra("keyword", dest)
-                putExtra("query", dest)
-            },
-            // 方式2：直接导航（部分版本支持）
-            Intent(Intent.ACTION_VIEW).apply {
-                data = Uri.parse("androidauto://navi?destination=$encoded")
-                setPackage("com.autonavi.amapauto")
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            },
-            // 方式3：搜索页（备用）
-            Intent(Intent.ACTION_VIEW).apply {
-                data = Uri.parse("androidauto://search?keyword=$encoded")
-                setPackage("com.autonavi.amapauto")
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-        )
+            val baiduIntents = listOf(
+                Intent(Intent.ACTION_VIEW).apply {
+                    data = Uri.parse(
+                        "baidumap://map/direction?" +
+                                "destination=$encoded" +
+                                "&mode=driving" +
+                                "&src=voiceassistant"
+                    )
+                    setPackage("com.baidu.naviauto")
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                },
+                Intent(Intent.ACTION_VIEW).apply {
+                    data = Uri.parse(
+                        "baidumap://map/search?" +
+                                "query=$encoded" +
+                                "&src=voiceassistant"
+                    )
+                    setPackage("com.baidu.naviauto")
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+            )
 
-        for (intent in amapAutoIntents) {
-            if (tryStartActivity(intent)) {
-                // ✅ 成功拉起高德车机版
-                // 主动触发一次无障碍事件处理（高德地图主界面可能不自动触发事件）
-                AutoInputService.triggerAfterDelay(2000)
-                return ExecutionResult(true, "正在为您搜索${dest}")
+            for (intent in baiduIntents) {
+                if (tryStartActivity(intent)) {
+                    return ExecutionResult(true, "正在用百度地图搜索${dest}")
+                }
             }
+
+            BaiduMapInputHandler.clearPendingDestination()
         }
 
-        // 3. 百度地图汽车版（包名 com.baidu.naviauto，支持 baidumap:// scheme）
-        // 先设置待输入的目的地（无障碍服务会监听，URI 自动填入失败时兜底）
-        BaiduMapInputHandler.setPendingDestination(dest)
-        // 同时复制到剪贴板作为兜底
-        copyToClipboard("导航目的地", dest)
-
-        val baiduIntents = listOf(
-            // 方式1：直接导航（最理想）
-            Intent(Intent.ACTION_VIEW).apply {
-                data = Uri.parse("baidumap://map/direction?destination=$encoded&mode=driving&src=voiceassistant")
-                setPackage("com.baidu.naviauto")
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            },
-            // 方式2：搜索 POI
-            Intent(Intent.ACTION_VIEW).apply {
-                data = Uri.parse("baidumap://map/search?query=$encoded&src=voiceassistant")
-                setPackage("com.baidu.naviauto")
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            },
-            // 方式3：地理编码
-            Intent(Intent.ACTION_VIEW).apply {
-                data = Uri.parse("baidumap://map/geocoder?address=$encoded&src=voiceassistant")
-                setPackage("com.baidu.naviauto")
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-        )
-
-        for (intent in baiduIntents) {
-            if (tryStartActivity(intent)) {
-                // ✅ 成功拉起百度地图汽车版
-                // 如果 URI 能自动填入最好，否则无障碍服务会在搜索页打开后自动填入
-                return ExecutionResult(true, "正在用百度地图搜索${dest}")
-            }
-        }
-
-        // 4. 兜底：直接启动主界面
-        return try {
-            val launchIntent = context.packageManager.getLaunchIntentForPackage("com.autonavi.amapauto")
-            if (launchIntent != null) {
-                launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                context.startActivity(launchIntent)
-                // ⚠️ 启动主界面后，无障碍服务仍然会检测到搜索框并自动填入
-                ExecutionResult(true, "已打开高德地图，正在为您搜索${dest}")
-            } else {
-                ExecutionResult(false, "未找到高德地图车机版，请先安装")
-            }
-        } catch (e: Exception) {
-            ExecutionResult(false, "打开导航失败：${e.message}")
-        }
+        // 全部失败
+        return ExecutionResult(false, "未找到可用的导航应用")
     }
 
     /** 尝试启动 Activity，成功返回 true；没有能处理的应用时返回 false */

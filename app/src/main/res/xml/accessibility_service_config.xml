@@ -1,8 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
-<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
-    android:accessibilityEventTypes="typeWindowStateChanged|typeViewClicked|typeViewFocused|typeWindowContentChanged"
-    android:accessibilityFeedbackType="feedbackGeneric"
-    android:accessibilityFlags="flagDefault|flagRetrieveInteractiveWindows"
-    android:canRetrieveWindowContent="true"
+<accessibility-service
+    xmlns:android="http://schemas.android.com/apk/res/android"
     android:description="@string/accessibility_description"
+    android:packageNames="com.autonavi.amapauto,com.baidu.naviauto,fun.upup.musicfree"
+    android:accessibilityEventTypes="typeWindowStateChanged|typeViewClicked|typeViewFocused|typeWindowContentChanged|typeViewTextChanged"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagDefault|flagIncludeNotImportantViews|flagReportViewIds|flagRetrieveInteractiveWindows"
+    android:canRetrieveWindowContent="true"
+    android:canPerformGestures="true"
     android:notificationTimeout="100" />
