@@ -22,12 +22,6 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-/**
- * 悬浮窗服务：在其他应用上方显示一个小悬浮球。
- * 点击悬浮球 = 唤醒语音助手（等同于说"小爱同学"）。
- * 悬浮球颜色/文字随状态变化：空闲（蓝）/ 聆听中（绿）/ 处理中（橙）。
- * 长按拖动可移动位置。
- */
 class FloatViewService : Service() {
 
     companion object {
@@ -36,6 +30,16 @@ class FloatViewService : Service() {
         }
         fun stop(context: Context) {
             context.stopService(Intent(context, FloatViewService::class.java))
+        }
+
+        // ---------- 字幕控制（新增） ----------
+        private var subtitleTextView: TextView? = null
+
+        /** 外部调用更新字幕，自动切换到主线程 */
+        fun updateSubtitle(text: String?) {
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                subtitleTextView?.text = text ?: ""
+            }
         }
     }
 
@@ -57,6 +61,9 @@ class FloatViewService : Service() {
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
 
         floatView = View.inflate(this, R.layout.float_ball, null)
+        // 获取字幕 TextView 引用
+        subtitleTextView = floatView.findViewById(R.id.tvFloatSubtitle)
+
         val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
         } else {
@@ -74,7 +81,6 @@ class FloatViewService : Service() {
         layoutParams.x = 50
         layoutParams.y = 300
 
-        // 点击唤醒，长按拖动
         floatView.setOnTouchListener { _, event ->
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
@@ -98,7 +104,6 @@ class FloatViewService : Service() {
                 }
                 MotionEvent.ACTION_UP -> {
                     if (!isDragging) {
-                        // 点击 = 唤醒
                         triggerWake()
                     }
                     true
@@ -111,7 +116,6 @@ class FloatViewService : Service() {
         startStateMonitoring()
     }
 
-    /** 触发唤醒：如果语音服务在运行，发送唤醒指令；否则启动服务 */
     private fun triggerWake() {
         try {
             val intent = Intent(this, VoiceAssistantService::class.java)
@@ -126,7 +130,6 @@ class FloatViewService : Service() {
         }
     }
 
-    /** 监听语音服务状态，更新悬浮球外观 */
     private fun startStateMonitoring() {
         stateJob = scope.launch {
             while (true) {
@@ -165,6 +168,7 @@ class FloatViewService : Service() {
         super.onDestroy()
         stateJob?.cancel()
         scope.cancel()
+        subtitleTextView = null
         try {
             windowManager.removeView(floatView)
         } catch (_: Exception) {

@@ -23,4 +23,16 @@
         android:textSize="10sp"
         android:layout_marginTop="2dp" />
 
+    <!-- 新增：识别文字/结果字幕 -->
+    <TextView
+        android:id="@+id/tvFloatSubtitle"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:textSize="13sp"
+        android:textColor="#FFEB3B"
+        android:maxWidth="200dp"
+        android:singleLine="true"
+        android:ellipsize="end"
+        android:text="" />
+
 </LinearLayout>

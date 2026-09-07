@@ -3,21 +3,13 @@ package com.xisohi.car.voiceassistant
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import com.xisohi.car.voiceassistant.core.FloatViewService
 import com.xisohi.car.voiceassistant.core.VoiceAssistantService
 import com.xisohi.car.voiceassistant.download.ModelManager
 
-/**
- * 开机自启接收器：设备启动完成或用户解锁后自动启动语音助手服务。
- *
- * 支持的触发广播：
- * - BOOT_COMPLETED：设备启动完成（标准 Android）
- * - USER_PRESENT：用户解锁设备（模拟器上更可靠）
- * - QUICKBOOT_POWERON：部分厂商 ROM 的快速启动广播
- *
- * 需要模型已下载完成才会自启；未初始化时不启动。
- */
 class BootReceiver : BroadcastReceiver() {
 
     companion object {
@@ -30,7 +22,6 @@ class BootReceiver : BroadcastReceiver() {
         val action = intent.action
         Log.d(TAG, "收到广播: $action")
 
-        // 只处理我们关心的广播
         val validActions = listOf(
             Intent.ACTION_BOOT_COMPLETED,
             Intent.ACTION_USER_PRESENT,
@@ -38,33 +29,33 @@ class BootReceiver : BroadcastReceiver() {
         )
         if (action !in validActions) return
 
-        // 检查开机自启开关（默认开启）
+        // 检查自启开关
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val autoStart = prefs.getBoolean(KEY_AUTO_START, true)
         Log.d(TAG, "开机自启开关: $autoStart")
         if (!autoStart) return
 
-        // 如果服务已经在运行，跳过
+        // 如果服务已在运行，跳过
         if (VoiceAssistantService.isRunning) {
             Log.d(TAG, "服务已在运行，跳过")
             return
         }
 
-        // 仅在模型已就绪时自启
-        val modelReady = ModelManager.isModelReady(context)
-        Log.d(TAG, "模型就绪: $modelReady")
-        if (!modelReady) {
-            Log.w(TAG, "模型未就绪，不自启")
-            return
-        }
+        // 延迟启动，等待系统完全就绪（增加成功率）
+        Handler(Looper.getMainLooper()).postDelayed({
+            tryStartServices(context)
+        }, 5000) // 延迟5秒
+    }
 
+    private fun tryStartServices(context: Context) {
+        Log.d(TAG, "尝试启动服务...")
+        // 不强制检查模型是否就绪，让服务自己去处理
         try {
-            // 启动语音助手前台服务
             VoiceAssistantService.start(context)
-            Log.i(TAG, "已启动语音助手服务 (触发: $action)")
+            Log.i(TAG, "已启动语音助手服务")
 
-            // 延迟启动悬浮窗（等前台服务初始化完成）
-            android.os.Handler(context.mainLooper).postDelayed({
+            // 延迟启动悬浮窗
+            Handler(Looper.getMainLooper()).postDelayed({
                 try {
                     FloatViewService.start(context)
                     Log.i(TAG, "已启动悬浮窗")
@@ -74,6 +65,15 @@ class BootReceiver : BroadcastReceiver() {
             }, 2000)
         } catch (e: Exception) {
             Log.e(TAG, "自启失败: ${e.message}", e)
+            // 可以尝试再重试一次
+            Handler(Looper.getMainLooper()).postDelayed({
+                try {
+                    VoiceAssistantService.start(context)
+                    Log.i(TAG, "重试启动语音助手成功")
+                } catch (e2: Exception) {
+                    Log.e(TAG, "重试仍然失败: ${e2.message}")
+                }
+            }, 10000)
         }
     }
 }
