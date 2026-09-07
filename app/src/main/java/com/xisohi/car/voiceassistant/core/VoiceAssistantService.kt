@@ -19,6 +19,7 @@ import androidx.core.app.NotificationCompat
 import com.xisohi.car.voiceassistant.R
 import com.xisohi.car.voiceassistant.core.autoinput.MusicFreeInputHandler
 import com.xisohi.car.voiceassistant.core.autoinput.SongInfo
+import com.xisohi.car.voiceassistant.core.wakeword.WakeWordEngine  // 使用您指定的包
 import com.xisohi.car.voiceassistant.download.ModelManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -79,13 +80,23 @@ class VoiceAssistantService : Service() {
 
     private var recognitionJob: Job? = null
 
+    // 唤醒音频采集线程
+    private var wakeAudioThread: WakeAudioThread? = null
+    @Volatile
+    private var isWakeListening = false
+
     override fun onCreate() {
         super.onCreate()
         instance = this
         currentState = State.IDLE
         createChannel()
 
+        // 初始化官方 WakeWordEngine（构造函数自动加载 model_info.json）
         wakeWordEngine = WakeWordEngine(this)
+        if (!wakeWordEngine.isLoaded) {
+            android.util.Log.e("VoiceService", "唤醒引擎加载失败: ${wakeWordEngine.errorMessage}")
+        }
+
         intentParser = IntentParser(this)
         skillExecutor = SkillExecutor(this)
         ttsEngine = TtsEngine(this).apply {
@@ -98,7 +109,7 @@ class VoiceAssistantService : Service() {
                     currentState = State.IDLE
                     if (isWaitingForSongSelection) {
                         android.util.Log.d("VoiceService", "选择状态下播报完成，停止唤醒并启动新识别")
-                        wakeWordEngine.stop()
+                        stopWakeListening()
                         startRecognition()
                     } else {
                         resumeWake()
@@ -156,38 +167,108 @@ class VoiceAssistantService : Service() {
         }
     }
 
+    // ---------- 唤醒监听 ----------
     private fun resumeWake() {
         if (recognitionJob?.isActive == true) return
-        // 延迟清除字幕（5秒后清除）
         scheduleSubtitleClear(5000)
-        val ok = wakeWordEngine.start { _ ->
-            onWakeWord()
+        startWakeListening()
+    }
+
+    private fun startWakeListening() {
+        if (isWakeListening) return
+        if (!wakeWordEngine.isLoaded) {
+            android.util.Log.e("VoiceService", "唤醒引擎未加载，无法启动")
+            return
         }
-        if (!ok) {
-            currentState = State.IDLE
+        isWakeListening = true
+        wakeAudioThread = WakeAudioThread().apply { start() }
+        android.util.Log.d("VoiceService", "唤醒监听已启动")
+    }
+
+    private fun stopWakeListening() {
+        isWakeListening = false
+        wakeAudioThread?.interrupt()
+        wakeAudioThread = null
+        android.util.Log.d("VoiceService", "唤醒监听已停止")
+    }
+
+    // 唤醒音频采集与推理线程
+    private inner class WakeAudioThread : Thread("WakeAudioThread") {
+        override fun run() {
+            val sampleRate = 16000
+            val channelConfig = AudioFormat.CHANNEL_IN_MONO
+            val audioFormat = AudioFormat.ENCODING_PCM_16BIT
+            val minBufSize = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioFormat)
+            if (minBufSize <= 0) {
+                android.util.Log.e("WakeAudioThread", "无效的音频参数")
+                return
+            }
+
+            val record = AudioRecord(
+                MediaRecorder.AudioSource.MIC,
+                sampleRate,
+                channelConfig,
+                audioFormat,
+                maxOf(minBufSize * 2, sampleRate)
+            )
+            if (record.state != AudioRecord.STATE_INITIALIZED) {
+                android.util.Log.e("WakeAudioThread", "AudioRecord 初始化失败")
+                return
+            }
+
+            // 官方引擎需要的帧大小（由 engine.audioSamplesNeeded 获取）
+            val frameSize = wakeWordEngine.audioSamplesNeeded
+            if (frameSize <= 0) {
+                android.util.Log.e("WakeAudioThread", "无效的帧大小")
+                record.release()
+                return
+            }
+
+            val audioBuffer = ShortArray(frameSize)
+            record.startRecording()
+            android.util.Log.d("WakeAudioThread", "开始录音，帧大小=$frameSize")
+
+            try {
+                while (isWakeListening && !isInterrupted()) {
+                    val read = record.read(audioBuffer, 0, frameSize, AudioRecord.READ_BLOCKING)
+                    if (read == frameSize) {
+                        val result = wakeWordEngine.process(audioBuffer)
+                        if (result != null && result.wakeWord != null && result.probability > 0.5f) {
+                            android.util.Log.i("WakeAudioThread", "唤醒词检测到: ${result.wakeWord} (${result.probability})")
+                            // 触发唤醒回调
+                            mainHandler.post {
+                                if (currentState == VoiceAssistantService.State.IDLE) {
+                                    onWakeWord()
+                                }
+                            }
+                            // 防抖：暂停处理一会儿
+                            Thread.sleep(1000)
+                        }
+                    }
+                }
+            } catch (e: InterruptedException) {
+                // 正常退出
+            } finally {
+                try { record.stop() } catch (_: Exception) {}
+                record.release()
+                android.util.Log.d("WakeAudioThread", "录音线程结束")
+            }
         }
     }
 
-    // 统一的字幕清除调度，避免重复任务
-    private fun scheduleSubtitleClear(delayMs: Long) {
-        mainHandler.removeCallbacks(clearSubtitleRunnable)
-        mainHandler.postDelayed(clearSubtitleRunnable, delayMs)
-    }
-
-    private val clearSubtitleRunnable = Runnable {
-        FloatViewService.updateSubtitle("")
-    }
-
+    // ---------- 唤醒触发 ----------
     private fun onWakeWord() {
         if (currentState != State.IDLE) return
         // 清除旧字幕
         FloatViewService.updateSubtitle("")
-        // 取消任何待清除任务
         mainHandler.removeCallbacks(clearSubtitleRunnable)
-        wakeWordEngine.stop()
+        // 停止唤醒监听
+        stopWakeListening()
+        // 启动语音识别
         startRecognition()
     }
 
+    // ---------- 语音识别 ----------
     private fun startRecognition() {
         val modelDir = ModelManager.findAsrModelDir(this)
         if (modelDir == null) {
@@ -257,20 +338,18 @@ class VoiceAssistantService : Service() {
         }
     }
 
+    // ---------- 文本处理 ----------
     private fun handleText(text: String) {
         currentState = State.PROCESSING
         android.util.Log.d("VoiceService", "识别文本: '$text'")
         FloatViewService.updateSubtitle("👉 $text")
-        // 先调度一个清除（15秒后强制清除，避免卡住）
         scheduleSubtitleClear(15000)
 
         if (text.isBlank()) {
             FloatViewService.updateSubtitle("❌ 没有听清")
             ttsEngine.speak("没有听清，请再说一遍")
-            // 即使TTS未就绪，也会在 resumeWake 中清除，但需要确保 resumeWake 被调用。
-            // 由于 speak 可能不会触发回调，我们直接延迟调用 resumeWake
             mainHandler.postDelayed({
-                if (currentState != State.IDLE) {
+                if (currentState != VoiceAssistantService.State.IDLE) {
                     currentState = State.IDLE
                     resumeWake()
                 }
@@ -290,7 +369,6 @@ class VoiceAssistantService : Service() {
                 }
                 FloatViewService.updateSubtitle("✅ ${result.spoken}")
                 ttsEngine.speak(result.spoken)
-                // 如果TTS不可用，直接恢复
                 if (!ttsEngine.isReady) {
                     currentState = State.IDLE
                     resumeWake()
@@ -330,7 +408,6 @@ class VoiceAssistantService : Service() {
                     waitForSearchResultsAndPrompt()
                 }
             } else {
-                // 执行失败，恢复
                 if (!ttsEngine.isReady) {
                     currentState = State.IDLE
                     resumeWake()
@@ -350,14 +427,13 @@ class VoiceAssistantService : Service() {
         }
 
         ttsEngine.speak(result.spoken)
-        // 如果TTS未就绪，直接恢复
         if (!ttsEngine.isReady) {
             currentState = State.IDLE
             resumeWake()
         }
-        // 否则由TTS回调恢复
     }
 
+    // ---------- 搜索相关 ----------
     private suspend fun waitForSearchResultsAndPrompt() {
         try {
             var waited = 0L
@@ -414,7 +490,7 @@ class VoiceAssistantService : Service() {
                 FloatViewService.updateSubtitle("🎵 找到 ${results.size} 首，请说第几首")
                 if (!ttsEngine.isReady) {
                     android.util.Log.w("VoiceService", "TTS不可用，跳过播报，直接启动识别")
-                    wakeWordEngine.stop()
+                    stopWakeListening()
                     startRecognition()
                 } else {
                     ttsEngine.speak(prompt)
@@ -446,12 +522,14 @@ class VoiceAssistantService : Service() {
         return 0
     }
 
+    // ---------- 清理 ----------
     override fun onDestroy() {
         instance = null
         currentState = State.IDLE
         recognitionJob?.cancel()
         scope.cancel()
-        try { wakeWordEngine.stop() } catch (_: Exception) {}
+        stopWakeListening()
+        wakeWordEngine.close()
         ttsEngine.shutdown()
         FloatViewService.updateSubtitle("")
         mainHandler.removeCallbacks(clearSubtitleRunnable)
@@ -459,6 +537,15 @@ class VoiceAssistantService : Service() {
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    private fun scheduleSubtitleClear(delayMs: Long) {
+        mainHandler.removeCallbacks(clearSubtitleRunnable)
+        mainHandler.postDelayed(clearSubtitleRunnable, delayMs)
+    }
+
+    private val clearSubtitleRunnable = Runnable {
+        FloatViewService.updateSubtitle("")
+    }
 
     private fun shortsToBytes(shortData: ShortArray, count: Int, out: ByteArray) {
         for (i in 0 until count) {
