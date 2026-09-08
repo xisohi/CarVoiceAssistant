@@ -3,9 +3,28 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+// 读取签名配置（CI 构建时由工作流生成 keystore.properties）
+val keystoreProperties = java.util.Properties()
+val keystorePropertiesFile = rootProject.file("keystore.properties")
+if (keystorePropertiesFile.exists()) {
+    keystoreProperties.load(java.io.FileInputStream(keystorePropertiesFile))
+}
+
 android {
     namespace = "com.xisohi.car.voiceassistant"
     compileSdk = 34
+
+    // 签名配置
+    signingConfigs {
+        create("release") {
+            if (keystoreProperties.getProperty("RELEASE_STORE_FILE") != null) {
+                storeFile = file(keystoreProperties["RELEASE_STORE_FILE"] as String)
+                storePassword = keystoreProperties["RELEASE_STORE_PASSWORD"] as String
+                keyAlias = keystoreProperties["RELEASE_KEY_ALIAS"] as String
+                keyPassword = keystoreProperties["RELEASE_KEY_PASSWORD"] as String
+            }
+        }
+    }
 
     defaultConfig {
         applicationId = "com.xisohi.car.voiceassistant"
@@ -37,6 +56,10 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            // 使用签名配置（如果存在）
+            if (keystoreProperties.getProperty("RELEASE_STORE_FILE") != null) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 
