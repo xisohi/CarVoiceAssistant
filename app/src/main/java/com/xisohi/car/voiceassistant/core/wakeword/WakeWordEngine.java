@@ -34,6 +34,32 @@ public class WakeWordEngine {
     private static final String TAG = "WakeWordEngine";
     private static final String MEL_MODEL = "melspectrogram.onnx";
 
+    /** 音频增益系数：放大输入音频，提高小声说话的检测率。 */
+    private static float audioGain = 1.5f;
+
+    /** 唤醒检测阈值：sigmoid 概率超过此值即判定为唤醒。降低可提高灵敏度。 */
+    private static float detectionThreshold = 0.5f;
+
+    /** 灵敏度档位：0=低, 1=中(默认), 2=高 */
+    private static int sensitivityLevel = 1;
+    private static final float[] GAIN_BY_LEVEL = {1.0f, 1.5f, 2.5f};
+    private static final float[] THRESHOLD_BY_LEVEL = {0.6f, 0.5f, 0.35f};
+    private static final String[] LEVEL_NAMES = {"低", "中", "高"};
+
+    /** 设置灵敏度档位（0=低, 1=中, 2=高） */
+    public static void setSensitivity(int level) {
+        if (level < 0 || level > 2) level = 1;
+        sensitivityLevel = level;
+        audioGain = GAIN_BY_LEVEL[level];
+        detectionThreshold = THRESHOLD_BY_LEVEL[level];
+        Log.i(TAG, "灵敏度设置为: " + LEVEL_NAMES[level]
+                + " (增益=" + audioGain + ", 阈值=" + detectionThreshold + ")");
+    }
+    /** 获取当前灵敏度档位 */
+    public static int getSensitivity() { return sensitivityLevel; }
+    /** 获取当前灵敏度名称 */
+    public static String getSensitivityName() { return LEVEL_NAMES[sensitivityLevel]; }
+
     // Audio parameters (constant)
     static final int SAMPLE_RATE = 16000;
     static final float MEL_HOP_SEC = 0.010f;
@@ -112,6 +138,67 @@ public class WakeWordEngine {
     private static final int DEBUG_LOG_MAX = 50;
     private long engineStartTime = System.currentTimeMillis();
     private static final long STARTUP_SKIP_MS = 3000;  // skip first 3s to avoid cold-start FP
+
+    // ===== 唤醒灵敏度测试日志 =====
+    /** 测试日志回调接口 */
+    public interface TestLogListener {
+        void onLog(String line);
+    }
+
+    /** 实时检测回调接口（用于校准向导） */
+    public interface DetectionListener {
+        /** 每帧检测结果回调
+         * @param word 检测到的关键词（null表示未检测到）
+         * @param prob 最高概率（0~1）
+         * @param melMean mel频谱均值（反映音量）
+         * @param triggered 是否真正触发（超过阈值且连续帧确认）
+         */
+        void onDetection(String word, float prob, float melMean, boolean triggered);
+    }
+    private static DetectionListener detectionListener = null;
+    /** 设置实时检测回调 */
+    public static void setDetectionListener(DetectionListener listener) {
+        detectionListener = listener;
+    }
+    private static TestLogListener testLogListener = null;
+    private static final java.util.List<String> testLogs = new java.util.ArrayList<>();
+    private static boolean testLogging = false;
+    private static String testScenario = "";
+
+    /** 设置测试日志监听器 */
+    public static void setTestLogListener(TestLogListener listener) {
+        testLogListener = listener;
+    }
+    /** 开始记录测试日志 */
+    public static void startTestLogging(String scenario) {
+        testScenario = scenario;
+        testLogging = true;
+        testLogs.clear();
+        testLogs.add("=== 测试场景: " + scenario + " ===");
+        testLogs.add("时间, 唤醒词, 概率, 阈值, 增益, 是否触发");
+    }
+    /** 停止记录测试日志 */
+    public static void stopTestLogging() {
+        testLogging = false;
+    }
+    /** 获取测试日志 */
+    public static java.util.List<String> getTestLogs() {
+        return new java.util.ArrayList<>(testLogs);
+    }
+    /** 清除测试日志 */
+    public static void clearTestLogs() {
+        testLogs.clear();
+    }
+    /** 获取当前音频增益 */
+    public static float getAudioGain() { return audioGain; }
+    /** 获取当前检测阈值 */
+    public static float getDetectionThreshold() { return detectionThreshold; }
+    /** 直接设置增益和阈值（用于校准向导应用结果） */
+    public static void setGainAndThreshold(float gain, float threshold) {
+        audioGain = gain;
+        detectionThreshold = threshold;
+        Log.i(TAG, "参数已更新: gain=" + gain + ", threshold=" + threshold);
+    }
 
     public WakeWordEngine(Context context) {
         env = OrtEnvironment.getEnvironment();
@@ -229,7 +316,7 @@ public class WakeWordEngine {
             // 1. Convert to float
             float[] floatAudio = new float[audio.length];
             for (int i = 0; i < audio.length; i++) {
-                floatAudio[i] = (float) audio[i];
+                floatAudio[i] = (float) audio[i] * audioGain;
             }
 
             // 2. Mel spectrogram
@@ -275,6 +362,8 @@ public class WakeWordEngine {
             float bestSigmoid = 0;
             String bestWord = null;
             int bestConsFrames = 2;
+            // melMean for callback
+            float melMean = 0f;
 
             if (isMultiKeyword) {
                 // ── New: single multi-keyword model → [1, N] output ──
@@ -310,7 +399,7 @@ public class WakeWordEngine {
                             topVal[1] = v; topIdx[1] = i; }
                         else if (v > topVal[2]) { topVal[2] = v; topIdx[2] = i; }
                     }
-                    float melMean = 0;
+                    melMean = 0;
                     for (int f = 0; f < dscnnMelTime; f++)
                         for (int m = 0; m < N_MELS; m++)
                             melMean += dscnnInput[0][f][m];
@@ -365,15 +454,48 @@ public class WakeWordEngine {
                         if (v > melMax) melMax = v;
                     }
                 }
-                float m = melSum / (dscnnMelTime * N_MELS);
+                melMean = melSum / (dscnnMelTime * N_MELS);
                 Log.d(TAG, String.format(Locale.US,
                         "[DS-CNN] %d models sig=%.4f word=%s melMean=%.2f melMin=%.2f melMax=%.2f",
                         models.size(), bestSigmoid, bestWord != null ? bestWord : "-",
-                        m, melMin, melMax));
+                        melMean, melMin, melMax));
             }
 
             float bgProb = 1.0f - bestSigmoid;
-            String detected = bestSigmoid > 0.5f ? bestWord : null;
+            String detected = bestSigmoid > detectionThreshold ? bestWord : null;
+
+            // 持续概率日志：只打印概率超过 0.15 的帧，方便调试灵敏度
+            if (bestSigmoid > 0.15f) {
+                String logLine = String.format(Locale.US,
+                        "[WakeProb] word=%s prob=%.3f threshold=%.2f gain=%.1f %s",
+                        bestWord != null ? bestWord : "-",
+                        bestSigmoid, detectionThreshold, audioGain,
+                        detected != null ? "TRIGGER" : "");
+                Log.d(TAG, logLine);
+
+                // 测试日志记录
+                if (testLogging) {
+                    String time = new java.text.SimpleDateFormat("HH:mm:ss.SSS", Locale.US)
+                            .format(new java.util.Date());
+                    String csvLine = String.format(Locale.US,
+                            "%s, %s, %.3f, %.2f, %.1f, %s",
+                            time,
+                            bestWord != null ? bestWord : "-",
+                            bestSigmoid, detectionThreshold, audioGain,
+                            detected != null ? "YES" : "no");
+                    testLogs.add(csvLine);
+                    if (testLogListener != null) {
+                        testLogListener.onLog(csvLine);
+                    }
+                }
+            }
+
+            // 实时检测回调（用于校准向导，每一帧都回调，确保静音/干扰也有数据）
+            if (detectionListener != null) {
+                detectionListener.onDetection(
+                        bestWord, bestSigmoid, melMean, detected != null);
+            }
+
             return new DetectionResult(detected, bestSigmoid, bgProb, bestConsFrames);
 
         } catch (OrtException e) {

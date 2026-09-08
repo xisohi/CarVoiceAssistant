@@ -30,6 +30,12 @@
     <!-- 悬浮窗 -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
+    <!-- 存储（保存测试日志） -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+
     <application
         android:name=".VoiceAssistantApp"
         android:allowBackup="true"
@@ -47,6 +53,11 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <activity
+            android:name=".CalibrationActivity"
+            android:exported="false"
+            android:label="唤醒灵敏度校准" />
 
         <!-- 常驻语音服务：API 34+ 需要 microphone 前台服务类型 -->
         <service

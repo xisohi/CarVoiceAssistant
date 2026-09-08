@@ -18,6 +18,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import com.xisohi.car.voiceassistant.core.VoiceAssistantService
+import com.xisohi.car.voiceassistant.core.wakeword.WakeWordEngine
 import com.xisohi.car.voiceassistant.databinding.ActivityMainBinding
 import com.xisohi.car.voiceassistant.download.ModelDownloader
 import com.xisohi.car.voiceassistant.download.ModelInstaller
@@ -36,6 +37,7 @@ class MainActivity : AppCompatActivity() {
     companion object {
         private const val PREFS_NAME = "voice_assistant_prefs"
         private const val KEY_AUTO_START = "auto_start_on_boot"
+        private const val KEY_SENSITIVITY = "wake_sensitivity"
     }
 
     private lateinit var binding: ActivityMainBinding
@@ -98,25 +100,40 @@ class MainActivity : AppCompatActivity() {
             prefs.edit().putBoolean(KEY_AUTO_START, isChecked).apply()
             toast(if (isChecked) "已开启开机自启动" else "已关闭开机自启动")
         }
+
+        // 唤醒灵敏度按钮
+        binding.btnSensLow.setOnClickListener { setSensitivity(0) }
+        binding.btnSensMedium.setOnClickListener { setSensitivity(1) }
+        binding.btnSensHigh.setOnClickListener { setSensitivity(2) }
+        binding.btnCalibration.setOnClickListener {
+            startActivity(android.content.Intent(this, CalibrationActivity::class.java))
+        }
+        // 初始化灵敏度显示
+        val savedSens = prefs.getInt(KEY_SENSITIVITY, 1)
+        setSensitivity(savedSens, save = false)
     }
 
-    override fun onResume() {
-        super.onResume()
-        handler.post(stateRefresher)
-        refreshPermissionState()
+    // ===== 唤醒灵敏度设置 =====
+    private fun setSensitivity(level: Int, save: Boolean = true) {
+        WakeWordEngine.setSensitivity(level)
+        if (save) {
+            getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+                .putInt(KEY_SENSITIVITY, level).apply()
+        }
+        // 更新按钮状态
+        binding.btnSensLow.isEnabled = (level != 0)
+        binding.btnSensMedium.isEnabled = (level != 1)
+        binding.btnSensHigh.isEnabled = (level != 2)
+        // 更新描述
+        val gain = WakeWordEngine.getAudioGain()
+        val threshold = WakeWordEngine.getDetectionThreshold()
+        binding.tvSensitivityDesc.text = "当前：${WakeWordEngine.getSensitivityName()}（增益${gain}x，阈值$threshold）"
+        if (save) {
+            toast("灵敏度已设为：${WakeWordEngine.getSensitivityName()}")
+            log("唤醒灵敏度设置为：${WakeWordEngine.getSensitivityName()}（增益${gain}x，阈值$threshold）")
+        }
     }
 
-    override fun onPause() {
-        super.onPause()
-        handler.removeCallbacks(stateRefresher)
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        scope.cancel()
-    }
-
-    // ---------- UI 刷新 ----------
     private fun refreshServiceState() {
         val running = VoiceAssistantService.isRunning
         binding.tvServiceState.text = if (running) "● 运行中" else "○ 已停止"
@@ -247,6 +264,9 @@ class MainActivity : AppCompatActivity() {
         val needed = mutableListOf(Manifest.permission.RECORD_AUDIO)
         if (Build.VERSION.SDK_INT >= 33) needed.add(Manifest.permission.POST_NOTIFICATIONS)
         if (Build.VERSION.SDK_INT >= 31) needed.add(Manifest.permission.BLUETOOTH_CONNECT)
+        // 存储权限（保存测试日志）
+        if (Build.VERSION.SDK_INT <= 28) needed.add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+        if (Build.VERSION.SDK_INT <= 32) needed.add(Manifest.permission.READ_EXTERNAL_STORAGE)
         val missing = needed.filter { !hasPermission(it) }
         if (missing.isNotEmpty()) {
             permissionLauncher.launch(missing.toTypedArray())

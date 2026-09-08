@@ -96,6 +96,11 @@ class VoiceAssistantService : Service() {
         if (!wakeWordEngine.isLoaded) {
             android.util.Log.e("VoiceService", "唤醒引擎加载失败: ${wakeWordEngine.errorMessage}")
         }
+        // 读取保存的灵敏度配置
+        val prefs = getSharedPreferences("voice_assistant_prefs", MODE_PRIVATE)
+        val savedSens = prefs.getInt("wake_sensitivity", 1)
+        WakeWordEngine.setSensitivity(savedSens)
+        android.util.Log.i("VoiceService", "唤醒灵敏度: ${WakeWordEngine.getSensitivityName()} (增益=${WakeWordEngine.getAudioGain()}, 阈值=${WakeWordEngine.getDetectionThreshold()})")
 
         intentParser = IntentParser(this)
         skillExecutor = SkillExecutor(this)
@@ -233,7 +238,7 @@ class VoiceAssistantService : Service() {
                     val read = record.read(audioBuffer, 0, frameSize, AudioRecord.READ_BLOCKING)
                     if (read == frameSize) {
                         val result = wakeWordEngine.process(audioBuffer)
-                        if (result != null && result.wakeWord != null && result.probability > 0.5f) {
+                        if (result != null && result.wakeWord != null && result.probability > 0.4f) {
                             android.util.Log.i("WakeAudioThread", "唤醒词检测到: ${result.wakeWord} (${result.probability})")
                             // 触发唤醒回调
                             mainHandler.post {
