@@ -296,14 +296,9 @@ public class WakeWordEngine {
             }
         }
         OrtSession.SessionOptions opts = new OrtSession.SessionOptions();
-        // 使用 BASIC_OPT 而非 ALL_OPT，避免 32位 ARM (armeabi-v7a) 上的内存对齐崩溃 (SIGBUS)
-        opts.setOptimizationLevel(OrtSession.SessionOptions.OptLevel.BASIC_OPT);
-        // 禁用 CPU 内存模式，避免某些优化在 32位 ARM 上的对齐问题
-        try {
-            opts.setMemoryPatternOptimization(false);
-        } catch (Exception e) {
-            // 某些版本不支持此方法，忽略
-        }
+        // ONNX Runtime 1.25.0+ 已修复 armeabi-v7a 上的内存对齐问题 (issue #27311, PR #27312)
+        // 可以安全使用 ALL_OPT 全优化
+        opts.setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT);
         return env.createSession(modelBytes, opts);
     }
 
