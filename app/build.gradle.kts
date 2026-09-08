@@ -65,6 +65,17 @@ android {
         }
     }
 
+    // 按 ABI 架构拆分 APK，每个架构生成单独的 APK
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include("armeabi-v7a", "arm64-v8a", "x86_64", "x86")
+            // 同时生成一个包含所有架构的通用 APK（不需要可设为 false）
+            isUniversalApk = true
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
