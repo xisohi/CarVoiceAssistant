@@ -39,9 +39,8 @@ android {
         // 原生库架构：
         // - armeabi-v7a / arm64-v8a：真实车机（32 位老车机用 v7a）
         // - x86_64 / x86：雷电等 PC 模拟器调试用
-        ndk {
-            abiFilters += listOf("armeabi-v7a", "arm64-v8a", "x86_64", "x86")
-        }
+        // 注意：使用 splits 按 ABI 拆分 APK 时，不能同时设置 ndk.abiFilters
+        // ABI 列表在下方 splits 块中配置
 
         // 首次下载模型包的地址（可换成你自己的 CDN）
         buildConfigField("String", "MODEL_PACK_URL", "\"https://lcjly.cn/car/models.zip\"")
@@ -79,7 +78,8 @@ android {
     // 自定义 APK 输出文件名
     applicationVariants.all {
         outputs.all {
-            val abi = filters.find { it.filterType == "ABI" }?.identifier ?: ""
+            val output = this as com.android.build.gradle.internal.api.ApkVariantOutputImpl
+            val abi = output.filters.find { it.filterType == "ABI" }?.identifier ?: ""
             val abiName = when (abi) {
                 "armeabi-v7a" -> "v7a"
                 "arm64-v8a" -> "v8a"
@@ -87,7 +87,7 @@ android {
                 "x86_64" -> "x86_64"
                 else -> abi
             }
-            outputFileName = "CarVoiceAssistant-${abiName}.apk"
+            output.outputFileName = "CarVoiceAssistant-${abiName}.apk"
         }
     }
 
