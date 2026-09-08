@@ -71,8 +71,23 @@ android {
             isEnable = true
             reset()
             include("armeabi-v7a", "arm64-v8a", "x86_64", "x86")
-            // 同时生成一个包含所有架构的通用 APK（不需要可设为 false）
-            isUniversalApk = true
+            // 不生成通用 APK，只生成各架构单独的 APK
+            isUniversalApk = false
+        }
+    }
+
+    // 自定义 APK 输出文件名
+    applicationVariants.all {
+        outputs.all {
+            val abi = filters.find { it.filterType == "ABI" }?.identifier ?: ""
+            val abiName = when (abi) {
+                "armeabi-v7a" -> "v7a"
+                "arm64-v8a" -> "v8a"
+                "x86" -> "x86"
+                "x86_64" -> "x86_64"
+                else -> abi
+            }
+            outputFileName = "CarVoiceAssistant-${abiName}.apk"
         }
     }
 
