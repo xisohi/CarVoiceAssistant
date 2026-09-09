@@ -43,9 +43,10 @@ public class WakeWordEngine {
     /** 灵敏度档位：0=低, 1=中(默认), 2=高 */
     private static int sensitivityLevel = 1;
     // 车机环境优化的三档预设（麦克风远、环境噪音大，需要更低阈值和更高增益）
-    // 低：保守（适合停车安静环境）；中：平衡（推荐日常使用）；高：灵敏（适合行驶中/小声）
-    private static final float[] GAIN_BY_LEVEL = {1.5f, 2.0f, 2.5f};
-    private static final float[] THRESHOLD_BY_LEVEL = {0.30f, 0.20f, 0.10f};
+    // 低：保守（误唤醒少）；中：平衡（推荐日常使用）；高：灵敏（适合行驶中/小声）
+    // 以中档 threshold=0.08, gain=2.3x 为基准
+    private static final float[] GAIN_BY_LEVEL = {2.0f, 2.3f, 2.6f};
+    private static final float[] THRESHOLD_BY_LEVEL = {0.12f, 0.08f, 0.05f};
     private static final String[] LEVEL_NAMES = {"低", "中", "高"};
 
     /** 设置灵敏度档位（0=低, 1=中, 2=高） */

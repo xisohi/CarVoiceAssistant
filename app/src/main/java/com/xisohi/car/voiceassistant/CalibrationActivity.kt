@@ -127,6 +127,8 @@ class CalibrationActivity : AppCompatActivity() {
             Toast.makeText(this, "已重置为默认参数（中档）", Toast.LENGTH_SHORT).show()
         }
 
+        // 校准开始前自动重置为中档预设，确保使用合适的参数
+        WakeWordEngine.setSensitivity(1)
         updateCurrentParams()
 
         WakeWordEngine.setDetectionListener(detectionListener)
@@ -147,7 +149,7 @@ class CalibrationActivity : AppCompatActivity() {
         val threshold = WakeWordEngine.getDetectionThreshold()
         val gain = WakeWordEngine.getAudioGain()
         val isExtreme = (gain > 3.0f || threshold < 0.05f)
-        val isRecommended = (threshold in 0.10f..0.35f && gain in 1.5f..2.5f)
+        val isRecommended = (threshold in 0.05f..0.12f && gain in 2.0f..2.6f)
 
         val statusText = when {
             isExtreme -> "⚠️ 当前参数较极端，可能影响校准准确性，建议重置为默认"
@@ -155,7 +157,7 @@ class CalibrationActivity : AppCompatActivity() {
             else -> "⚠️ 当前参数偏离推荐范围，建议重置为默认"
         }
 
-        tvCurrentParams.text = "当前：threshold=${String.format("%.2f", threshold)}, gain=${String.format("%.1f", gain)}x\n$statusText\n推荐：threshold=0.10~0.35, gain=1.5~2.5x（中档默认）"
+        tvCurrentParams.text = "当前：threshold=${String.format("%.2f", threshold)}, gain=${String.format("%.1f", gain)}x\n$statusText\n推荐：threshold=0.05~0.12, gain=2.0~2.6x（中档默认）"
     }
 
     private fun showStep() {
