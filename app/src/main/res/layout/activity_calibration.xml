@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:fillViewport="true">
@@ -26,6 +27,58 @@
             android:textColor="#6B7280"
             android:layout_marginTop="2dp"
             android:layout_marginBottom="12dp" />
+
+        <!-- 当前参数提示 -->
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="12dp"
+            app:cardBackgroundColor="#FFF8E1"
+            app:strokeColor="#FFB300"
+            app:strokeWidth="1dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="12dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="⚠️ 测试前请确认参数"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        android:textColor="#E65100" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnResetParams"
+                        style="@style/Widget.MaterialComponents.Button.TextButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="重置为默认"
+                        android:textSize="11sp"
+                        android:minHeight="36dp" />
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/tvCurrentParams"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text=""
+                    android:textSize="12sp"
+                    android:textColor="#E65100"
+                    android:layout_marginTop="4dp"
+                    android:lineSpacingExtra="2dp" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
 
         <!-- 步骤标题 -->
         <com.google.android.material.card.MaterialCardView

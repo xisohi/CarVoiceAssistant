@@ -68,6 +68,34 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
+                    android:text="最近识别"
+                    android:textSize="11sp"
+                    android:textColor="#6B7280"
+                    android:layout_marginTop="8dp" />
+
+                <TextView
+                    android:id="@+id/tvLastRecognized"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="—"
+                    android:textSize="13sp"
+                    android:textColor="#1A1B1C"
+                    android:layout_marginTop="2dp"
+                    android:background="#F4F5F7"
+                    android:padding="6dp" />
+
+                <TextView
+                    android:id="@+id/tvLastIntent"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text=""
+                    android:textSize="12sp"
+                    android:textColor="#6B7280"
+                    android:layout_marginTop="2dp" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
                     android:text="唤醒方式：小娜/你好小娜/小娜小娜"
                     android:textSize="11sp"
                     android:textColor="#6B7280"
@@ -79,6 +107,24 @@
                     android:layout_height="wrap_content"
                     android:text="启动服务"
                     android:layout_marginTop="10dp" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnBackground"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="返回后台运行"
+                    android:layout_marginTop="6dp"
+                    android:enabled="false" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="提示：服务运行中时，点击「返回后台运行」或按返回键只关闭本页面，语音助手在后台继续运行，不会停止服务。"
+                    android:textSize="11sp"
+                    android:textColor="#6B7280"
+                    android:layout_marginTop="6dp"
+                    android:lineSpacingExtra="2dp" />
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
@@ -288,6 +334,7 @@
 
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/btnSensMedium"
+                        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
@@ -308,7 +355,7 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="低：不易误唤醒，需较大声音；中：平衡；高：小声可唤醒，可能误唤醒。车机环境嘈杂建议用高。"
+                    android:text="点击预设按钮将参数填充到下方滑块，可微调后点击「应用手动参数」生效。低：保守；中：平衡；高：灵敏。"
                     android:textSize="11sp"
                     android:textColor="#6B7280"
                     android:layout_marginTop="8dp" />
@@ -321,6 +368,182 @@
                     android:text="自动校准（四步测试推荐参数）"
                     android:textSize="12sp"
                     android:layout_marginTop="4dp" />
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="#E4E3DD"
+                    android:layout_marginTop="10dp"
+                    android:layout_marginBottom="8dp" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="手动调节（高级）"
+                    android:textSize="12sp"
+                    android:textColor="#6B7280" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:layout_marginTop="6dp">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="检测阈值 threshold"
+                        android:textSize="13sp" />
+
+                    <TextView
+                        android:id="@+id/tvThresholdValue"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="0.20"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        android:textColor="#1A73E8" />
+                </LinearLayout>
+
+                <SeekBar
+                    android:id="@+id/seekThreshold"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:max="49"
+                    android:progress="19"
+                    android:layout_marginTop="2dp" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="范围：0.01（灵敏）~ 0.50（保守），步长 0.01"
+                    android:textSize="10sp"
+                    android:textColor="#6B7280" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:layout_marginTop="10dp">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="音频增益 gain"
+                        android:textSize="13sp" />
+
+                    <TextView
+                        android:id="@+id/tvGainValue"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="1.5x"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        android:textColor="#1A73E8" />
+                </LinearLayout>
+
+                <SeekBar
+                    android:id="@+id/seekGain"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:max="40"
+                    android:progress="5"
+                    android:layout_marginTop="2dp" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="范围：1.0x ~ 5.0x，步长 0.1x"
+                    android:textSize="10sp"
+                    android:textColor="#6B7280" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginTop="10dp">
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnApplyManual"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="应用手动参数"
+                        android:textSize="13sp"
+                        android:layout_marginEnd="6dp" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnResetManual"
+                        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="恢复默认"
+                        android:textSize="13sp" />
+                </LinearLayout>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="✅ 参数立即生效，无需重启服务或APP"
+                    android:textSize="11sp"
+                    android:textColor="#2E7D32"
+                    android:layout_marginTop="8dp" />
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="#E4E3DD"
+                    android:layout_marginTop="12dp"
+                    android:layout_marginBottom="8dp" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="调节建议"
+                    android:textSize="11sp"
+                    android:textColor="#6B7280"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="• threshold（检测阈值）：越低越容易唤醒，但误唤醒风险增加；越高越保守，需更大声音。建议范围 0.05 ~ 0.30"
+                    android:textSize="11sp"
+                    android:textColor="#6B7280"
+                    android:layout_marginTop="4dp"
+                    android:lineSpacingMultiplier="1.3" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="• gain（音频增益）：放大麦克风音量，同时作用于唤醒和指令识别。小声说话难唤醒时可调高。建议范围 1.5x ~ 2.5x"
+                    android:textSize="11sp"
+                    android:textColor="#6B7280"
+                    android:layout_marginTop="4dp"
+                    android:lineSpacingMultiplier="1.3" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="• 注意：gain > 3x 可能导致音频削波失真，反而降低识别率；背景噪音大时高增益会同时放大噪音。"
+                    android:textSize="11sp"
+                    android:textColor="#E65100"
+                    android:layout_marginTop="4dp"
+                    android:lineSpacingMultiplier="1.3" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="• 推荐组合：车机环境嘈杂建议 threshold=0.10 ~ 0.15, gain=2.0x ~ 2.5x；安静环境可降低 gain 减少误唤醒。"
+                    android:textSize="11sp"
+                    android:textColor="#1565C0"
+                    android:layout_marginTop="4dp"
+                    android:lineSpacingMultiplier="1.3" />
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 

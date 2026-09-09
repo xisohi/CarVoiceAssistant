@@ -38,6 +38,8 @@ class MainActivity : AppCompatActivity() {
         private const val PREFS_NAME = "voice_assistant_prefs"
         private const val KEY_AUTO_START = "auto_start_on_boot"
         private const val KEY_SENSITIVITY = "wake_sensitivity"
+        private const val KEY_MANUAL_THRESHOLD = "wake_threshold_override"
+        private const val KEY_MANUAL_GAIN = "wake_gain_override"
     }
 
     private lateinit var binding: ActivityMainBinding
@@ -62,6 +64,12 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
+        // 返回后台运行按钮：只关闭页面，不停止服务
+        binding.btnBackground.setOnClickListener {
+            toast("语音助手在后台继续运行")
+            finish()
+        }
+
         ensurePermissions()
         refreshModelState()
         refreshPermissionState()
@@ -71,6 +79,7 @@ class MainActivity : AppCompatActivity() {
         binding.btnToggleService.setOnClickListener {
             if (VoiceAssistantService.isRunning) {
                 VoiceAssistantService.stop(this)
+                toast("语音助手已停止")
             } else {
                 if (ModelManager.isModelReady(this)) {
                     if (!canDrawOverlays()) {
@@ -82,7 +91,7 @@ class MainActivity : AppCompatActivity() {
                         toast("建议启用无障碍服务以获得完整的导航自动输入体验")
                     }
                     VoiceAssistantService.start(this)
-                    handler.postDelayed({ finish() }, 500)
+                    toast("语音助手已启动，点击「返回后台运行」关闭本页面")
                 } else {
                     toast("请先下载离线语音包")
                 }
@@ -101,19 +110,193 @@ class MainActivity : AppCompatActivity() {
             toast(if (isChecked) "已开启开机自启动" else "已关闭开机自启动")
         }
 
-        // 唤醒灵敏度按钮
-        binding.btnSensLow.setOnClickListener { setSensitivity(0) }
-        binding.btnSensMedium.setOnClickListener { setSensitivity(1) }
-        binding.btnSensHigh.setOnClickListener { setSensitivity(2) }
+        // 唤醒灵敏度预设按钮（点击后填充到手动调节滑块，可微调后再应用）
+        binding.btnSensLow.setOnClickListener { fillPresetToSliders(0) }
+        binding.btnSensMedium.setOnClickListener { fillPresetToSliders(1) }
+        binding.btnSensHigh.setOnClickListener { fillPresetToSliders(2) }
         binding.btnCalibration.setOnClickListener {
             startActivity(android.content.Intent(this, CalibrationActivity::class.java))
         }
-        // 初始化灵敏度显示
-        val savedSens = prefs.getInt(KEY_SENSITIVITY, 1)
-        setSensitivity(savedSens, save = false)
+        // 初始化灵敏度显示（如果有手动参数，显示手动；否则显示当前引擎参数）
+        val savedThreshold = prefs.getFloat(KEY_MANUAL_THRESHOLD, -1f)
+        val savedGain = prefs.getFloat(KEY_MANUAL_GAIN, -1f)
+        if (savedThreshold > 0 && savedGain > 0) {
+            binding.tvSensitivityDesc.text = "当前：手动（增益${String.format("%.1f", savedGain)}x，阈值${String.format("%.2f", savedThreshold)}）"
+            // 有手动参数时，不高亮任何预设按钮
+            binding.btnSensLow.isEnabled = true
+            binding.btnSensMedium.isEnabled = true
+            binding.btnSensHigh.isEnabled = true
+        } else {
+            val gain = WakeWordEngine.getAudioGain()
+            val threshold = WakeWordEngine.getDetectionThreshold()
+            binding.tvSensitivityDesc.text = "当前：${WakeWordEngine.getSensitivityName()}（增益${gain}x，阈值$threshold）"
+            // 无手动参数时，高亮当前引擎对应的预设
+            val currentLevel = WakeWordEngine.getSensitivity()
+            updatePresetButtonState(currentLevel)
+        }
+
+        // 初始化手动调节
+        initManualControls()
+
+        // 初始刷新一次服务状态
+        refreshServiceState()
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onBackPressed() {
+        // 按返回键只关闭页面，不停止服务
+        if (VoiceAssistantService.isRunning) {
+            toast("语音助手在后台继续运行")
+        }
+        super.onBackPressed()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // 页面可见时启动状态定时刷新（每500ms）
+        handler.post(stateRefresher)
+    }
+
+    override fun onPause() {
+        super.onPause()
+        // 页面不可见时停止状态刷新，节省资源
+        handler.removeCallbacks(stateRefresher)
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        handler.removeCallbacks(stateRefresher)
+    }
+
+    // ===== 手动调节 threshold/gain =====
+    private fun initManualControls() {
+        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+
+        // 读取已保存的手动参数（如果有）
+        val savedThreshold = prefs.getFloat(KEY_MANUAL_THRESHOLD, -1f)
+        val savedGain = prefs.getFloat(KEY_MANUAL_GAIN, -1f)
+
+        // 如果有保存的手动参数，应用它
+        if (savedThreshold > 0 && savedGain > 0) {
+            WakeWordEngine.setGainAndThreshold(savedGain, savedThreshold)
+            updateManualUI(savedThreshold, savedGain)
+            log("已加载手动参数：threshold=$savedThreshold, gain=${savedGain}x")
+        } else {
+            // 否则用当前引擎的值初始化 UI
+            updateManualUI(WakeWordEngine.getDetectionThreshold(), WakeWordEngine.getAudioGain())
+        }
+
+        // threshold 滑块：0.01 ~ 0.50，步长 0.01
+        binding.seekThreshold.setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: android.widget.SeekBar?, progress: Int, fromUser: Boolean) {
+                val threshold = (progress + 1) / 100f
+                binding.tvThresholdValue.text = String.format("%.2f", threshold)
+            }
+            override fun onStartTrackingTouch(seekBar: android.widget.SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: android.widget.SeekBar?) {}
+        })
+
+        // gain 滑块：1.0 ~ 5.0，步长 0.1
+        binding.seekGain.setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: android.widget.SeekBar?, progress: Int, fromUser: Boolean) {
+                val gain = 1.0f + progress * 0.1f
+                binding.tvGainValue.text = String.format("%.1fx", gain)
+            }
+            override fun onStartTrackingTouch(seekBar: android.widget.SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: android.widget.SeekBar?) {}
+        })
+
+        // 应用手动参数
+        binding.btnApplyManual.setOnClickListener {
+            val threshold = (binding.seekThreshold.progress + 1) / 100f
+            val gain = 1.0f + binding.seekGain.progress * 0.1f
+            WakeWordEngine.setGainAndThreshold(gain, threshold)
+            // 保存到 SharedPreferences
+            prefs.edit()
+                .putFloat(KEY_MANUAL_THRESHOLD, threshold)
+                .putFloat(KEY_MANUAL_GAIN, gain)
+                .apply()
+            // 更新灵敏度描述
+            binding.tvSensitivityDesc.text = "当前：手动（增益${String.format("%.1f", gain)}x，阈值${String.format("%.2f", threshold)}）"
+            toast("已应用手动参数：threshold=$threshold, gain=${gain}x")
+            log("手动参数已应用：threshold=$threshold, gain=${gain}x")
+        }
+
+        // 恢复默认（清除手动参数，用三档灵敏度）
+        binding.btnResetManual.setOnClickListener {
+            prefs.edit()
+                .remove(KEY_MANUAL_THRESHOLD)
+                .remove(KEY_MANUAL_GAIN)
+                .apply()
+            // 恢复到中档预设
+            fillPresetToSliders(1)
+            toast("已恢复默认灵敏度（中）")
+            log("已恢复默认灵敏度（中）")
+        }
+    }
+
+    private fun updateManualUI(threshold: Float, gain: Float) {
+        // threshold: 0.01 ~ 0.50 -> progress 0 ~ 49
+        val thresholdProgress = ((threshold * 100).toInt() - 1).coerceIn(0, 49)
+        binding.seekThreshold.progress = thresholdProgress
+        binding.tvThresholdValue.text = String.format("%.2f", threshold)
+        // gain: 1.0 ~ 5.0 -> progress 0 ~ 40
+        val gainProgress = ((gain - 1.0f) / 0.1f).toInt().coerceIn(0, 40)
+        binding.seekGain.progress = gainProgress
+        binding.tvGainValue.text = String.format("%.1fx", gain)
+    }
+
+    /**
+     * 将预设灵敏度（低/中/高）的参数填充到手动调节滑块
+     * 用户可以在此基础上微调，然后点击"应用手动参数"生效
+     */
+    private fun fillPresetToSliders(level: Int) {
+        // 临时设置到引擎以获取对应的参数值
+        WakeWordEngine.setSensitivity(level)
+        val threshold = WakeWordEngine.getDetectionThreshold()
+        val gain = WakeWordEngine.getAudioGain()
+        val name = WakeWordEngine.getSensitivityName()
+        // 填充到滑块
+        updateManualUI(threshold, gain)
+        // 更新按钮选中状态（禁用当前选中的按钮，启用其他按钮）
+        updatePresetButtonState(level)
+        // 提示用户
+        toast("已填充「$name」预设（增益${gain}x，阈值$threshold），可微调后点击应用")
+        log("预设「$name」已填充到滑块：threshold=$threshold, gain=${gain}x")
     }
 
     // ===== 唤醒灵敏度设置 =====
+    /**
+     * 更新三档预设按钮的选中高亮状态
+     * 选中的按钮：填充背景（主题色）+ 白色文字
+     * 未选中的按钮：透明背景 + 主题色文字（描边效果）
+     */
+    private fun updatePresetButtonState(selectedLevel: Int) {
+        val buttons = listOf(
+            binding.btnSensLow to 0,
+            binding.btnSensMedium to 1,
+            binding.btnSensHigh to 2
+        )
+        val accentColor = getColor(R.color.brand_blue)
+        val whiteColor = getColor(android.R.color.white)
+        for ((btn, level) in buttons) {
+            val selected = (level == selectedLevel)
+            btn.isSelected = selected
+            btn.isEnabled = true  // 所有按钮都保持可点击
+            if (selected) {
+                // 选中：填充背景
+                btn.setBackgroundColor(accentColor)
+                btn.setTextColor(whiteColor)
+                btn.strokeWidth = 0
+            } else {
+                // 未选中：透明背景 + 描边
+                btn.setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                btn.setTextColor(accentColor)
+                btn.strokeWidth = (2 * resources.displayMetrics.density).toInt()
+            }
+        }
+    }
+
     private fun setSensitivity(level: Int, save: Boolean = true) {
         WakeWordEngine.setSensitivity(level)
         if (save) {
@@ -121,9 +304,7 @@ class MainActivity : AppCompatActivity() {
                 .putInt(KEY_SENSITIVITY, level).apply()
         }
         // 更新按钮状态
-        binding.btnSensLow.isEnabled = (level != 0)
-        binding.btnSensMedium.isEnabled = (level != 1)
-        binding.btnSensHigh.isEnabled = (level != 2)
+        updatePresetButtonState(level)
         // 更新描述
         val gain = WakeWordEngine.getAudioGain()
         val threshold = WakeWordEngine.getDetectionThreshold()
@@ -138,12 +319,33 @@ class MainActivity : AppCompatActivity() {
         val running = VoiceAssistantService.isRunning
         binding.tvServiceState.text = if (running) "● 运行中" else "○ 已停止"
         binding.btnToggleService.text = if (running) "停止服务" else "启动服务"
+        binding.btnBackground.isEnabled = running
         binding.tvVoiceState.text = when (VoiceAssistantService.currentState) {
             VoiceAssistantService.State.IDLE -> if (running) "待机：等待唤醒词…" else "—"
             VoiceAssistantService.State.LISTENING -> "聆听中…"
             VoiceAssistantService.State.PROCESSING -> "处理中…"
             VoiceAssistantService.State.SPEAKING -> "播报中…"
         }
+        // 刷新识别文本：聆听中显示实时识别结果，否则显示最终识别结果
+        val isListening = (VoiceAssistantService.currentState == VoiceAssistantService.State.LISTENING)
+        val partialText = VoiceAssistantService.lastPartialText
+        val finalText = VoiceAssistantService.lastRecognizedText
+        when {
+            isListening && partialText.isNotBlank() -> {
+                binding.tvLastRecognized.text = "💬 $partialText"
+                binding.tvLastRecognized.setTextColor(android.graphics.Color.parseColor("#1565C0"))
+            }
+            finalText.isNotBlank() -> {
+                binding.tvLastRecognized.text = finalText
+                binding.tvLastRecognized.setTextColor(android.graphics.Color.parseColor("#1A1B1C"))
+            }
+            else -> {
+                binding.tvLastRecognized.text = "—"
+                binding.tvLastRecognized.setTextColor(android.graphics.Color.parseColor("#1A1B1C"))
+            }
+        }
+        val lastIntent = VoiceAssistantService.lastIntentResult
+        binding.tvLastIntent.text = lastIntent
     }
 
     private fun refreshModelState() {

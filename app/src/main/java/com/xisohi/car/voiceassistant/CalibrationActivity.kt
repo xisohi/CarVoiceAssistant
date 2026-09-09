@@ -34,6 +34,8 @@ class CalibrationActivity : AppCompatActivity() {
     private lateinit var tvInstruction: TextView
     private lateinit var tvProgress: TextView
     private lateinit var tvLiveData: TextView
+    private lateinit var tvCurrentParams: TextView
+    private lateinit var btnResetParams: Button
     private lateinit var progressBar: ProgressBar
     private lateinit var btnStart: Button
     private lateinit var btnNext: Button
@@ -111,12 +113,21 @@ class CalibrationActivity : AppCompatActivity() {
         tvInstruction = findViewById(R.id.tvInstruction)
         tvProgress = findViewById(R.id.tvProgress)
         tvLiveData = findViewById(R.id.tvLiveData)
+        tvCurrentParams = findViewById(R.id.tvCurrentParams)
+        btnResetParams = findViewById(R.id.btnResetParams)
         progressBar = findViewById(R.id.progressBar)
         btnStart = findViewById(R.id.btnStart)
         btnNext = findViewById(R.id.btnNext)
 
         btnStart.setOnClickListener { startStep() }
         btnNext.setOnClickListener { goNext() }
+        btnResetParams.setOnClickListener {
+            WakeWordEngine.setSensitivity(1)  // 重置为中档预设
+            updateCurrentParams()
+            Toast.makeText(this, "已重置为默认参数（中档）", Toast.LENGTH_SHORT).show()
+        }
+
+        updateCurrentParams()
 
         WakeWordEngine.setDetectionListener(detectionListener)
         showStep()
@@ -127,6 +138,24 @@ class CalibrationActivity : AppCompatActivity() {
         isRunning = false
         handler.removeCallbacks(timerRunnable)
         WakeWordEngine.setDetectionListener(null)
+    }
+
+    /**
+     * 更新当前参数显示，如果参数是极端值则给出警告
+     */
+    private fun updateCurrentParams() {
+        val threshold = WakeWordEngine.getDetectionThreshold()
+        val gain = WakeWordEngine.getAudioGain()
+        val isExtreme = (gain > 3.0f || threshold < 0.05f)
+        val isRecommended = (threshold in 0.10f..0.35f && gain in 1.5f..2.5f)
+
+        val statusText = when {
+            isExtreme -> "⚠️ 当前参数较极端，可能影响校准准确性，建议重置为默认"
+            isRecommended -> "✅ 当前参数在推荐范围内，适合校准测试"
+            else -> "⚠️ 当前参数偏离推荐范围，建议重置为默认"
+        }
+
+        tvCurrentParams.text = "当前：threshold=${String.format("%.2f", threshold)}, gain=${String.format("%.1f", gain)}x\n$statusText\n推荐：threshold=0.10~0.35, gain=1.5~2.5x（中档默认）"
     }
 
     private fun showStep() {
@@ -140,37 +169,39 @@ class CalibrationActivity : AppCompatActivity() {
         when (currentStep) {
             STEP_SILENT -> {
                 tvStep.text = "第1步/共4步：静音测试"
-                tvInstruction.text = "条件：车机熄火，关闭音乐和空调，保持环境安静\n\n" +
-                        "时长：30秒\n\n" +
-                        "目的：测量背景噪音的误唤醒概率，确定阈值下限\n\n" +
+                tvInstruction.text = "【车辆状态】车辆熄火（ACC关闭），关闭音乐、空调和通风\n\n" +
+                        "【测试条件】保持环境安静，不要说话\n\n" +
+                        "【时长】30秒\n\n" +
+                        "【目的】测量安静环境下的背景噪音误唤醒概率，确定阈值下限\n\n" +
                         "点击开始后请保持安静，不要说话。"
                 tvProgress.text = "30秒"
             }
             STEP_NORMAL -> {
                 tvStep.text = "第2步/共4步：正常音量测试"
-                tvInstruction.text = "条件：正常环境，用你平时说话的音量\n\n" +
-                        "次数：说10次唤醒词（小娜或你好小娜）\n\n" +
-                        "目的：测量正常音量下的检测概率分布\n\n" +
-                        "点击开始后，用正常音量说10次唤醒词，每次间隔2-3秒。" +
-                        "只有成功触发的才会被记录。"
+                tvInstruction.text = "【车辆状态】车辆熄火或怠速（停车状态），关闭音乐\n\n" +
+                        "【测试条件】坐在正常驾驶位置，用平时说话的音量\n\n" +
+                        "【次数】说10次唤醒词（小娜或你好小娜），每次间隔2-3秒\n\n" +
+                        "【目的】测量正常音量下的检测概率分布\n\n" +
+                        "点击开始后，用正常音量说10次唤醒词。只有成功触发的才会被记录。"
                 triggerCount = 0
                 tvProgress.text = "0 / $TARGET_COUNT"
             }
             STEP_QUIET -> {
                 tvStep.text = "第3步/共4步：小声测试"
-                tvInstruction.text = "条件：用你能接受的最小音量说唤醒词\n\n" +
-                        "次数：说10次唤醒词\n\n" +
-                        "目的：测量小声说话时的检测概率，确定需要的增益\n\n" +
-                        "点击开始后，用很小的声音说10次唤醒词。" +
-                        "如果太小声触发不了，可以稍微加大一点音量。"
+                tvInstruction.text = "【车辆状态】车辆熄火或怠速（停车状态），关闭音乐\n\n" +
+                        "【测试条件】坐在正常驾驶位置，用你能接受的最小音量\n\n" +
+                        "【次数】说10次唤醒词，每次间隔2-3秒\n\n" +
+                        "【目的】测量小声说话时的检测概率，确定需要的增益\n\n" +
+                        "点击开始后，用很小的声音说10次唤醒词。如果太小声触发不了，可以稍微加大一点音量。"
                 triggerCount = 0
                 tvProgress.text = "0 / $TARGET_COUNT"
             }
             STEP_NOISE -> {
                 tvStep.text = "第4步/共4步：干扰测试"
-                tvInstruction.text = "条件：播放音乐或开启空调/发动机，模拟真实驾驶环境\n\n" +
-                        "时长：30秒\n\n" +
-                        "目的：测量干扰环境下的误唤醒概率，验证阈值安全性\n\n" +
+                tvInstruction.text = "【车辆状态】车辆启动行驶中（或怠速开空调），开启通风/空调\n\n" +
+                        "【测试条件】模拟真实驾驶环境，保持噪音源开启，不要说唤醒词\n\n" +
+                        "【时长】30秒\n\n" +
+                        "【目的】测量干扰环境下的误唤醒概率，验证阈值安全性\n\n" +
                         "点击开始后，请保持干扰源开启，不要说唤醒词。"
                 tvProgress.text = "30秒"
             }
@@ -231,6 +262,7 @@ class CalibrationActivity : AppCompatActivity() {
         if (currentStep < STEP_RESULT) {
             currentStep++
             showStep()
+            updateCurrentParams()
         }
     }
 

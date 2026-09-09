@@ -48,6 +48,18 @@ class VoiceAssistantService : Service() {
         var currentState: State = State.IDLE
             private set
 
+        @Volatile
+        var lastRecognizedText: String = ""
+            private set
+
+        @Volatile
+        var lastPartialText: String = ""
+            private set
+
+        @Volatile
+        var lastIntentResult: String = ""
+            private set
+
         val isRunning: Boolean get() = instance != null
 
         @Volatile
@@ -192,7 +204,13 @@ class VoiceAssistantService : Service() {
 
     private fun stopWakeListening() {
         isWakeListening = false
-        wakeAudioThread?.interrupt()
+        val thread = wakeAudioThread
+        thread?.interrupt()
+        // 等待线程完全结束（最多等待2秒），防止 onDestroy 中关闭 session 后线程还在访问
+        try {
+            thread?.join(2000)
+        } catch (_: InterruptedException) {
+        }
         wakeAudioThread = null
         android.util.Log.d("VoiceService", "唤醒监听已停止")
     }
@@ -237,7 +255,16 @@ class VoiceAssistantService : Service() {
                 while (isWakeListening && !isInterrupted()) {
                     val read = record.read(audioBuffer, 0, frameSize, AudioRecord.READ_BLOCKING)
                     if (read == frameSize) {
-                        val result = wakeWordEngine.process(audioBuffer)
+                        // process 可能在 service 销毁时访问已关闭的 session，捕获异常防止线程崩溃
+                        val result = try {
+                            wakeWordEngine.process(audioBuffer)
+                        } catch (e: IllegalStateException) {
+                            android.util.Log.w("WakeAudioThread", "session 已关闭，停止处理: ${e.message}")
+                            break
+                        } catch (e: Exception) {
+                            android.util.Log.w("WakeAudioThread", "处理异常: ${e.message}")
+                            continue
+                        }
                         if (result != null && result.wakeWord != null && result.probability > 0.4f) {
                             android.util.Log.i("WakeAudioThread", "唤醒词检测到: ${result.wakeWord} (${result.probability})")
                             // 触发唤醒回调
@@ -301,6 +328,7 @@ class VoiceAssistantService : Service() {
                 maxOf(minBuf * 2, 16_000)
             )
             currentState = State.LISTENING
+            lastPartialText = ""
             record.startRecording()
             android.util.Log.d("VoiceService", "开始录音识别")
             val shortBuf = ShortArray(512)
@@ -313,10 +341,13 @@ class VoiceAssistantService : Service() {
                 loop@ while (true) {
                     val n = record.read(shortBuf, 0, shortBuf.size)
                     if (n <= 0) continue
+                    // 应用音频增益（与唤醒词检测使用相同的 gain，确保小声说话时指令也能识别清楚）
+                    applyGain(shortBuf, n)
                     shortsToBytes(shortBuf, n, byteBuf)
                     val partial = recognizer.feed(byteBuf, n * 2)
                     if (!partial.isNullOrEmpty() && partial != lastPartial) {
                         lastPartial = partial
+                        lastPartialText = partial
                         android.util.Log.d("VoiceService", "识别中: '$partial'")
                         withContext(Dispatchers.Main) {
                             FloatViewService.updateSubtitle("💬 $partial")
@@ -343,10 +374,29 @@ class VoiceAssistantService : Service() {
         }
     }
 
+    /**
+     * 对 PCM 音频数据应用增益放大
+     * 与唤醒词检测使用相同的 gain，确保小声说话时指令也能识别清楚
+     */
+    private fun applyGain(buffer: ShortArray, length: Int) {
+        val gain = WakeWordEngine.getAudioGain()
+        if (gain <= 1.0f) return  // 增益为 1.0 时不需要处理
+        for (i in 0 until length) {
+            val amplified = (buffer[i] * gain).toInt()
+            // 防止溢出，截断到 short 范围
+            buffer[i] = when {
+                amplified > Short.MAX_VALUE -> Short.MAX_VALUE
+                amplified < Short.MIN_VALUE -> Short.MIN_VALUE
+                else -> amplified.toShort()
+            }
+        }
+    }
+
     // ---------- 文本处理 ----------
     private fun handleText(text: String) {
         currentState = State.PROCESSING
         android.util.Log.d("VoiceService", "识别文本: '$text'")
+        lastRecognizedText = text
         FloatViewService.updateSubtitle("👉 $text")
         scheduleSubtitleClear(15000)
 
@@ -423,6 +473,7 @@ class VoiceAssistantService : Service() {
 
         val result = skillExecutor.execute(intent)
         android.util.Log.i("VoiceService", "执行结果: handled=${result.handled}, spoken='${result.spoken}'")
+        lastIntentResult = if (result.handled) "已执行: ${result.spoken}" else "未匹配: ${result.spoken}"
         FloatViewService.updateSubtitle("✅ ${result.spoken}")
 
         if (result.spoken.isBlank()) {
@@ -533,6 +584,8 @@ class VoiceAssistantService : Service() {
         currentState = State.IDLE
         recognitionJob?.cancel()
         scope.cancel()
+        // 注意顺序：先停止唤醒线程（会等待线程结束），再关闭 ONNX session
+        // 防止线程还在访问已关闭的 session 导致崩溃
         stopWakeListening()
         wakeWordEngine.close()
         ttsEngine.shutdown()
