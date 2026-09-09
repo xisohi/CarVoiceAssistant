@@ -46,6 +46,48 @@ class SkillExecutor(private val context: Context) {
 
     var carControlProvider: CarControlProvider? = null
 
+    // 音乐播放器优先级列表（从高到低）
+    private val musicPlayerPackages = listOf(
+        "fun.upup.musicfree",        // MusicFree（支持自动搜索播放）
+        "com.netease.cloudmusic",    // 网易云音乐
+        "com.tencent.qqmusic",       // QQ音乐
+        "com.kugou.android",         // 酷狗音乐
+        "cn.kuwo.player"             // 酷我音乐
+    )
+
+    // 当前活跃的音乐播放器包名（null=未设置，按优先级选择）
+    @Volatile
+    private var currentMusicPlayer: String? = null
+
+    /**
+     * 获取当前应该使用的音乐播放器。
+     * 优先使用已记录的活跃播放器；如果未设置，按优先级选择第一个已安装的。
+     */
+    private fun getActiveMusicPlayer(): String? {
+        // 1. 优先使用已记录的活跃播放器
+        currentMusicPlayer?.let { pkg ->
+            if (isAppInstalled(pkg)) return pkg
+        }
+        // 2. 按优先级选择第一个已安装的
+        for (pkg in musicPlayerPackages) {
+            if (isAppInstalled(pkg)) {
+                currentMusicPlayer = pkg
+                return pkg
+            }
+        }
+        return null
+    }
+
+    /**
+     * 设置当前活跃的音乐播放器（用户打开或切换播放器时调用）。
+     */
+    fun setActiveMusicPlayer(packageName: String) {
+        if (isAppInstalled(packageName)) {
+            currentMusicPlayer = packageName
+            android.util.Log.d("SkillExecutor", "当前活跃音乐播放器: $packageName")
+        }
+    }
+
     private val audioManager =
         context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     private val wifiManager =
@@ -123,23 +165,49 @@ class SkillExecutor(private val context: Context) {
      */
     private fun mediaKey(keyCode: Int): ExecutionResult {
         val label = when (keyCode) {
-            android.view.KeyEvent.KEYCODE_MEDIA_PLAY -> "正在播放音乐"
+            android.view.KeyEvent.KEYCODE_MEDIA_PLAY -> "正在打开播放器"
             android.view.KeyEvent.KEYCODE_MEDIA_PAUSE -> "已暂停"
             android.view.KeyEvent.KEYCODE_MEDIA_NEXT -> "下一首"
             android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS -> "上一首"
             else -> "好的"
         }
         return try {
+            val playerPkg = getActiveMusicPlayer()
+            if (playerPkg == null) {
+                return ExecutionResult(false, "未安装任何音乐播放器")
+            }
+            // 记录当前活跃播放器
+            currentMusicPlayer = playerPkg
+            // 播放操作：先启动播放器（确保在运行），延迟后发播放按键
+            // 暂停/下一首/上一首：直接发按键
             if (keyCode == android.view.KeyEvent.KEYCODE_MEDIA_PLAY) {
-                // 启动播放器，延迟后再发播放按键（给 MusicService 初始化时间）
-                launchMusicPlayer()
-                mainHandler.postDelayed({ dispatchMediaKey(keyCode) }, 3000)
+                launchPlayerByPackage(playerPkg)
+                // 第一次播放按键：4秒后（等播放器初始化完成）
+                mainHandler.postDelayed({ dispatchMediaKey(keyCode, playerPkg) }, 4000)
+                // 第二次播放按键：5.5秒后（确保触发播放，防止第一次没响应）
+                mainHandler.postDelayed({ dispatchMediaKey(keyCode, playerPkg) }, 5500)
             } else {
-                dispatchMediaKey(keyCode)
+                dispatchMediaKey(keyCode, playerPkg)
             }
             ExecutionResult(true, label)
         } catch (e: Exception) {
             ExecutionResult(false, "音乐控制失败：${e.message ?: "未知错误"}")
+        }
+    }
+
+    /**
+     * 启动指定包名的播放器（带到前台，确保 Service 运行）。
+     */
+    private fun launchPlayerByPackage(packageName: String) {
+        try {
+            val intent = context.packageManager.getLaunchIntentForPackage(packageName)
+            if (intent != null) {
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+                context.startActivity(intent)
+                android.util.Log.d("SkillExecutor", "已启动播放器: $packageName")
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("SkillExecutor", "启动播放器失败: $packageName, ${e.message}")
         }
     }
 
@@ -153,42 +221,39 @@ class SkillExecutor(private val context: Context) {
      *
      * 修改 MusicFree 相关逻辑时，只改第 1 层，不要影响第 2、3 层的通用逻辑。
      */
-    private fun dispatchMediaKey(keyCode: Int) {
+    private fun dispatchMediaKey(keyCode: Int, targetPackage: String? = null) {
         val down = android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, keyCode)
         val up = android.view.KeyEvent(android.view.KeyEvent.ACTION_UP, keyCode)
+
+        // 1. 系统级媒体按键（发送给当前活跃的 MediaSession，最可靠）
         try {
             audioManager.dispatchMediaKeyEvent(down)
             audioManager.dispatchMediaKeyEvent(up)
-        } catch (_: Exception) {
-        }
-
-        // 直接发送给 MusicFree 的 react-native-track-player MusicService（最可靠）
-        try {
-            val component = android.content.ComponentName(
-                "fun.upup.musicfree",
-                "com.doublesymmetry.trackplayer.service.MusicService"
-            )
-            val downIntent = Intent(Intent.ACTION_MEDIA_BUTTON)
-                .setComponent(component)
-                .putExtra(Intent.EXTRA_KEY_EVENT, down)
-            val upIntent = Intent(Intent.ACTION_MEDIA_BUTTON)
-                .setComponent(component)
-                .putExtra(Intent.EXTRA_KEY_EVENT, up)
-            context.sendBroadcast(downIntent)
-            context.sendBroadcast(upIntent)
-            android.util.Log.d("SkillExecutor", "已发送媒体按键给 MusicFree MusicService: $keyCode")
+            android.util.Log.d("SkillExecutor", "已发送系统级媒体按键: $keyCode, 目标: ${targetPackage ?: "系统默认"}")
         } catch (e: Exception) {
-            android.util.Log.w("SkillExecutor", "发送给 MusicService 失败: ${e.message}")
+            android.util.Log.w("SkillExecutor", "dispatchMediaKeyEvent 失败: ${e.message}")
         }
 
-        // 兼容其他播放器：逐个指定常见播放器包名发送
-        val packages = listOf(
-            "com.netease.cloudmusic",
-            "com.tencent.qqmusic",
-            "com.kugou.android",
-            "cn.kuwo.player"
-        )
-        for (pkg in packages) {
+        // 2. 发送给目标播放器（指定包名的广播）
+        targetPackage?.let { pkg ->
+            try {
+                val downIntent = Intent(Intent.ACTION_MEDIA_BUTTON)
+                    .setPackage(pkg)
+                    .putExtra(Intent.EXTRA_KEY_EVENT, down)
+                val upIntent = Intent(Intent.ACTION_MEDIA_BUTTON)
+                    .setPackage(pkg)
+                    .putExtra(Intent.EXTRA_KEY_EVENT, up)
+                context.sendBroadcast(downIntent)
+                context.sendBroadcast(upIntent)
+                android.util.Log.d("SkillExecutor", "已发送媒体按键广播给: $pkg")
+            } catch (e: Exception) {
+                android.util.Log.w("SkillExecutor", "发送广播给 $pkg 失败: ${e.message}")
+            }
+        }
+
+        // 3. 兜底：逐个指定所有播放器包名发送广播（确保至少有一个响应）
+        for (pkg in musicPlayerPackages) {
+            if (pkg == targetPackage) continue // 已经发过了，跳过
             try {
                 val downIntent = Intent(Intent.ACTION_MEDIA_BUTTON)
                     .setPackage(pkg)
@@ -214,47 +279,21 @@ class SkillExecutor(private val context: Context) {
      * 修改 MusicFree 相关逻辑时，只改第 1 层。
      */
     private fun launchMusicPlayer() {
-        // 1. 优先启动 MusicFree（用户已安装，控制最可靠）
-        try {
-            val intent = context.packageManager.getLaunchIntentForPackage("fun.upup.musicfree")
-            if (intent != null) {
-                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                context.startActivity(intent)
-                android.util.Log.d("SkillExecutor", "已启动 MusicFree")
-                return
-            }
-        } catch (_: Exception) {
+        val playerPkg = getActiveMusicPlayer()
+        if (playerPkg != null) {
+            currentMusicPlayer = playerPkg
+            launchPlayerByPackage(playerPkg)
+            return
         }
-
-        // 2. 系统默认音乐播放器
+        // 兜底：系统默认音乐播放器
         try {
             val intent = Intent(Intent.ACTION_MAIN).apply {
                 addCategory(Intent.CATEGORY_APP_MUSIC)
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             context.startActivity(intent)
-            return
+            android.util.Log.d("SkillExecutor", "已启动系统默认音乐播放器")
         } catch (_: Exception) {
-        }
-
-        // 3. 依次尝试其他常见音乐播放器
-        val packages = listOf(
-            "com.netease.cloudmusic",      // 网易云音乐
-            "com.tencent.qqmusic",         // QQ音乐
-            "com.kugou.android",           // 酷狗音乐
-            "cn.kuwo.player",              // 酷我音乐
-            "com.android.music"            // 系统音乐
-        )
-        for (pkg in packages) {
-            try {
-                val intent = context.packageManager.getLaunchIntentForPackage(pkg)
-                if (intent != null) {
-                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    context.startActivity(intent)
-                    return
-                }
-            } catch (_: Exception) {
-            }
         }
     }
 
@@ -276,18 +315,24 @@ class SkillExecutor(private val context: Context) {
         if (cleanQuery.isEmpty()) return ExecutionResult(false, "没听清歌曲名")
 
         return try {
-            // 设置待搜索的关键词（无障碍服务会自动操作）
-            MusicFreeInputHandler.setPendingMusicSearch(cleanQuery)
-            // 启动 MusicFree
-            val intent = context.packageManager.getLaunchIntentForPackage("fun.upup.musicfree")
-            if (intent != null) {
-                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                context.startActivity(intent)
+            val playerPkg = getActiveMusicPlayer()
+            if (playerPkg == null) {
+                return ExecutionResult(false, "未安装任何音乐播放器")
+            }
+            // 记录当前活跃播放器
+            currentMusicPlayer = playerPkg
+
+            if (playerPkg == "fun.upup.musicfree") {
+                // MusicFree：使用无障碍服务自动搜索播放
+                MusicFreeInputHandler.setPendingMusicSearch(cleanQuery)
+                launchPlayerByPackage(playerPkg)
                 android.util.Log.d("SkillExecutor", "已启动 MusicFree，待搜索: $cleanQuery")
                 ExecutionResult(true, "正在搜索「$cleanQuery」")
             } else {
-                MusicFreeInputHandler.clearPendingMusicSearch()
-                ExecutionResult(false, "未安装 MusicFree")
+                // 其他播放器：启动播放器，提示用户手动搜索
+                launchPlayerByPackage(playerPkg)
+                android.util.Log.d("SkillExecutor", "已启动播放器 $playerPkg，待搜索: $cleanQuery")
+                ExecutionResult(true, "已打开播放器，请手动搜索「$cleanQuery」")
             }
         } catch (e: Exception) {
             MusicFreeInputHandler.clearPendingMusicSearch()
@@ -579,6 +624,11 @@ class SkillExecutor(private val context: Context) {
             if (intent != null) {
                 intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 context.startActivity(intent)
+                // 如果打开的是音乐播放器，设置为当前活跃播放器
+                if (packageName in musicPlayerPackages) {
+                    currentMusicPlayer = packageName
+                    android.util.Log.d("SkillExecutor", "打开音乐播放器，设置为活跃: $packageName")
+                }
                 ExecutionResult(true, "已打开$displayName")
             } else {
                 ExecutionResult(false, "未安装$displayName")

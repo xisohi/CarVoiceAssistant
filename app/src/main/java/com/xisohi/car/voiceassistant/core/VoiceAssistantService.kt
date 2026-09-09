@@ -92,6 +92,8 @@ class VoiceAssistantService : Service() {
     private var toneGenerator: ToneGenerator? = null
     /** 标记是否正在播放唤醒提示音（TTS说"在呢，您请说"），用于 onSpeakDone 中区分 */
     private var isWakePromptSpeaking = false
+    // 没听懂后是否需要重新监听（true=TTS说完后直接开始录音，不需要唤醒词）
+    private var isRetryListening = false
     private lateinit var skillExecutor: SkillExecutor
     private lateinit var ttsEngine: TtsEngine
 
@@ -136,6 +138,16 @@ class VoiceAssistantService : Service() {
                         mainHandler.postDelayed({
                             startRecognition()
                         }, 250)
+                        return
+                    }
+                    // 如果是"没听懂，请重说"刚说完，直接重新监听（不需要唤醒词）
+                    if (isRetryListening) {
+                        isRetryListening = false
+                        android.util.Log.d("VoiceService", "没听懂提示音播报完成，重新开始录音识别")
+                        // 延迟 300ms 再开始录音，确保 TTS 完全停止
+                        mainHandler.postDelayed({
+                            startRecognition()
+                        }, 300)
                         return
                     }
                     // 正常回复播报完成
@@ -491,11 +503,17 @@ class VoiceAssistantService : Service() {
         val intent = intentParser.parse(text)
         if (intent == null) {
             android.util.Log.w("VoiceService", "未匹配到意图: '$text'")
-            FloatViewService.updateSubtitle("❌ 没听懂")
-            ttsEngine.speak("没听懂，可以试试说：把音量调到五十、播放音乐、导航去机场")
+            FloatViewService.updateSubtitle("❌ 没听懂，请重说")
+            // 设置标志位：TTS说完后直接重新监听，不需要唤醒词
+            isRetryListening = true
+            ttsEngine.speak("没听懂，请重说")
             if (!ttsEngine.isReady) {
-                currentState = State.IDLE
-                resumeWake()
+                // TTS不可用时，直接重新监听
+                isRetryListening = false
+                android.util.Log.d("VoiceService", "TTS不可用，直接重新开始录音识别")
+                mainHandler.postDelayed({
+                    startRecognition()
+                }, 300)
             }
             return
         }
