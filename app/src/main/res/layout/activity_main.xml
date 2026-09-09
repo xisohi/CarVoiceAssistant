@@ -207,36 +207,6 @@
                     android:layout_marginTop="8dp"
                     android:layout_marginBottom="8dp" />
 
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical">
-
-                    <TextView
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="无障碍服务（导航自动填入）"
-                        android:textSize="14sp" />
-
-                    <TextView
-                        android:id="@+id/tvAccessibilityState"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="检测中…"
-                        android:textSize="13sp"
-                        android:textColor="#6B7280" />
-                </LinearLayout>
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnAccessibility"
-                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="去启用无障碍服务"
-                    android:layout_marginTop="10dp" />
-
                 <View
                     android:layout_width="match_parent"
                     android:layout_height="1dp"
@@ -263,6 +233,22 @@
                         android:layout_height="wrap_content"
                         android:checked="true" />
                 </LinearLayout>
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnOpenAutoStartSettings"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="打开系统自启动设置"
+                    android:layout_marginTop="10dp" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="提示：如果开机后服务没有自动启动，请在系统设置中找到本应用，开启自启动/后台运行权限。不同车机系统设置路径可能不同。"
+                    android:textSize="12sp"
+                    android:textColor="#6B7280"
+                    android:layout_marginTop="8dp" />
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 

@@ -345,22 +345,47 @@ class VoiceAssistantService : Service() {
     /**
      * 播放唤醒提示音：短促响亮的"哔哔"两声
      * 使用系统 ToneGenerator，无需额外音频资源
-     * 使用通知音量通道（车机上通常比媒体音量更稳定、更响亮）
+     * 使用媒体音量通道（车机上媒体音量是主要通道，用户可调节）
+     * 播放前检查媒体音量，如果为0则临时调到30%
      */
     private fun playWakeBeep() {
         try {
-            if (toneGenerator == null) {
-                // 使用通知音量通道，音量 100%（最大）
-                toneGenerator = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 100)
+            val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            val currentVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+            val maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+            android.util.Log.d("VoiceService", "媒体音量: $currentVolume/$maxVolume")
+
+            // 如果媒体音量为0，临时调到30%，确保能听到提示音
+            var restoredVolume = -1
+            if (currentVolume == 0 && maxVolume > 0) {
+                restoredVolume = currentVolume
+                val tempVolume = (maxVolume * 0.3).toInt().coerceAtLeast(1)
+                audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, tempVolume, 0)
+                android.util.Log.d("VoiceService", "媒体音量为0，临时调到: $tempVolume")
             }
-            // 播放第一声：TONE_PROP_BEEP 是响亮的"哔"声，时长 150ms
-            toneGenerator?.startTone(ToneGenerator.TONE_PROP_BEEP, 150)
-            // 150ms 后播放第二声（间隔 100ms）
+
+            if (toneGenerator == null) {
+                // 使用媒体音量通道，音量 100%（最大）
+                toneGenerator = ToneGenerator(AudioManager.STREAM_MUSIC, 100)
+            }
+            // 播放第一声：TONE_PROP_BEEP 是响亮的"哔"声，时长 200ms（增加时长确保能听到）
+            toneGenerator?.startTone(ToneGenerator.TONE_PROP_BEEP, 200)
+            // 200ms 后播放第二声（间隔 100ms）
             mainHandler.postDelayed({
                 try {
-                    toneGenerator?.startTone(ToneGenerator.TONE_PROP_BEEP, 150)
+                    toneGenerator?.startTone(ToneGenerator.TONE_PROP_BEEP, 200)
                 } catch (_: Exception) {}
-            }, 250)
+            }, 300)
+
+            // 播放完成后恢复原来的音量（如果临时调整过）
+            if (restoredVolume >= 0) {
+                mainHandler.postDelayed({
+                    try {
+                        audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, restoredVolume, 0)
+                        android.util.Log.d("VoiceService", "恢复媒体音量: $restoredVolume")
+                    } catch (_: Exception) {}
+                }, 800)
+            }
         } catch (e: Exception) {
             android.util.Log.w("VoiceService", "播放提示音失败: ${e.message}")
         }

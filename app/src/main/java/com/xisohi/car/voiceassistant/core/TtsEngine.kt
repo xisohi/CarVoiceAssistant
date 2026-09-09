@@ -19,13 +19,14 @@ class TtsEngine(private val context: Context) : TextToSpeech.OnInitListener {
 
     // 常用 TTS 引擎列表（按推荐优先级排序）
     private val fallbackEngines = listOf(
+        "com.iflytek.vflynote",         // 讯飞语记（用户已安装）
+        "com.iflytek.speechcloud",      // 讯飞语音+
+        "com.iflytek.tts",              // 讯飞 TTS
         "com.google.android.tts",       // Google TTS
         "com.svox.pico",                // Pico TTS（Android 原生）
         "com.huawei.hwvoicetts",        // 华为 TTS
         "com.samsung.SMT",              // 三星 TTS
         "com.xiaomi.tts",               // 小米 TTS
-        "com.iflytek.speechcloud",      // 讯飞语记
-        "com.iflytek.tts",              // 讯飞 TTS
         "com.baidu.tts",                // 百度 TTS
         "com.tencent.speech.tts"        // 腾讯 TTS
     )

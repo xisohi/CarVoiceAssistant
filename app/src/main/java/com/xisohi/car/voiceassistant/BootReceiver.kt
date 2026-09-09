@@ -22,12 +22,31 @@ class BootReceiver : BroadcastReceiver() {
         val action = intent.action
         Log.d(TAG, "收到广播: $action")
 
-        val validActions = listOf(
+        // 开机相关广播（直接触发）
+        val bootActions = listOf(
             Intent.ACTION_BOOT_COMPLETED,
             Intent.ACTION_USER_PRESENT,
-            "android.intent.action.QUICKBOOT_POWERON"
+            "android.intent.action.QUICKBOOT_POWERON",
+            "android.intent.action.LOCKED_BOOT_COMPLETED",
+            "android.intent.action.REBOOT",
+            "com.htc.intent.action.QUICKBOOT_POWERON",
+            "android.intent.action.ACTION_BOOT_COMPLETED"
         )
-        if (action !in validActions) return
+        // 间接触发广播（系统事件，作为备用触发机制）
+        val indirectActions = listOf(
+            "android.net.conn.CONNECTIVITY_CHANGE",
+            "android.intent.action.MEDIA_MOUNTED",
+            "android.bluetooth.adapter.action.STATE_CHANGED"
+        )
+        val isBootAction = action in bootActions
+        val isIndirectAction = action in indirectActions
+        if (!isBootAction && !isIndirectAction) return
+
+        // 间接触发广播只在服务未运行时才尝试启动，避免频繁触发
+        if (isIndirectAction && VoiceAssistantService.isRunning) {
+            Log.d(TAG, "间接触发广播 $action，服务已在运行，跳过")
+            return
+        }
 
         // 检查自启开关
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -41,10 +60,10 @@ class BootReceiver : BroadcastReceiver() {
             return
         }
 
-        // 延迟启动，等待系统完全就绪（增加成功率）
+        // 延迟启动，等待系统完全就绪（车机系统启动较慢，增加到10秒）
         Handler(Looper.getMainLooper()).postDelayed({
             tryStartServices(context)
-        }, 5000) // 延迟5秒
+        }, 10000) // 延迟10秒
     }
 
     private fun tryStartServices(context: Context) {

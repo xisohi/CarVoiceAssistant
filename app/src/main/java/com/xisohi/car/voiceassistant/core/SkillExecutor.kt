@@ -16,9 +16,7 @@ import android.text.TextUtils
 import android.content.ClipData
 import android.content.ClipboardManager
 import androidx.core.content.ContextCompat
-import com.xisohi.car.voiceassistant.core.autoinput.AmapInputHandler
-import com.xisohi.car.voiceassistant.core.autoinput.BaiduMapInputHandler
-import com.xisohi.car.voiceassistant.core.autoinput.MusicFreeInputHandler
+// 无障碍服务已移除，导航使用 URI scheme，音乐控制使用媒体按键
 import java.net.URLEncoder
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -322,20 +320,11 @@ class SkillExecutor(private val context: Context) {
             // 记录当前活跃播放器
             currentMusicPlayer = playerPkg
 
-            if (playerPkg == "fun.upup.musicfree") {
-                // MusicFree：使用无障碍服务自动搜索播放
-                MusicFreeInputHandler.setPendingMusicSearch(cleanQuery)
-                launchPlayerByPackage(playerPkg)
-                android.util.Log.d("SkillExecutor", "已启动 MusicFree，待搜索: $cleanQuery")
-                ExecutionResult(true, "正在搜索「$cleanQuery」")
-            } else {
-                // 其他播放器：启动播放器，提示用户手动搜索
-                launchPlayerByPackage(playerPkg)
-                android.util.Log.d("SkillExecutor", "已启动播放器 $playerPkg，待搜索: $cleanQuery")
-                ExecutionResult(true, "已打开播放器，请手动搜索「$cleanQuery」")
-            }
+            // 启动播放器，提示用户手动搜索（去掉无障碍自动搜索）
+            launchPlayerByPackage(playerPkg)
+            android.util.Log.d("SkillExecutor", "已启动播放器 $playerPkg，待搜索: $cleanQuery")
+            ExecutionResult(true, "已打开播放器，请手动搜索「$cleanQuery」")
         } catch (e: Exception) {
-            MusicFreeInputHandler.clearPendingMusicSearch()
             ExecutionResult(false, "搜索失败：${e.message}")
         }
     }
@@ -349,17 +338,8 @@ class SkillExecutor(private val context: Context) {
     fun selectSong(indexStr: String): ExecutionResult {
         val index = parseSongIndex(indexStr)
         if (index <= 0) return ExecutionResult(false, "请说第几首，比如第三首")
-
-        return try {
-            val success = MusicFreeInputHandler.clickSearchResult(index)
-            if (success) {
-                ExecutionResult(true, "好的，播放第${indexStr}首")
-            } else {
-                ExecutionResult(false, "没有找到第${indexStr}首，请重新选择")
-            }
-        } catch (e: Exception) {
-            ExecutionResult(false, "播放失败：${e.message}")
-        }
+        // 已移除无障碍自动搜索，需要用户手动在播放器中选择
+        return ExecutionResult(false, "请手动在播放器中选择第${indexStr}首歌曲")
     }
 
     /** 解析歌曲序号（支持"3"、"第三首"、"两首"等） */
@@ -397,11 +377,9 @@ class SkillExecutor(private val context: Context) {
         if (dest.isBlank()) return ExecutionResult(false, "请告诉我目的地")
         val encoded = URLEncoder.encode(dest, "UTF-8")
 
-        // 1. 高德车机版（优先）
+        // 1. 高德车机版（优先）- 使用 URI scheme，不需要无障碍服务
         if (isAppInstalled("com.autonavi.amapauto")) {
-            AmapInputHandler.setPendingDestination(dest)
-
-            // 方式1：keywordNavi（搜索+导航，最符合语音场景）
+            // 方式1：keywordNavi（搜索+导航）
             val keywordIntent = Intent(Intent.ACTION_VIEW).apply {
                 data = Uri.parse(
                     "androidauto://keywordNavi?" +
@@ -414,9 +392,6 @@ class SkillExecutor(private val context: Context) {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             if (tryStartActivity(keywordIntent)) {
-                // keywordNavi 可能直接导航，也可能弹出选择列表
-                // 如果高德没有自动处理，无障碍服务兜底
-                AutoInputService.triggerAfterDelay(2500)
                 return ExecutionResult(true, "正在为您导航到${dest}")
             }
 
@@ -432,21 +407,16 @@ class SkillExecutor(private val context: Context) {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             if (tryStartActivity(poiIntent)) {
-                AutoInputService.triggerAfterDelay(2000)
                 return ExecutionResult(true, "正在搜索${dest}")
             }
 
-            // 方式3：直接启动高德主界面，让无障碍服务处理
+            // 方式3：直接启动高德主界面
             val launchIntent = context.packageManager.getLaunchIntentForPackage("com.autonavi.amapauto")
             if (launchIntent != null) {
                 launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 context.startActivity(launchIntent)
-                AutoInputService.triggerAfterDelay(3000)
-                return ExecutionResult(true, "已打开高德地图，正在为您搜索${dest}")
+                return ExecutionResult(true, "已打开高德地图，请手动搜索${dest}")
             }
-
-            // 高德调起全部失败，清理 pending 状态
-            AmapInputHandler.clearPendingDestination()
         }
 
         // 2. 高德手机版
@@ -466,8 +436,6 @@ class SkillExecutor(private val context: Context) {
 
         // 3. 百度地图汽车版
         if (isAppInstalled("com.baidu.naviauto")) {
-            BaiduMapInputHandler.setPendingDestination(dest)
-
             val baiduIntents = listOf(
                 Intent(Intent.ACTION_VIEW).apply {
                     data = Uri.parse(
@@ -495,8 +463,15 @@ class SkillExecutor(private val context: Context) {
                     return ExecutionResult(true, "正在用百度地图搜索${dest}")
                 }
             }
+        }
 
-            BaiduMapInputHandler.clearPendingDestination()
+        // 4. 通用 geo: Intent（系统会选择默认地图应用）
+        val geoIntent = Intent(Intent.ACTION_VIEW).apply {
+            data = Uri.parse("geo:0,0?q=$encoded")
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        if (tryStartActivity(geoIntent)) {
+            return ExecutionResult(true, "正在搜索${dest}，请选择导航")
         }
 
         // 全部失败

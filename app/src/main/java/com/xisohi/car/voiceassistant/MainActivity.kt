@@ -1,8 +1,6 @@
 package com.xisohi.car.voiceassistant
 
 import android.Manifest
-import android.accessibilityservice.AccessibilityServiceInfo
-import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -13,7 +11,6 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
-import android.view.accessibility.AccessibilityManager
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
@@ -98,9 +95,10 @@ class MainActivity : AppCompatActivity() {
                         openOverlaySettings()
                         return@setOnClickListener
                     }
-                    if (!isAccessibilityEnabled()) {
-                        toast("建议启用无障碍服务以获得完整的导航自动输入体验")
-                    }
+                    // 无障碍服务不再强制要求（导航使用 URI scheme）
+                    // if (!isAccessibilityEnabled()) {
+                    //     toast("建议启用无障碍服务以获得完整的导航自动输入体验")
+                    // }
                     VoiceAssistantService.start(this)
                     toast("语音助手已启动，点击「返回后台运行」关闭本页面")
                 } else {
@@ -109,16 +107,17 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        binding.btnAccessibility.setOnClickListener {
-            openAccessibilitySettings()
-        }
-
         // 开机自启开关
         val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
         binding.switchAutoStart.isChecked = prefs.getBoolean(KEY_AUTO_START, true)
         binding.switchAutoStart.setOnCheckedChangeListener { _, isChecked ->
             prefs.edit().putBoolean(KEY_AUTO_START, isChecked).apply()
             toast(if (isChecked) "已开启开机自启动" else "已关闭开机自启动")
+        }
+
+        // 打开系统自启动设置按钮
+        binding.btnOpenAutoStartSettings.setOnClickListener {
+            openAutoStartSettings()
         }
 
         // 唤醒灵敏度预设按钮（点击后填充到手动调节滑块，可微调后再应用）
@@ -168,6 +167,8 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         // 页面可见时启动状态定时刷新（每500ms）
         handler.post(stateRefresher)
+        // 刷新权限状态
+        refreshPermissionState()
     }
 
     override fun onPause() {
@@ -481,13 +482,6 @@ class MainActivity : AppCompatActivity() {
         } else {
             binding.tvOverlayState.text = "○ 未授权（点击授权）"
         }
-        if (isAccessibilityEnabled()) {
-            binding.tvAccessibilityState.text = "● 已启用（导航自动填入）"
-            binding.btnAccessibility.text = "无障碍服务已启用"
-        } else {
-            binding.tvAccessibilityState.text = "○ 未启用（导航需手动输入）"
-            binding.btnAccessibility.text = "去启用无障碍服务"
-        }
     }
 
     // ---------- 权限及设置跳转 ----------
@@ -509,33 +503,73 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun isAccessibilityEnabled(): Boolean {
-        val am = getSystemService(Context.ACCESSIBILITY_SERVICE) as AccessibilityManager
-        val enabledServices = am.getEnabledAccessibilityServiceList(
-            AccessibilityServiceInfo.FEEDBACK_ALL_MASK
-        )
-        return enabledServices.any {
-            it.resolveInfo?.serviceInfo?.packageName == packageName
-        }
-    }
-
-    private fun openAccessibilitySettings() {
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
-                val extraKey = "android.provider.extra.ACCESSIBILITY_SERVICE_COMPONENT_NAME"
-                intent.putExtra(
-                    extraKey,
-                    ComponentName(packageName, "com.xisohi.car.voiceassistant.core.AutoInputService").flattenToString()
+    /**
+     * 打开系统自启动设置页面。
+     * 尝试跳转到各个厂商的自启动管理页面，如果都失败则跳转到应用详情页。
+     */
+    private fun openAutoStartSettings() {
+        // 各个厂商的自启动管理页面 Intent
+        val autoStartIntents = listOf(
+            // 小米/红米
+            Intent().apply {
+                component = android.content.ComponentName(
+                    "com.miui.securitycenter",
+                    "com.miui.permcenter.autostart.AutoStartManagementActivity"
                 )
-                startActivity(intent)
-                toast("请找到「车载语音助手」并开启无障碍服务")
-            } else {
-                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            },
+            // 华为/荣耀
+            Intent().apply {
+                component = android.content.ComponentName(
+                    "com.huawei.systemmanager",
+                    "com.huawei.systemmanager.optimize.process.ProtectActivity"
+                )
+            },
+            // OPPO
+            Intent().apply {
+                component = android.content.ComponentName(
+                    "com.coloros.safecenter",
+                    "com.coloros.safecenter.permission.startup.StartupAppListActivity"
+                )
+            },
+            // vivo
+            Intent().apply {
+                component = android.content.ComponentName(
+                    "com.iqoo.secure",
+                    "com.iqoo.secure.ui.phoneoptimize.AddWhiteListActivity"
+                )
+            },
+            // 三星
+            Intent().apply {
+                component = android.content.ComponentName(
+                    "com.samsung.android.sm",
+                    "com.samsung.android.sm.ui.ram.AutoRunActivity"
+                )
             }
+        )
+
+        // 尝试跳转到各个厂商的自启动管理页面
+        for (intent in autoStartIntents) {
+            try {
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                startActivity(intent)
+                android.util.Log.d("MainActivity", "成功跳转到自启动设置: ${intent.component?.packageName}")
+                toast("已打开自启动设置，请找到本应用并开启自启动权限")
+                return
+            } catch (e: Exception) {
+                android.util.Log.d("MainActivity", "跳转到 ${intent.component?.packageName} 失败: ${e.message}")
+            }
+        }
+
+        // 都失败了，跳转到应用详情页
+        try {
+            val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                data = Uri.parse("package:$packageName")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(intent)
+            toast("已打开应用详情页，请在权限设置中开启自启动/后台运行")
         } catch (e: Exception) {
-            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-            toast("请在辅助功能列表中找到并启用本应用")
+            toast("无法打开系统设置，请手动在系统设置中找到本应用并开启自启动权限")
         }
     }
 
