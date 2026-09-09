@@ -101,6 +101,36 @@
                     android:textColor="#6B7280"
                     android:layout_marginTop="6dp" />
 
+                <!-- TTS 引擎状态 -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:layout_marginTop="6dp">
+
+                    <TextView
+                        android:id="@+id/tvTtsState"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="TTS：检测中..."
+                        android:textSize="12sp"
+                        android:textColor="#6B7280" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnTtsSettings"
+                        style="@style/Widget.MaterialComponents.Button.TextButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="设置"
+                        android:textSize="12sp"
+                        android:minWidth="0dp"
+                        android:minHeight="0dp"
+                        android:paddingHorizontal="8dp"
+                        android:paddingVertical="4dp" />
+                </LinearLayout>
+
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/btnToggleService"
                     android:layout_width="match_parent"

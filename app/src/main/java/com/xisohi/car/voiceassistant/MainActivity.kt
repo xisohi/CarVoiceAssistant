@@ -8,6 +8,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import android.speech.tts.TextToSpeech
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -43,6 +44,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     private lateinit var binding: ActivityMainBinding
+    // TTS 检测（只检测一次，避免每500ms创建销毁TTS实例的性能问题）
+    private var ttsChecker: TextToSpeech? = null
+    private var ttsChecked = false
+    private var ttsAvailable = false
+    private var ttsEngineName = "" 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val handler = Handler(Looper.getMainLooper())
     private val stateRefresher = object : Runnable {
@@ -68,6 +74,11 @@ class MainActivity : AppCompatActivity() {
         binding.btnBackground.setOnClickListener {
             toast("语音助手在后台继续运行")
             finish()
+        }
+
+        // TTS 设置按钮：打开系统 TTS 设置页面
+        binding.btnTtsSettings.setOnClickListener {
+            openTtsSettings()
         }
 
         ensurePermissions()
@@ -138,6 +149,8 @@ class MainActivity : AppCompatActivity() {
         // 初始化手动调节
         initManualControls()
 
+        // 检测 TTS 引擎可用性（只检测一次）
+        checkTtsOnce()
         // 初始刷新一次服务状态
         refreshServiceState()
     }
@@ -166,6 +179,9 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         super.onDestroy()
         handler.removeCallbacks(stateRefresher)
+        // 释放 TTS 检测实例
+        ttsChecker?.shutdown()
+        ttsChecker = null
     }
 
     // ===== 手动调节 threshold/gain =====
@@ -320,6 +336,8 @@ class MainActivity : AppCompatActivity() {
         binding.tvServiceState.text = if (running) "● 运行中" else "○ 已停止"
         binding.btnToggleService.text = if (running) "停止服务" else "启动服务"
         binding.btnBackground.isEnabled = running
+        // 更新 TTS 状态
+        updateTtsState()
         binding.tvVoiceState.text = when (VoiceAssistantService.currentState) {
             VoiceAssistantService.State.IDLE -> if (running) "待机：等待唤醒词…" else "—"
             VoiceAssistantService.State.LISTENING -> "聆听中…"
@@ -346,6 +364,103 @@ class MainActivity : AppCompatActivity() {
         }
         val lastIntent = VoiceAssistantService.lastIntentResult
         binding.tvLastIntent.text = lastIntent
+    }
+
+    /**
+     * 只检测一次 TTS 引擎可用性（在 onCreate 中调用）
+     * 创建临时 TextToSpeech 实例，通过 onInit 回调判断是否可用
+     */
+    private fun checkTtsOnce() {
+        if (ttsChecked) return
+        try {
+            ttsChecker = TextToSpeech(this) { status ->
+                ttsChecked = true
+                if (status == TextToSpeech.SUCCESS) {
+                    ttsAvailable = true
+                    try {
+                        val engines = ttsChecker?.engines
+                        val defaultEngine = ttsChecker?.defaultEngine
+                        val engineInfo = engines?.find { it.name == defaultEngine }
+                        ttsEngineName = engineInfo?.label ?: defaultEngine ?: "系统默认"
+                    } catch (_: Exception) {
+                        ttsEngineName = "系统默认"
+                    }
+                    android.util.Log.d("MainActivity", "TTS检测成功：$ttsEngineName")
+                } else {
+                    ttsAvailable = false
+                    ttsEngineName = ""
+                    android.util.Log.w("MainActivity", "TTS检测失败：status=$status")
+                }
+                // 检测完成后释放临时实例
+                ttsChecker?.shutdown()
+                ttsChecker = null
+                // 刷新UI显示
+                runOnUiThread { updateTtsState() }
+            }
+        } catch (e: Exception) {
+            ttsChecked = true
+            ttsAvailable = false
+            android.util.Log.w("MainActivity", "TTS检测异常：${e.message}")
+        }
+    }
+
+    /**
+     * 更新 TTS 状态显示（根据 checkTtsOnce 的检测结果）
+     * 有 TTS 引擎时用语音提示"在呢，您请说"，没有时自动降级为哔哔声
+     */
+    private fun updateTtsState() {
+        if (!ttsChecked) {
+            binding.tvTtsState.text = "TTS：检测中..."
+            binding.tvTtsState.setTextColor(getColor(android.R.color.darker_gray))
+            binding.btnTtsSettings.text = "设置"
+            return
+        }
+        if (ttsAvailable) {
+            binding.tvTtsState.text = "✅ TTS：$ttsEngineName（唤醒时语音提示）"
+            binding.tvTtsState.setTextColor(getColor(R.color.float_listening))
+            binding.btnTtsSettings.text = "设置"
+        } else {
+            binding.tvTtsState.text = "❌ TTS：未安装语音引擎，唤醒提示用哔哔声"
+            binding.tvTtsState.setTextColor(getColor(R.color.float_processing))
+            binding.btnTtsSettings.text = "安装"
+        }
+    }
+
+    /**
+     * TTS 按钮点击事件：
+     * - TTS 可用时：打开系统 TTS 设置页面
+     * TTS 不可用时：跳转到应用商店搜索推荐的离线 TTS 引擎（讯飞语音+）
+     */
+    private fun openTtsSettings() {
+        if (ttsAvailable) {
+            // TTS 可用：打开系统 TTS 设置页面，用户可以切换引擎/调整语速
+            try {
+                val intent = Intent("com.android.settings.TTS_SETTINGS")
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                startActivity(intent)
+            } catch (e: Exception) {
+                toast("无法打开 TTS 设置，请在系统设置中查找「文字转语音」")
+            }
+        } else {
+            // TTS 不可用：跳转到应用商店搜索推荐的离线 TTS 引擎
+            try {
+                // 优先搜索讯飞语音+（国内最稳定的离线中文TTS）
+                val intent = Intent(Intent.ACTION_VIEW,
+                    android.net.Uri.parse("market://search?q=讯飞语音+ TTS 离线"))
+                startActivity(intent)
+                toast("请在应用商店搜索并安装「讯飞语音+」，安装后在系统设置中设为默认TTS引擎")
+            } catch (e: Exception) {
+                try {
+                    // 备用：打开浏览器搜索讯飞语音+下载
+                    val intent = Intent(Intent.ACTION_VIEW,
+                        android.net.Uri.parse("https://lcjly.cn/car/讯飞语记.apk"))
+                    startActivity(intent)
+                    toast("请下载并安装「讯飞语音+」，安装后在系统设置中设为默认TTS引擎")
+                } catch (e2: Exception) {
+                    toast("请手动在应用商店搜索「讯飞语音+」或「TTS」进行安装")
+                }
+            }
+        }
     }
 
     private fun refreshModelState() {

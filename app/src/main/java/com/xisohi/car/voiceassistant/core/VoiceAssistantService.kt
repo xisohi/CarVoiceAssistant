@@ -28,6 +28,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import android.media.ToneGenerator
+import android.media.AudioManager
 
 class VoiceAssistantService : Service() {
 
@@ -87,6 +89,9 @@ class VoiceAssistantService : Service() {
     private val mainHandler = Handler(Looper.getMainLooper())
     private lateinit var wakeWordEngine: WakeWordEngine
     private lateinit var intentParser: IntentParser
+    private var toneGenerator: ToneGenerator? = null
+    /** 标记是否正在播放唤醒提示音（TTS说"在呢，您请说"），用于 onSpeakDone 中区分 */
+    private var isWakePromptSpeaking = false
     private lateinit var skillExecutor: SkillExecutor
     private lateinit var ttsEngine: TtsEngine
 
@@ -123,6 +128,17 @@ class VoiceAssistantService : Service() {
                 }
 
                 override fun onSpeakDone() {
+                    // 如果是唤醒提示音（"在呢，您请说"）刚说完，开始录音识别用户指令
+                    if (isWakePromptSpeaking) {
+                        isWakePromptSpeaking = false
+                        android.util.Log.d("VoiceService", "唤醒提示音播报完成，开始录音识别")
+                        // 延迟 250ms 再开始录音，确保 TTS 完全停止，不被录进语音指令
+                        mainHandler.postDelayed({
+                            startRecognition()
+                        }, 250)
+                        return
+                    }
+                    // 正常回复播报完成
                     currentState = State.IDLE
                     if (isWaitingForSongSelection) {
                         android.util.Log.d("VoiceService", "选择状态下播报完成，停止唤醒并启动新识别")
@@ -296,8 +312,46 @@ class VoiceAssistantService : Service() {
         mainHandler.removeCallbacks(clearSubtitleRunnable)
         // 停止唤醒监听
         stopWakeListening()
-        // 启动语音识别
-        startRecognition()
+
+        if (ttsEngine.isReady) {
+            // TTS 可用：用语音说"在呢，您请说"，更人性化
+            // 等 TTS 说完后（onSpeakDone 回调）再开始录音，避免 TTS 声音被录进去
+            isWakePromptSpeaking = true
+            ttsEngine.speak("在呢，您请说")
+            android.util.Log.d("VoiceService", "唤醒提示：TTS播报'在呢，您请说'，播报完成后开始录音")
+        } else {
+            // TTS 不可用：兜底用哔哔声提示音
+            android.util.Log.w("VoiceService", "TTS不可用，使用哔哔声作为唤醒提示")
+            playWakeBeep()
+            // 延迟 550ms 再开始录音，确保两声提示音都播放完毕
+            mainHandler.postDelayed({
+                startRecognition()
+            }, 550)
+        }
+    }
+
+    /**
+     * 播放唤醒提示音：短促响亮的"哔哔"两声
+     * 使用系统 ToneGenerator，无需额外音频资源
+     * 使用通知音量通道（车机上通常比媒体音量更稳定、更响亮）
+     */
+    private fun playWakeBeep() {
+        try {
+            if (toneGenerator == null) {
+                // 使用通知音量通道，音量 100%（最大）
+                toneGenerator = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 100)
+            }
+            // 播放第一声：TONE_PROP_BEEP 是响亮的"哔"声，时长 150ms
+            toneGenerator?.startTone(ToneGenerator.TONE_PROP_BEEP, 150)
+            // 150ms 后播放第二声（间隔 100ms）
+            mainHandler.postDelayed({
+                try {
+                    toneGenerator?.startTone(ToneGenerator.TONE_PROP_BEEP, 150)
+                } catch (_: Exception) {}
+            }, 250)
+        } catch (e: Exception) {
+            android.util.Log.w("VoiceService", "播放提示音失败: ${e.message}")
+        }
     }
 
     // ---------- 语音识别 ----------
@@ -589,6 +643,9 @@ class VoiceAssistantService : Service() {
         stopWakeListening()
         wakeWordEngine.close()
         ttsEngine.shutdown()
+        // 释放提示音播放器
+        toneGenerator?.release()
+        toneGenerator = null
         FloatViewService.updateSubtitle("")
         mainHandler.removeCallbacks(clearSubtitleRunnable)
         super.onDestroy()
