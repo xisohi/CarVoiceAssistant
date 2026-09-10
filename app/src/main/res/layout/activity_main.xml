@@ -327,7 +327,7 @@
                     android:id="@+id/tvSensitivityDesc"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="当前：中（增益1.5x，阈值0.5）"
+                    android:text="当前：中（增益2.3x，阈值0.08）"
                     android:textSize="14sp"
                     android:textStyle="bold"
                     android:layout_marginTop="4dp" />
@@ -417,7 +417,7 @@
                         android:id="@+id/tvThresholdValue"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="0.20"
+                        android:text="0.08"
                         android:textSize="13sp"
                         android:textStyle="bold"
                         android:textColor="#1A73E8" />
@@ -428,7 +428,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:max="49"
-                    android:progress="19"
+                    android:progress="7"
                     android:layout_marginTop="2dp" />
 
                 <TextView
@@ -456,7 +456,7 @@
                         android:id="@+id/tvGainValue"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="1.5x"
+                        android:text="2.3x"
                         android:textSize="13sp"
                         android:textStyle="bold"
                         android:textColor="#1A73E8" />
@@ -467,7 +467,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:max="40"
-                    android:progress="5"
+                    android:progress="13"
                     android:layout_marginTop="2dp" />
 
                 <TextView
