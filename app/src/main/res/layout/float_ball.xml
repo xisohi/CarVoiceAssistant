@@ -3,7 +3,7 @@
     android:layout_width="wrap_content"
     android:layout_height="wrap_content"
     android:orientation="vertical"
-    android:gravity="center"
+    android:gravity="center_horizontal"
     android:background="@drawable/float_ball_bg"
     android:padding="8dp">
 
@@ -22,5 +22,19 @@
         android:textColor="#FFFFFF"
         android:textSize="8sp"
         android:layout_marginTop="2dp" />
+
+    <!-- 实时识别内容（显示在悬浮球下方） -->
+    <TextView
+        android:id="@+id/tvFloatSubtitle"
+        android:layout_width="180dp"
+        android:layout_height="wrap_content"
+        android:text=""
+        android:textColor="#FFFF00"
+        android:textSize="12sp"
+        android:gravity="center"
+        android:layout_marginTop="4dp"
+        android:visibility="gone"
+        android:background="#80000000"
+        android:padding="4dp" />
 
 </LinearLayout>

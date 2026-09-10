@@ -17,8 +17,6 @@ import android.os.Handler
 import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import com.xisohi.car.voiceassistant.R
-import com.xisohi.car.voiceassistant.core.autoinput.MusicFreeInputHandler
-import com.xisohi.car.voiceassistant.core.autoinput.SongInfo
 import com.xisohi.car.voiceassistant.core.wakeword.WakeWordEngine  // 使用您指定的包
 import com.xisohi.car.voiceassistant.download.ModelManager
 import kotlinx.coroutines.CoroutineScope
@@ -63,13 +61,6 @@ class VoiceAssistantService : Service() {
             private set
 
         val isRunning: Boolean get() = instance != null
-
-        @Volatile
-        private var pendingSongResults: List<SongInfo>? = null
-
-        @Volatile
-        var isWaitingForSongSelection: Boolean = false
-            private set
 
         fun start(context: Context) {
             val intent = Intent(context, VoiceAssistantService::class.java).setAction(ACTION_START)
@@ -152,13 +143,7 @@ class VoiceAssistantService : Service() {
                     }
                     // 正常回复播报完成
                     currentState = State.IDLE
-                    if (isWaitingForSongSelection) {
-                        android.util.Log.d("VoiceService", "选择状态下播报完成，停止唤醒并启动新识别")
-                        stopWakeListening()
-                        startRecognition()
-                    } else {
-                        resumeWake()
-                    }
+                    resumeWake()
                 }
             }
         }
@@ -188,7 +173,7 @@ class VoiceAssistantService : Service() {
     }
 
     private fun startForegroundCompat() {
-        val notification = buildNotification("语音助手运行中")
+        val notification = buildNotification(getString(R.string.notification_running))
         if (Build.VERSION.SDK_INT >= 29) {
             startForeground(NOTIF_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
         } else {
@@ -207,7 +192,7 @@ class VoiceAssistantService : Service() {
 
     private fun createChannel() {
         if (Build.VERSION.SDK_INT >= 26) {
-            val channel = NotificationChannel(CHANNEL_ID, "语音助手", NotificationManager.IMPORTANCE_LOW)
+            val channel = NotificationChannel(CHANNEL_ID, getString(R.string.notification_channel_name), NotificationManager.IMPORTANCE_LOW)
             getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
         }
     }
@@ -329,7 +314,7 @@ class VoiceAssistantService : Service() {
             // TTS 可用：用语音说"在呢，您请说"，更人性化
             // 等 TTS 说完后（onSpeakDone 回调）再开始录音，避免 TTS 声音被录进去
             isWakePromptSpeaking = true
-            ttsEngine.speak("在呢，您请说")
+            ttsEngine.speak(getString(R.string.tts_wake_prompt))
             android.util.Log.d("VoiceService", "唤醒提示：TTS播报'在呢，您请说'，播报完成后开始录音")
         } else {
             // TTS 不可用：兜底用哔哔声提示音
@@ -395,7 +380,7 @@ class VoiceAssistantService : Service() {
     private fun startRecognition() {
         val modelDir = ModelManager.findAsrModelDir(this)
         if (modelDir == null) {
-            ttsEngine.speak("语音模型不可用，请先在主界面完成初始化")
+            ttsEngine.speak(getString(R.string.tts_model_unavailable))
             resumeWake()
             return
         }
@@ -492,8 +477,8 @@ class VoiceAssistantService : Service() {
         scheduleSubtitleClear(15000)
 
         if (text.isBlank()) {
-            FloatViewService.updateSubtitle("❌ 没有听清")
-            ttsEngine.speak("没有听清，请再说一遍")
+            FloatViewService.updateSubtitle(getString(R.string.subtitle_not_heard))
+            ttsEngine.speak(getString(R.string.tts_not_heard))
             mainHandler.postDelayed({
                 if (currentState != VoiceAssistantService.State.IDLE) {
                     currentState = State.IDLE
@@ -503,35 +488,13 @@ class VoiceAssistantService : Service() {
             return
         }
 
-        // 多轮对话选择
-        if (isWaitingForSongSelection) {
-            val index = parseSongIndexFromText(text)
-            if (index > 0) {
-                android.util.Log.d("VoiceService", "多轮对话：选择第 $index 首")
-                val result = skillExecutor.selectSong(index.toString())
-                if (result.handled) {
-                    pendingSongResults = null
-                    isWaitingForSongSelection = false
-                }
-                FloatViewService.updateSubtitle("✅ ${result.spoken}")
-                ttsEngine.speak(result.spoken)
-                if (!ttsEngine.isReady) {
-                    currentState = State.IDLE
-                    resumeWake()
-                }
-                return
-            }
-            pendingSongResults = null
-            isWaitingForSongSelection = false
-        }
-
         val intent = intentParser.parse(text)
         if (intent == null) {
             android.util.Log.w("VoiceService", "未匹配到意图: '$text'")
-            FloatViewService.updateSubtitle("❌ 没听懂，请重说")
+            FloatViewService.updateSubtitle(getString(R.string.subtitle_not_understood))
             // 设置标志位：TTS说完后直接重新监听，不需要唤醒词
             isRetryListening = true
-            ttsEngine.speak("没听懂，请重说")
+            ttsEngine.speak(getString(R.string.tts_not_understood))
             if (!ttsEngine.isReady) {
                 // TTS不可用时，直接重新监听
                 isRetryListening = false
@@ -545,32 +508,26 @@ class VoiceAssistantService : Service() {
         android.util.Log.i("VoiceService", "匹配意图: ${intent.action}, 参数: ${intent.params}")
         if (intent.action == "app.cancel") {
             currentState = State.IDLE
-            FloatViewService.updateSubtitle("已取消")
+            FloatViewService.updateSubtitle(getString(R.string.subtitle_cancelled))
             resumeWake()
             return
         }
 
-        // 音乐搜索
+        // 音乐搜索（已移除无障碍自动搜索，只打开播放器并提示手动搜索）
         if (intent.action == "media.search_play") {
             val result = skillExecutor.execute(intent)
-            FloatViewService.updateSubtitle("⏳ ${result.spoken}")
+            FloatViewService.updateSubtitle("✅ ${result.spoken}")
             ttsEngine.speak(result.spoken)
-            if (result.handled) {
-                scope.launch(Dispatchers.IO) {
-                    waitForSearchResultsAndPrompt()
-                }
-            } else {
-                if (!ttsEngine.isReady) {
-                    currentState = State.IDLE
-                    resumeWake()
-                }
+            if (!ttsEngine.isReady) {
+                currentState = State.IDLE
+                resumeWake()
             }
             return
         }
 
         val result = skillExecutor.execute(intent)
         android.util.Log.i("VoiceService", "执行结果: handled=${result.handled}, spoken='${result.spoken}'")
-        lastIntentResult = if (result.handled) "已执行: ${result.spoken}" else "未匹配: ${result.spoken}"
+        lastIntentResult = if (result.handled) getString(R.string.result_executed, result.spoken) else getString(R.string.result_unmatched, result.spoken)
         FloatViewService.updateSubtitle("✅ ${result.spoken}")
 
         if (result.spoken.isBlank()) {
@@ -586,96 +543,7 @@ class VoiceAssistantService : Service() {
         }
     }
 
-    // ---------- 搜索相关 ----------
-    private suspend fun waitForSearchResultsAndPrompt() {
-        try {
-            var waited = 0L
-            val interval = 500L
-            val maxWait = 15000L
-            while (waited < maxWait) {
-                if (MusicFreeInputHandler.isSearchCompleted()) break
-                kotlinx.coroutines.delay(interval)
-                waited += interval
-            }
-            if (!MusicFreeInputHandler.isSearchCompleted()) {
-                withContext(Dispatchers.Main) {
-                    FloatViewService.updateSubtitle("❌ 搜索超时")
-                    ttsEngine.speak("搜索超时，请重试")
-                    if (!ttsEngine.isReady) {
-                        currentState = State.IDLE
-                        resumeWake()
-                    }
-                }
-                return
-            }
-            kotlinx.coroutines.delay(2000)
-            MusicFreeInputHandler.clickSingleTab()
-            kotlinx.coroutines.delay(3000)
-            var results = MusicFreeInputHandler.getSearchResults()
-            if (results.isEmpty()) {
-                results = MusicFreeInputHandler.getSearchResults()
-            }
-            if (results.isEmpty()) {
-                withContext(Dispatchers.Main) {
-                    FloatViewService.updateSubtitle("❌ 没有找到相关歌曲")
-                    ttsEngine.speak("没有找到相关歌曲")
-                    if (!ttsEngine.isReady) {
-                        currentState = State.IDLE
-                        resumeWake()
-                    }
-                }
-                return
-            }
-            pendingSongResults = results
-            isWaitingForSongSelection = true
 
-            val prompt = buildString {
-                append("找到${results.size}首，")
-                results.take(5).forEachIndexed { index, song ->
-                    append("第${index + 1}首，${song.title}")
-                    if (song.artist.isNotEmpty()) append("，${song.artist}")
-                    append("；")
-                }
-                if (results.size > 5) append("等${results.size}首。")
-                append("请问播放第几首？")
-            }
-            withContext(Dispatchers.Main) {
-                FloatViewService.updateSubtitle("🎵 找到 ${results.size} 首，请说第几首")
-                if (!ttsEngine.isReady) {
-                    android.util.Log.w("VoiceService", "TTS不可用，跳过播报，直接启动识别")
-                    stopWakeListening()
-                    startRecognition()
-                } else {
-                    ttsEngine.speak(prompt)
-                }
-            }
-        } catch (e: Exception) {
-            android.util.Log.w("VoiceService", "等待搜索结果失败: ${e.message}")
-            withContext(Dispatchers.Main) {
-                FloatViewService.updateSubtitle("❌ 搜索出错")
-                currentState = State.IDLE
-                resumeWake()
-            }
-        }
-    }
-
-    private fun parseSongIndexFromText(text: String): Int {
-        val clean = text.trim()
-        clean.toIntOrNull()?.let { if (it in 1..10) return it }
-        val match = Regex("第([一二三四五六七八九十两\\d]{1,3})首").find(clean)
-        if (match != null) {
-            val numStr = match.groupValues[1]
-            numStr.toIntOrNull()?.let { return it }
-            val cnNum = mapOf(
-                "一" to 1, "二" to 2, "两" to 2, "三" to 3, "四" to 4,
-                "五" to 5, "六" to 6, "七" to 7, "八" to 8, "九" to 9, "十" to 10
-            )
-            cnNum[numStr]?.let { return it }
-        }
-        return 0
-    }
-
-    // ---------- 清理 ----------
     override fun onDestroy() {
         instance = null
         currentState = State.IDLE

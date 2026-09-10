@@ -296,17 +296,15 @@ class SkillExecutor(private val context: Context) {
     }
 
     /**
-     * [MusicFree 专用] 启动歌曲搜索（不自动播放，等待用户选择）。
+     * 启动音乐播放器并提示用户手动搜索（已移除无障碍自动搜索）。
      *
      * 工作流程：
-     * 1. 调用 [MusicFreeInputHandler.setPendingMusicSearch] 设置待搜索关键词
-     * 2. 启动 MusicFree
-     * 3. 无障碍服务 [MusicFreeInputHandler] 自动打开搜索页、输入关键词、点击搜索
-     * 4. 搜索完成后，外部调用 [MusicFreeInputHandler.getSearchResults] 读取结果列表
-     * 5. 用户选择后，调用 [selectSong] 播放指定序号
+     * 1. 检测当前活跃的音乐播放器
+     * 2. 启动该播放器
+     * 3. 提示用户手动在播放器中搜索指定歌曲
      *
-     * 注意：本方法仅适用于 MusicFree。如需支持其他播放器，
-     * 请新建独立的 Handler，不要修改本方法。
+     * 注意：由于移除了无障碍服务，无法自动输入搜索关键词和读取搜索结果，
+     * 需要用户手动在播放器中操作。
      */
     private fun searchAndPlay(query: String): ExecutionResult {
         val cleanQuery = query.trim()

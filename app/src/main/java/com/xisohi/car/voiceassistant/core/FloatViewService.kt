@@ -72,6 +72,8 @@ class FloatViewService : Service() {
 
         // ---------- 1. 创建悬浮球（可拖动） ----------
         floatView = View.inflate(this, R.layout.float_ball, null)
+        // 找到悬浮球布局中的实时识别 TextView（显示在悬浮球下方）
+        subtitleTextView = floatView.findViewById(R.id.tvFloatSubtitle)
         val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
         } else {
@@ -122,53 +124,7 @@ class FloatViewService : Service() {
 
         windowManager.addView(floatView, layoutParams)
 
-        // ---------- 2. 创建独立的字幕悬浮窗（固定在顶部中央，透明不可触摸） ----------
-        createSubtitleView()
-
         startStateMonitoring()
-    }
-
-    // ---------- 创建独立字幕悬浮窗 ----------
-    private fun createSubtitleView() {
-        val tv = TextView(this).apply {
-            textSize = 18f
-            setTextColor(0xFFFFFF00.toInt()) // 亮黄色
-            gravity = Gravity.CENTER
-            // 背景完全透明
-            setBackgroundColor(0x00000000)
-            // 文字阴影增强可读性
-            setShadowLayer(4f, 0f, 0f, 0xCC000000.toInt())
-            // 初始隐藏
-            visibility = View.GONE
-        }
-        subtitleTextView = tv
-
-        val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-        } else {
-            @Suppress("DEPRECATION")
-            WindowManager.LayoutParams.TYPE_PHONE
-        }
-
-        val params = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            type,
-            // 不获取焦点，不触摸穿透（但不可触摸）
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                    WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
-            PixelFormat.TRANSLUCENT
-        )
-        params.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-        // 顶部偏移，避开状态栏（约 60dp 转为像素）
-        params.y = (60 * resources.displayMetrics.density).toInt()
-
-        // 确保字幕在所有应用之上，但低于系统栏（保持可见）
-        try {
-            windowManager.addView(tv, params)
-        } catch (e: Exception) {
-            android.util.Log.e("FloatView", "添加字幕悬浮窗失败: ${e.message}")
-        }
     }
 
     // ---------- 原有功能 ----------
@@ -200,19 +156,19 @@ class FloatViewService : Service() {
         val icon = floatView.findViewById<ImageView>(R.id.ivFloatIcon)
         when (VoiceAssistantService.currentState) {
             VoiceAssistantService.State.IDLE -> {
-                stateText?.text = "语音助手"
+                stateText?.text = getString(R.string.float_state_idle)
                 icon?.setColorFilter(getColor(R.color.float_idle))
             }
             VoiceAssistantService.State.LISTENING -> {
-                stateText?.text = "聆听中…"
+                stateText?.text = getString(R.string.state_listening)
                 icon?.setColorFilter(getColor(R.color.float_listening))
             }
             VoiceAssistantService.State.PROCESSING -> {
-                stateText?.text = "处理中…"
+                stateText?.text = getString(R.string.state_processing)
                 icon?.setColorFilter(getColor(R.color.float_processing))
             }
             VoiceAssistantService.State.SPEAKING -> {
-                stateText?.text = "播报中…"
+                stateText?.text = getString(R.string.state_speaking)
                 icon?.setColorFilter(getColor(R.color.float_speaking))
             }
         }
@@ -225,18 +181,10 @@ class FloatViewService : Service() {
         stateJob?.cancel()
         scope.cancel()
 
-        // 移除悬浮球
+        // 移除悬浮球（包含实时识别 TextView，会一起移除）
         try {
             windowManager.removeView(floatView)
         } catch (_: Exception) {
-        }
-
-        // 移除字幕
-        subtitleTextView?.let {
-            try {
-                windowManager.removeView(it)
-            } catch (_: Exception) {
-            }
         }
         subtitleTextView = null
     }

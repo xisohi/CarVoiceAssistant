@@ -71,19 +71,6 @@
             android:name=".core.FloatViewService"
             android:exported="false" />
 
-        <!-- 无障碍服务（导航自动填入搜索框） -->
-        <service
-            android:name=".core.AutoInputService"
-            android:exported="true"
-            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
-            <intent-filter>
-                <action android:name="android.accessibilityservice.AccessibilityService" />
-            </intent-filter>
-            <meta-data
-                android:name="android.accessibilityservice"
-                android:resource="@xml/accessibility_service_config" />
-        </service>
-
         <!-- 开机自启接收器 -->
         <receiver
             android:name=".BootReceiver"

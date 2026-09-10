@@ -58,7 +58,7 @@ class MainActivity : AppCompatActivity() {
     private val permissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
             if (result[Manifest.permission.RECORD_AUDIO] != true) {
-                toast("未授予录音权限，语音助手无法工作")
+                toast(getString(R.string.toast_no_microphone_permission))
             }
         }
 
@@ -69,7 +69,7 @@ class MainActivity : AppCompatActivity() {
 
         // 返回后台运行按钮：只关闭页面，不停止服务
         binding.btnBackground.setOnClickListener {
-            toast("语音助手在后台继续运行")
+            toast(getString(R.string.toast_running_in_background))
             finish()
         }
 
@@ -87,11 +87,11 @@ class MainActivity : AppCompatActivity() {
         binding.btnToggleService.setOnClickListener {
             if (VoiceAssistantService.isRunning) {
                 VoiceAssistantService.stop(this)
-                toast("语音助手已停止")
+                toast(getString(R.string.toast_service_stopped))
             } else {
                 if (ModelManager.isModelReady(this)) {
                     if (!canDrawOverlays()) {
-                        toast("请先授予悬浮窗权限")
+                        toast(getString(R.string.toast_need_overlay_permission))
                         openOverlaySettings()
                         return@setOnClickListener
                     }
@@ -100,9 +100,9 @@ class MainActivity : AppCompatActivity() {
                     //     toast("建议启用无障碍服务以获得完整的导航自动输入体验")
                     // }
                     VoiceAssistantService.start(this)
-                    toast("语音助手已启动，点击「返回后台运行」关闭本页面")
+                    toast(getString(R.string.toast_service_started))
                 } else {
-                    toast("请先下载离线语音包")
+                    toast(getString(R.string.toast_need_download_model))
                 }
             }
         }
@@ -112,7 +112,7 @@ class MainActivity : AppCompatActivity() {
         binding.switchAutoStart.isChecked = prefs.getBoolean(KEY_AUTO_START, true)
         binding.switchAutoStart.setOnCheckedChangeListener { _, isChecked ->
             prefs.edit().putBoolean(KEY_AUTO_START, isChecked).apply()
-            toast(if (isChecked) "已开启开机自启动" else "已关闭开机自启动")
+            toast(if (isChecked) getString(R.string.toast_auto_start_enabled) else getString(R.string.toast_auto_start_disabled))
         }
 
         // 打开系统自启动设置按钮
@@ -158,7 +158,7 @@ class MainActivity : AppCompatActivity() {
     override fun onBackPressed() {
         // 按返回键只关闭页面，不停止服务
         if (VoiceAssistantService.isRunning) {
-            toast("语音助手在后台继续运行")
+            toast(getString(R.string.toast_running_in_background))
         }
         super.onBackPressed()
     }
@@ -247,7 +247,7 @@ class MainActivity : AppCompatActivity() {
                 .apply()
             // 恢复到中档预设
             fillPresetToSliders(1)
-            toast("已恢复默认灵敏度（中）")
+            toast(getString(R.string.toast_sensitivity_reset))
             log("已恢复默认灵敏度（中）")
         }
     }
@@ -334,16 +334,16 @@ class MainActivity : AppCompatActivity() {
 
     private fun refreshServiceState() {
         val running = VoiceAssistantService.isRunning
-        binding.tvServiceState.text = if (running) "● 运行中" else "○ 已停止"
-        binding.btnToggleService.text = if (running) "停止服务" else "启动服务"
+        binding.tvServiceState.text = if (running) getString(R.string.state_running) else getString(R.string.state_stopped)
+        binding.btnToggleService.text = if (running) getString(R.string.btn_stop_service) else getString(R.string.btn_start_service)
         binding.btnBackground.isEnabled = running
         // 更新 TTS 状态
         updateTtsState()
         binding.tvVoiceState.text = when (VoiceAssistantService.currentState) {
-            VoiceAssistantService.State.IDLE -> if (running) "待机：等待唤醒词…" else "—"
-            VoiceAssistantService.State.LISTENING -> "聆听中…"
-            VoiceAssistantService.State.PROCESSING -> "处理中…"
-            VoiceAssistantService.State.SPEAKING -> "播报中…"
+            VoiceAssistantService.State.IDLE -> if (running) getString(R.string.voice_state_idle) else getString(R.string.voice_state_none)
+            VoiceAssistantService.State.LISTENING -> getString(R.string.state_listening)
+            VoiceAssistantService.State.PROCESSING -> getString(R.string.state_processing)
+            VoiceAssistantService.State.SPEAKING -> getString(R.string.state_speaking)
         }
         // 刷新识别文本：聆听中显示实时识别结果，否则显示最终识别结果
         val isListening = (VoiceAssistantService.currentState == VoiceAssistantService.State.LISTENING)
@@ -382,9 +382,9 @@ class MainActivity : AppCompatActivity() {
                         val engines = ttsChecker?.engines
                         val defaultEngine = ttsChecker?.defaultEngine
                         val engineInfo = engines?.find { it.name == defaultEngine }
-                        ttsEngineName = engineInfo?.label ?: defaultEngine ?: "系统默认"
+                        ttsEngineName = engineInfo?.label ?: defaultEngine ?: getString(R.string.tts_default_engine)
                     } catch (_: Exception) {
-                        ttsEngineName = "系统默认"
+                        ttsEngineName = getString(R.string.tts_default_engine)
                     }
                     android.util.Log.d("MainActivity", "TTS检测成功：$ttsEngineName")
                 } else {
@@ -411,19 +411,19 @@ class MainActivity : AppCompatActivity() {
      */
     private fun updateTtsState() {
         if (!ttsChecked) {
-            binding.tvTtsState.text = "TTS：检测中..."
+            binding.tvTtsState.text = getString(R.string.tts_checking)
             binding.tvTtsState.setTextColor(getColor(android.R.color.darker_gray))
-            binding.btnTtsSettings.text = "设置"
+            binding.btnTtsSettings.text = getString(R.string.btn_tts_settings)
             return
         }
         if (ttsAvailable) {
-            binding.tvTtsState.text = "✅ TTS：$ttsEngineName（唤醒时语音提示）"
+            binding.tvTtsState.text = getString(R.string.tts_available, ttsEngineName)
             binding.tvTtsState.setTextColor(getColor(R.color.float_listening))
-            binding.btnTtsSettings.text = "设置"
+            binding.btnTtsSettings.text = getString(R.string.btn_tts_settings)
         } else {
-            binding.tvTtsState.text = "❌ TTS：未安装语音引擎，唤醒提示用哔哔声"
+            binding.tvTtsState.text = getString(R.string.tts_unavailable)
             binding.tvTtsState.setTextColor(getColor(R.color.float_processing))
-            binding.btnTtsSettings.text = "安装"
+            binding.btnTtsSettings.text = getString(R.string.btn_tts_install)
         }
     }
 
@@ -440,7 +440,7 @@ class MainActivity : AppCompatActivity() {
                 intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 startActivity(intent)
             } catch (e: Exception) {
-                toast("无法打开 TTS 设置，请在系统设置中查找「文字转语音」")
+                toast(getString(R.string.toast_tts_settings_failed))
             }
         } else {
             // TTS 不可用：跳转到应用商店搜索推荐的离线 TTS 引擎
@@ -466,21 +466,21 @@ class MainActivity : AppCompatActivity() {
 
     private fun refreshModelState() {
         if (ModelManager.isModelReady(this)) {
-            binding.tvModelState.text = "模型已就绪（完全离线可用）"
+            binding.tvModelState.text = getString(R.string.model_ready)
             binding.btnDownload.isEnabled = false
             binding.progressDownload.isIndeterminate = false
             binding.progressDownload.progress = 0
         } else {
-            binding.tvModelState.text = "未检测到离线语音包"
+            binding.tvModelState.text = getString(R.string.model_not_found)
             binding.btnDownload.isEnabled = true
         }
     }
 
     private fun refreshPermissionState() {
         if (canDrawOverlays()) {
-            binding.tvOverlayState.text = "● 已授权"
+            binding.tvOverlayState.text = getString(R.string.overlay_granted)
         } else {
-            binding.tvOverlayState.text = "○ 未授权（点击授权）"
+            binding.tvOverlayState.text = getString(R.string.overlay_denied)
         }
     }
 
@@ -565,7 +565,7 @@ class MainActivity : AppCompatActivity() {
                 intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 startActivity(intent)
                 android.util.Log.d("MainActivity", "成功跳转到设置: ${intent.action ?: intent.component?.packageName}")
-                toast("已打开系统设置，请找到本应用并开启自启动/后台运行权限")
+                toast(getString(R.string.toast_settings_opened))
                 return
             } catch (e: Exception) {
                 android.util.Log.d("MainActivity", "跳转失败: ${intent.action ?: intent.component?.packageName} - ${e.message}")
@@ -573,21 +573,11 @@ class MainActivity : AppCompatActivity() {
         }
 
         // 都失败了，显示详细的手动操作指引
-        val message = """
-            无法自动打开系统设置，请手动操作：
-
-            1. 打开系统「设置」
-            2. 找到「应用」或「应用管理」
-            3. 找到「CarVoiceAssistant」
-            4. 开启「自启动」或「后台运行」权限
-            5. 电池设置选择「不受限」
-
-            不同车机系统设置路径可能不同，请在系统设置中搜索「自启动」或「后台」。
-        """.trimIndent()
+        val message = getString(R.string.dialog_auto_start_message)
         androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle("手动开启自启动")
+            .setTitle(R.string.dialog_auto_start_title)
             .setMessage(message)
-            .setPositiveButton("我知道了", null)
+            .setPositiveButton(R.string.dialog_got_it, null)
             .show()
     }
 
@@ -603,20 +593,20 @@ class MainActivity : AppCompatActivity() {
                         binding.progressDownload.max = 100
                         binding.progressDownload.progress = (p.fraction * 100).toInt()
                         binding.tvModelState.text =
-                            "下载中 ${p.bytesDownloaded / 1024 / 1024}MB / ${p.totalBytes / 1024 / 1024}MB"
+                            getString(R.string.model_downloading, p.bytesDownloaded / 1024 / 1024, p.totalBytes / 1024 / 1024)
                     }
                 }
                 log("下载完成（${pack.length() / 1024 / 1024}MB），正在解压…")
                 ModelInstaller.install(this@MainActivity, pack)
                 log("模型安装完成")
                 refreshModelState()
-                toast("模型就绪，可启动语音助手")
+                toast(getString(R.string.toast_model_ready))
             } catch (e: Exception) {
                 binding.btnDownload.isEnabled = true
                 binding.progressDownload.isIndeterminate = false
-                val msg = e.message ?: "未知错误"
+                val msg = e.message ?: getString(R.string.toast_unknown_error)
                 log("失败：$msg")
-                toast("下载失败：$msg")
+                toast(getString(R.string.toast_download_failed) + "：$msg")
             }
         }
     }

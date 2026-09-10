@@ -1,5 +1,102 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- 应用名称 -->
     <string name="app_name">车载语音助手</string>
-    <string name="accessibility_description">用于在高德地图车机版中自动填入语音识别出的导航目的地，无需手动输入。</string>
-    <string name="accessibility_service_description">车载语音助手无障碍服务，用于自动在导航和音乐APP中填入搜索内容</string>
+
+    <!-- ===== 通用状态（设置页和悬浮窗共用） ===== -->
+    <string name="state_listening">聆听中…</string>
+    <string name="state_processing">处理中…</string>
+    <string name="state_speaking">播报中…</string>
+
+    <!-- ===== 通用提示 ===== -->
+    <string name="toast_unknown_error">未知错误</string>
+    <string name="toast_operation_failed">操作失败</string>
+
+    <!-- ===== MainActivity 相关 ===== -->
+    <string name="toast_no_microphone_permission">未授予录音权限，语音助手无法工作</string>
+    <string name="toast_running_in_background">语音助手在后台继续运行</string>
+    <string name="toast_service_stopped">语音助手已停止</string>
+    <string name="toast_need_overlay_permission">请先授予悬浮窗权限</string>
+    <string name="toast_service_started">语音助手已启动，点击「返回后台运行」关闭本页面</string>
+    <string name="toast_need_download_model">请先下载离线语音包</string>
+    <string name="toast_auto_start_enabled">已开启开机自启动</string>
+    <string name="toast_auto_start_disabled">已关闭开机自启动</string>
+    <string name="toast_manual_params_applied">已应用手动参数</string>
+    <string name="toast_sensitivity_reset">已恢复默认灵敏度（中）</string>
+    <string name="toast_preset_filled">已填充预设参数，可微调后点击应用</string>
+    <string name="toast_sensitivity_set">灵敏度已设置</string>
+    <string name="toast_settings_opened">已打开系统设置，请找到本应用并开启自启动/后台运行权限</string>
+    <string name="toast_model_ready">模型就绪，可启动语音助手</string>
+    <string name="toast_download_failed">下载失败</string>
+
+    <!-- 服务状态 -->
+    <string name="state_running">● 运行中</string>
+    <string name="state_stopped">○ 已停止</string>
+    <string name="btn_stop_service">停止服务</string>
+    <string name="btn_start_service">启动服务</string>
+
+    <!-- 语音状态（设置页专用） -->
+    <string name="voice_state_idle">待机：等待唤醒词…</string>
+    <string name="voice_state_none">—</string>
+
+    <!-- TTS 状态 -->
+    <string name="tts_checking">TTS：检测中...</string>
+    <string name="tts_available">✅ TTS：%1$s（唤醒时语音提示）</string>
+    <string name="tts_unavailable">❌ TTS：未安装语音引擎，唤醒提示用哔哔声</string>
+    <string name="tts_default_engine">系统默认</string>
+    <string name="btn_tts_settings">设置</string>
+    <string name="btn_tts_install">安装</string>
+    <string name="toast_tts_settings_failed">无法打开 TTS 设置，请在系统设置中查找「文字转语音」</string>
+
+    <!-- 模型状态 -->
+    <string name="model_ready">模型已就绪（完全离线可用）</string>
+    <string name="model_not_found">未检测到离线语音包</string>
+    <string name="model_downloading">下载中 %1$dMB / %2$dMB</string>
+
+    <!-- 悬浮窗权限 -->
+    <string name="overlay_granted">● 已授权</string>
+    <string name="overlay_denied">○ 未授权（点击授权）</string>
+
+    <!-- 自启动对话框 -->
+    <string name="dialog_auto_start_title">手动开启自启动</string>
+    <string name="dialog_auto_start_message">无法自动打开系统设置，请手动操作：\n\n1. 打开系统「设置」\n2. 找到「应用」或「应用管理」\n3. 找到「CarVoiceAssistant」\n4. 开启「自启动」或「后台运行」权限\n5. 电池设置选择「不受限」\n\n不同车机系统设置路径可能不同，请在系统设置中搜索「自启动」或「后台」。</string>
+    <string name="dialog_got_it">我知道了</string>
+
+    <!-- ===== CalibrationActivity 相关 ===== -->
+    <string name="calib_remaining_seconds">剩余 %1$d秒</string>
+    <string name="calib_30_seconds">30秒</string>
+    <string name="calib_reset_default">已重置为默认参数（中档）</string>
+    <string name="calib_params_extreme">⚠️ 当前参数较极端，可能影响校准准确性，建议重置为默认</string>
+    <string name="calib_params_recommended">✅ 当前参数在推荐范围内，适合校准测试</string>
+    <string name="calib_params_not_recommended">⚠️ 当前参数偏离推荐范围，建议重置为默认</string>
+    <string name="calib_live_data_waiting">实时数据：等待开始</string>
+    <string name="calib_live_data_testing">实时数据：测试中...</string>
+    <string name="calib_step_triggered">✅触发</string>
+    <string name="calib_step_complete">✅ 本步完成，点击下一步继续</string>
+    <string name="calib_finished">校准完成！</string>
+    <string name="calib_apply_params">应用推荐参数</string>
+    <string name="calib_back">返回</string>
+    <string name="calib_params_applied">参数已应用！建议重启语音助手服务使完全生效</string>
+
+    <!-- 校准步骤标题 -->
+    <string name="calib_step1_title">第1步/共4步：静音测试</string>
+    <string name="calib_step2_title">第2步/共4步：正常音量测试</string>
+    <string name="calib_step3_title">第3步/共4步：小声测试</string>
+    <string name="calib_step4_title">第4步/共4步：干扰测试</string>
+
+    <!-- ===== VoiceAssistantService 相关 ===== -->
+    <string name="notification_running">语音助手运行中</string>
+    <string name="notification_channel_name">语音助手</string>
+    <string name="tts_wake_prompt">在呢，您请说</string>
+    <string name="tts_model_unavailable">语音模型不可用，请先在主界面完成初始化</string>
+    <string name="subtitle_not_heard">❌ 没有听清</string>
+    <string name="tts_not_heard">没有听清，请再说一遍</string>
+    <string name="subtitle_not_understood">❌ 没听懂，请重说</string>
+    <string name="tts_not_understood">没听懂，请重说</string>
+    <string name="subtitle_cancelled">已取消</string>
+    <string name="result_executed">已执行: %1$s</string>
+    <string name="result_unmatched">未匹配: %1$s</string>
+
+    <!-- ===== FloatViewService 相关 ===== -->
+    <string name="float_state_idle">语音助手</string>
 </resources>
