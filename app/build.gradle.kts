@@ -42,7 +42,9 @@ android {
         // 注意：使用 splits 按 ABI 拆分 APK 时，不能同时设置 ndk.abiFilters
         // ABI 列表在下方 splits 块中配置
 
-        // 首次下载模型包的地址（可换成你自己的 CDN）
+        // 首次下载模型包的地址（Vosk 官网中文大模型，1.3GB，识别准确率更高）
+        // 小模型（42MB）：https://alphacephei.com/vosk/models/vosk-model-small-cn-0.22.zip
+        // 大模型（1.3GB）：https://alphacephei.com/vosk/models/vosk-model-cn-0.22.zip
         buildConfigField("String", "MODEL_PACK_URL", "\"https://lcjly.cn/car/models.zip\"")
         buildConfigField("String", "MODEL_PACK_MD5", "\"\"")
 

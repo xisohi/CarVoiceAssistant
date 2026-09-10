@@ -157,7 +157,7 @@ class CalibrationActivity : AppCompatActivity() {
             else -> "⚠️ 当前参数偏离推荐范围，建议重置为默认"
         }
 
-        tvCurrentParams.text = "当前：threshold=${String.format("%.2f", threshold)}, gain=${String.format("%.1f", gain)}x\n$statusText\n推荐：threshold=0.02~0.08, gain=2.5~3.5x（中档默认）"
+        tvCurrentParams.text = "当前：threshold=${String.format("%.2f", threshold)}, gain=${String.format("%.1f", gain)}x\n$statusText\n推荐：threshold=0.002~0.01, gain=3.5~5.0x（中档默认）"
     }
 
     private fun showStep() {

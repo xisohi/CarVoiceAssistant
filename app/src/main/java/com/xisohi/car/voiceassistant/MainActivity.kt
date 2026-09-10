@@ -203,11 +203,11 @@ class MainActivity : AppCompatActivity() {
             updateManualUI(WakeWordEngine.getDetectionThreshold(), WakeWordEngine.getAudioGain())
         }
 
-        // threshold 滑块：0.01 ~ 0.50，步长 0.01
+        // threshold 滑块：0.001 ~ 0.10，步长 0.001
         binding.seekThreshold.setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: android.widget.SeekBar?, progress: Int, fromUser: Boolean) {
-                val threshold = (progress + 1) / 100f
-                binding.tvThresholdValue.text = String.format("%.2f", threshold)
+                val threshold = (progress + 1) * 0.001f
+                binding.tvThresholdValue.text = String.format("%.3f", threshold)
             }
             override fun onStartTrackingTouch(seekBar: android.widget.SeekBar?) {}
             override fun onStopTrackingTouch(seekBar: android.widget.SeekBar?) {}
@@ -225,7 +225,7 @@ class MainActivity : AppCompatActivity() {
 
         // 应用手动参数
         binding.btnApplyManual.setOnClickListener {
-            val threshold = (binding.seekThreshold.progress + 1) / 100f
+            val threshold = (binding.seekThreshold.progress + 1) * 0.001f
             val gain = 1.0f + binding.seekGain.progress * 0.1f
             WakeWordEngine.setGainAndThreshold(gain, threshold)
             // 保存到 SharedPreferences
@@ -234,7 +234,7 @@ class MainActivity : AppCompatActivity() {
                 .putFloat(KEY_MANUAL_GAIN, gain)
                 .apply()
             // 更新灵敏度描述
-            binding.tvSensitivityDesc.text = "当前：手动（增益${String.format("%.1f", gain)}x，阈值${String.format("%.2f", threshold)}）"
+            binding.tvSensitivityDesc.text = "当前：手动（增益${String.format("%.1f", gain)}x，阈值${String.format("%.3f", threshold)}）"
             toast("已应用手动参数：threshold=$threshold, gain=${gain}x")
             log("手动参数已应用：threshold=$threshold, gain=${gain}x")
         }
@@ -253,10 +253,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateManualUI(threshold: Float, gain: Float) {
-        // threshold: 0.01 ~ 0.50 -> progress 0 ~ 49
-        val thresholdProgress = ((threshold * 100).toInt() - 1).coerceIn(0, 49)
+        // threshold: 0.001 ~ 0.10 -> progress 0 ~ 99
+        val thresholdProgress = ((threshold / 0.001f).toInt() - 1).coerceIn(0, 99)
         binding.seekThreshold.progress = thresholdProgress
-        binding.tvThresholdValue.text = String.format("%.2f", threshold)
+        binding.tvThresholdValue.text = String.format("%.3f", threshold)
         // gain: 1.0 ~ 5.0 -> progress 0 ~ 40
         val gainProgress = ((gain - 1.0f) / 0.1f).toInt().coerceIn(0, 40)
         binding.seekGain.progress = gainProgress

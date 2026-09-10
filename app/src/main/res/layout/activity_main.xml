@@ -327,7 +327,7 @@
                     android:id="@+id/tvSensitivityDesc"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="当前：中（增益3.0x，阈值0.04）"
+                    android:text="当前：中（增益4.5x，阈值0.008）"
                     android:textSize="14sp"
                     android:textStyle="bold"
                     android:layout_marginTop="4dp" />
@@ -417,7 +417,7 @@
                         android:id="@+id/tvThresholdValue"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="0.04"
+                        android:text="0.008"
                         android:textSize="13sp"
                         android:textStyle="bold"
                         android:textColor="#1A73E8" />
@@ -427,14 +427,14 @@
                     android:id="@+id/seekThreshold"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:max="49"
-                    android:progress="3"
+                    android:max="99"
+                    android:progress="7"
                     android:layout_marginTop="2dp" />
 
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="范围：0.01（灵敏）~ 0.50（保守），步长 0.01"
+                    android:text="范围：0.001（灵敏）~ 0.10（保守），步长 0.001"
                     android:textSize="10sp"
                     android:textColor="#6B7280" />
 
@@ -456,7 +456,7 @@
                         android:id="@+id/tvGainValue"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="3.0x"
+                        android:text="4.5x"
                         android:textSize="13sp"
                         android:textStyle="bold"
                         android:textColor="#1A73E8" />
@@ -467,7 +467,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:max="40"
-                    android:progress="20"
+                    android:progress="35"
                     android:layout_marginTop="2dp" />
 
                 <TextView
@@ -528,7 +528,7 @@
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="• threshold（检测阈值）：越低越容易唤醒，但误唤醒风险增加；越高越保守，需更大声音。建议范围 0.02 ~ 0.10"
+                    android:text="• threshold（检测阈值）：越低越容易唤醒，但误唤醒风险增加；越高越保守，需更大声音。建议范围 0.002 ~ 0.02"
                     android:textSize="11sp"
                     android:textColor="#6B7280"
                     android:layout_marginTop="4dp"
@@ -537,7 +537,7 @@
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="• gain（音频增益）：放大麦克风音量，同时作用于唤醒和指令识别。小声说话难唤醒时可调高。建议范围 2.5x ~ 4.0x"
+                    android:text="• gain（音频增益）：放大麦克风音量，同时作用于唤醒和指令识别。小声说话难唤醒时可调高。建议范围 3.5x ~ 5.0x"
                     android:textSize="11sp"
                     android:textColor="#6B7280"
                     android:layout_marginTop="4dp"
@@ -546,7 +546,7 @@
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="• 注意：gain > 3x 可能导致音频削波失真，反而降低识别率；背景噪音大时高增益会同时放大噪音。"
+                    android:text="• 注意：gain > 5x 可能导致音频削波失真，反而降低识别率；背景噪音大时高增益会同时放大噪音。"
                     android:textSize="11sp"
                     android:textColor="#E65100"
                     android:layout_marginTop="4dp"
@@ -555,7 +555,7 @@
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="• 推荐组合：车机环境嘈杂建议 threshold=0.03 ~ 0.06, gain=2.8x ~ 3.5x；安静环境可降低 gain 减少误唤醒。"
+                    android:text="• 推荐组合：车机环境嘈杂建议 threshold=0.03 ~ 0.06, gain=2.8x ~ 3.5x；安静环境可降低 gain 到 3.5x 减少误唤醒。"
                     android:textSize="11sp"
                     android:textColor="#1565C0"
                     android:layout_marginTop="4dp"

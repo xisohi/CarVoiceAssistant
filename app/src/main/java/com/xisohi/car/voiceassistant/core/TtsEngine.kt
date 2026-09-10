@@ -67,6 +67,11 @@ class TtsEngine(private val context: Context) : TextToSpeech.OnInitListener {
                     result != TextToSpeech.LANG_NOT_SUPPORTED
                 ) {
                     ready = true
+                    // 设置语速和音调，让播报更快更清晰
+                    // 语速 1.5x：车机场景需要快速响应，播报更干脆
+                    // 音调 1.1x：稍微调高一点，声音更清晰
+                    currentTts.setSpeechRate(1.5f)
+                    currentTts.setPitch(1.1f)
                     setupListener(currentTts)
                     Log.d("TtsEngine", "TTS 就绪 ✅")
                     return

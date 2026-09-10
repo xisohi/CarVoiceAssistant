@@ -89,6 +89,7 @@ class VoiceAssistantService : Service() {
     private lateinit var ttsEngine: TtsEngine
 
     private var recognitionJob: Job? = null
+    // 小模型加载快（<1秒），不需要预加载，每次识别时直接创建即可
 
     // 唤醒音频采集线程
     private var wakeAudioThread: WakeAudioThread? = null
@@ -125,20 +126,20 @@ class VoiceAssistantService : Service() {
                     if (isWakePromptSpeaking) {
                         isWakePromptSpeaking = false
                         android.util.Log.d("VoiceService", "唤醒提示音播报完成，开始录音识别")
-                        // 延迟 250ms 再开始录音，确保 TTS 完全停止，不被录进语音指令
+                        // 延迟 50ms 再开始录音，确保 TTS 完全停止，不被录进语音指令
                         mainHandler.postDelayed({
                             startRecognition()
-                        }, 250)
+                        }, 50)
                         return
                     }
                     // 如果是"没听懂，请重说"刚说完，直接重新监听（不需要唤醒词）
                     if (isRetryListening) {
                         isRetryListening = false
                         android.util.Log.d("VoiceService", "没听懂提示音播报完成，重新开始录音识别")
-                        // 延迟 300ms 再开始录音，确保 TTS 完全停止
+                        // 延迟 50ms 再开始录音，确保 TTS 完全停止
                         mainHandler.postDelayed({
                             startRecognition()
-                        }, 300)
+                        }, 50)
                         return
                     }
                     // 正常回复播报完成
@@ -278,7 +279,7 @@ class VoiceAssistantService : Service() {
                             android.util.Log.w("WakeAudioThread", "处理异常: ${e.message}")
                             continue
                         }
-                        if (result != null && result.wakeWord != null && result.probability > 0.4f) {
+                        if (result != null && result.wakeWord != null) {
                             android.util.Log.i("WakeAudioThread", "唤醒词检测到: ${result.wakeWord} (${result.probability})")
                             // 触发唤醒回调
                             mainHandler.post {
@@ -377,6 +378,8 @@ class VoiceAssistantService : Service() {
     }
 
     // ---------- 语音识别 ----------
+
+
     private fun startRecognition() {
         val modelDir = ModelManager.findAsrModelDir(this)
         if (modelDir == null) {
@@ -385,6 +388,7 @@ class VoiceAssistantService : Service() {
             return
         }
         recognitionJob = scope.launch(Dispatchers.IO) {
+            // 小模型加载快（<1秒），直接创建识别器
             val recognizer = SpeechRecognizer.create(modelDir, null)
             val minBuf = AudioRecord.getMinBufferSize(
                 SpeechRecognizer.SAMPLE_RATE.toInt(),
@@ -443,7 +447,7 @@ class VoiceAssistantService : Service() {
             } finally {
                 try { record.stop() } catch (_: Exception) {}
                 record.release()
-                recognizer.release()
+                try { recognizer.release() } catch (_: Exception) {}
                 recognitionJob = null
             }
             withContext(Dispatchers.Main) { handleText(finalText) }
