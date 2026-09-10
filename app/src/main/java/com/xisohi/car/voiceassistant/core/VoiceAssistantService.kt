@@ -564,16 +564,23 @@ class VoiceAssistantService : Service() {
             } catch (_: Exception) {
                 -1
             }
+// 关键：采样音频也走和循环相同的处理路径（降噪 + 增益）
+// 这样 ambientRms 和循环 rms 才在同一基准上，阈值才有意义
+            if (noiseRead > 0) {
+                recNoiseReducer.process(noiseBuf, noiseRead, enableRnNoise = false)
+                applyGain(noiseBuf, noiseRead)
+            }
             val ambientRms = if (noiseRead > 0) {
                 SpeechRecognizer.calculateRms(noiseBuf, noiseRead)
             } else {
                 SILENCE_RMS_MIN
             }
-            // 动态阈值 = 环境噪音 RMS * 倍数，限制在 [MIN, MAX] 区间
+// 动态阈值 = 环境噪音 RMS * 倍数，限制在 [MIN, MAX] 区间
+// 注意：ambientRms 和循环 rms 现在都含 asrGain，同一基准，可直接比较
             val adaptiveSilenceThreshold = (ambientRms * NOISE_MULTIPLIER)
                 .coerceIn(SILENCE_RMS_MIN, SILENCE_RMS_MAX)
             android.util.Log.d("VoiceService",
-                "环境噪音 RMS=${ambientRms.toInt()}, 自适应静音阈值=${adaptiveSilenceThreshold.toInt()}")
+                "环境噪音 RMS=${ambientRms.toInt()}（含增益）, 自适应静音阈值=${adaptiveSilenceThreshold.toInt()}")
             // =========================================
 
             val shortBuf = ShortArray(512)
