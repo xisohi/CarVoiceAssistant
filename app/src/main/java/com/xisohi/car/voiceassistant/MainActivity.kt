@@ -508,8 +508,9 @@ class MainActivity : AppCompatActivity() {
      * 尝试跳转到各个厂商的自启动管理页面，如果都失败则跳转到应用详情页。
      */
     private fun openAutoStartSettings() {
-        // 各个厂商的自启动管理页面 Intent
+        // 各个厂商的自启动管理页面 Intent（按优先级排序）
         val autoStartIntents = listOf(
+            // ===== 手机厂商 =====
             // 小米/红米
             Intent().apply {
                 component = android.content.ComponentName(
@@ -544,36 +545,52 @@ class MainActivity : AppCompatActivity() {
                     "com.samsung.android.sm",
                     "com.samsung.android.sm.ui.ram.AutoRunActivity"
                 )
-            }
+            },
+            // ===== 通用 Android / 车机系统 =====
+            // 通用：应用详情页（大多数系统都有）
+            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                data = Uri.parse("package:$packageName")
+            },
+            // 通用：电池优化设置（设置电池为"不受限"可以防止系统杀后台）
+            Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS),
+            // 通用：特殊应用访问
+            Intent(Settings.ACTION_APPLICATION_SETTINGS),
+            // 通用：所有应用列表
+            Intent(Settings.ACTION_MANAGE_APPLICATIONS_SETTINGS)
         )
 
-        // 尝试跳转到各个厂商的自启动管理页面
+        // 尝试跳转到各个自启动管理页面
         for (intent in autoStartIntents) {
             try {
                 intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 startActivity(intent)
-                android.util.Log.d("MainActivity", "成功跳转到自启动设置: ${intent.component?.packageName}")
-                toast("已打开自启动设置，请找到本应用并开启自启动权限")
+                android.util.Log.d("MainActivity", "成功跳转到设置: ${intent.action ?: intent.component?.packageName}")
+                toast("已打开系统设置，请找到本应用并开启自启动/后台运行权限")
                 return
             } catch (e: Exception) {
-                android.util.Log.d("MainActivity", "跳转到 ${intent.component?.packageName} 失败: ${e.message}")
+                android.util.Log.d("MainActivity", "跳转失败: ${intent.action ?: intent.component?.packageName} - ${e.message}")
             }
         }
 
-        // 都失败了，跳转到应用详情页
-        try {
-            val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                data = Uri.parse("package:$packageName")
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-            startActivity(intent)
-            toast("已打开应用详情页，请在权限设置中开启自启动/后台运行")
-        } catch (e: Exception) {
-            toast("无法打开系统设置，请手动在系统设置中找到本应用并开启自启动权限")
-        }
+        // 都失败了，显示详细的手动操作指引
+        val message = """
+            无法自动打开系统设置，请手动操作：
+
+            1. 打开系统「设置」
+            2. 找到「应用」或「应用管理」
+            3. 找到「CarVoiceAssistant」
+            4. 开启「自启动」或「后台运行」权限
+            5. 电池设置选择「不受限」
+
+            不同车机系统设置路径可能不同，请在系统设置中搜索「自启动」或「后台」。
+        """.trimIndent()
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("手动开启自启动")
+            .setMessage(message)
+            .setPositiveButton("我知道了", null)
+            .show()
     }
 
-    // ---------- 首次下载 ----------
     private fun startDownload() {
         binding.btnDownload.isEnabled = false
         binding.progressDownload.isIndeterminate = true
