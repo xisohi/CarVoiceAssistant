@@ -466,14 +466,14 @@
                     android:id="@+id/seekGain"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:max="40"
+                    android:max="45"
                     android:progress="35"
                     android:layout_marginTop="2dp" />
 
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="范围：1.0x ~ 5.0x，步长 0.1x"
+                    android:text="范围：1.0x ~ 5.5x，步长 0.1x"
                     android:textSize="10sp"
                     android:textColor="#6B7280" />
 

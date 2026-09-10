@@ -83,6 +83,12 @@ class VoiceAssistantService : Service() {
     private var toneGenerator: ToneGenerator? = null
     /** 标记是否正在播放唤醒提示音（TTS说"在呢，您请说"），用于 onSpeakDone 中区分 */
     private var isWakePromptSpeaking = false
+
+    // ---------- 音量控制（唤醒时自动降低媒体音量，减少背景噪音，提高识别率） ----------
+    /** 保存唤醒前的原始媒体音量，识别完成后恢复 */
+    private var originalMediaVolume: Int = -1
+    /** 标记是否已经降低了媒体音量 */
+    private var isMediaVolumeMuted = false
     // 没听懂后是否需要重新监听（true=TTS说完后直接开始录音，不需要唤醒词）
     private var isRetryListening = false
     private lateinit var skillExecutor: SkillExecutor
@@ -127,7 +133,9 @@ class VoiceAssistantService : Service() {
                         isWakePromptSpeaking = false
                         android.util.Log.d("VoiceService", "唤醒提示音播报完成，开始录音识别")
                         // 延迟 50ms 再开始录音，确保 TTS 完全停止，不被录进语音指令
+                        // 开始录音前降低媒体音量，专注听用户说话
                         mainHandler.postDelayed({
+                            muteMediaVolume()
                             startRecognition()
                         }, 50)
                         return
@@ -137,7 +145,9 @@ class VoiceAssistantService : Service() {
                         isRetryListening = false
                         android.util.Log.d("VoiceService", "没听懂提示音播报完成，重新开始录音识别")
                         // 延迟 50ms 再开始录音，确保 TTS 完全停止
+                        // 开始录音前降低媒体音量，专注听用户说话
                         mainHandler.postDelayed({
+                            muteMediaVolume()
                             startRecognition()
                         }, 50)
                         return
@@ -153,6 +163,8 @@ class VoiceAssistantService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_STOP -> {
+                // 服务停止时确保恢复媒体音量
+                restoreMediaVolume()
                 stopSelf()
                 return START_NOT_STICKY
             }
@@ -302,6 +314,45 @@ class VoiceAssistantService : Service() {
         }
     }
 
+    // ---------- 音量控制 ----------
+    /**
+     * 降低媒体音量到 0（音乐、导航等），专注听用户说话，提高识别率
+     * 第一次调用时保存原始音量，后续调用不会重复保存
+     */
+    private fun muteMediaVolume() {
+        try {
+            val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            if (originalMediaVolume < 0) {
+                originalMediaVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+            }
+            if (!isMediaVolumeMuted) {
+                audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, 0, 0)
+                isMediaVolumeMuted = true
+                android.util.Log.d("VoiceService", "已降低媒体音量到 0（原始音量: $originalMediaVolume），专注听用户说话")
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("VoiceService", "降低媒体音量失败: ${e.message}")
+        }
+    }
+
+    /**
+     * 恢复媒体音量到唤醒前的原始值
+     * 识别完成后或 TTS 播报前调用
+     */
+    private fun restoreMediaVolume() {
+        try {
+            if (isMediaVolumeMuted && originalMediaVolume >= 0) {
+                val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+                audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, originalMediaVolume, 0)
+                isMediaVolumeMuted = false
+                android.util.Log.d("VoiceService", "已恢复媒体音量到: $originalMediaVolume")
+                originalMediaVolume = -1
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("VoiceService", "恢复媒体音量失败: ${e.message}")
+        }
+    }
+
     // ---------- 唤醒触发 ----------
     private fun onWakeWord() {
         if (currentState != State.IDLE) return
@@ -311,18 +362,27 @@ class VoiceAssistantService : Service() {
         // 停止唤醒监听
         stopWakeListening()
 
+        // 唤醒时先降低媒体音量（音乐、导航等），减少背景噪音
+        // 注意：TTS播报前会临时恢复音量，让用户听到提示音
+        muteMediaVolume()
+
         if (ttsEngine.isReady) {
             // TTS 可用：用语音说"在呢，您请说"，更人性化
-            // 等 TTS 说完后（onSpeakDone 回调）再开始录音，避免 TTS 声音被录进去
+            // 先恢复音量让用户听到提示音，播报完成后（onSpeakDone）再降低音量开始录音
+            restoreMediaVolume()
             isWakePromptSpeaking = true
             ttsEngine.speak(getString(R.string.tts_wake_prompt))
             android.util.Log.d("VoiceService", "唤醒提示：TTS播报'在呢，您请说'，播报完成后开始录音")
         } else {
             // TTS 不可用：兜底用哔哔声提示音
             android.util.Log.w("VoiceService", "TTS不可用，使用哔哔声作为唤醒提示")
+            // 先恢复音量让用户听到哔哔声
+            restoreMediaVolume()
             playWakeBeep()
             // 延迟 550ms 再开始录音，确保两声提示音都播放完毕
+            // 开始录音前再次降低音量，专注听用户说话
             mainHandler.postDelayed({
+                muteMediaVolume()
                 startRecognition()
             }, 550)
         }
@@ -479,6 +539,8 @@ class VoiceAssistantService : Service() {
         lastRecognizedText = text
         FloatViewService.updateSubtitle("👉 $text")
         scheduleSubtitleClear(15000)
+        // 识别完成，恢复媒体音量，让 TTS 播报结果能听到
+        restoreMediaVolume()
 
         if (text.isBlank()) {
             FloatViewService.updateSubtitle(getString(R.string.subtitle_not_heard))

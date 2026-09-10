@@ -213,7 +213,7 @@ class MainActivity : AppCompatActivity() {
             override fun onStopTrackingTouch(seekBar: android.widget.SeekBar?) {}
         })
 
-        // gain 滑块：1.0 ~ 5.0，步长 0.1
+        // gain 滑块：1.0 ~ 5.5，步长 0.1
         binding.seekGain.setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: android.widget.SeekBar?, progress: Int, fromUser: Boolean) {
                 val gain = 1.0f + progress * 0.1f
@@ -257,8 +257,8 @@ class MainActivity : AppCompatActivity() {
         val thresholdProgress = ((threshold / 0.001f).toInt() - 1).coerceIn(0, 99)
         binding.seekThreshold.progress = thresholdProgress
         binding.tvThresholdValue.text = String.format("%.3f", threshold)
-        // gain: 1.0 ~ 5.0 -> progress 0 ~ 40
-        val gainProgress = ((gain - 1.0f) / 0.1f).toInt().coerceIn(0, 40)
+        // gain: 1.0 ~ 5.5 -> progress 0 ~ 45
+        val gainProgress = ((gain - 1.0f) / 0.1f).toInt().coerceIn(0, 45)
         binding.seekGain.progress = gainProgress
         binding.tvGainValue.text = String.format("%.1fx", gain)
     }
