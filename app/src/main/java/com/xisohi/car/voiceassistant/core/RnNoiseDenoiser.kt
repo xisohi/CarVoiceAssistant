@@ -17,6 +17,10 @@ import com.sun.jna.Pointer
  *
  * 注意：RNNoise 只支持 48kHz 音频，每帧 480 样本（10ms）
  * 本封装自动处理 16kHz 音频的上采样/下采样转换
+ *
+ * 重采样算法优化：
+ * - 上采样：线性插值（替代最近邻插值，保留高频信息）
+ * - 下采样：3点平均抗混叠滤波 + 抽取（替代简单抽取，避免混叠）
  */
 class RnNoiseDenoiser {
 
@@ -66,6 +70,8 @@ class RnNoiseDenoiser {
     // RNNoise 需要 48kHz 480样本/帧
     private val input48k = FloatArray(480)
     private val output48k = FloatArray(480)
+    // 16kHz 输入缓冲区（归一化后的 float）
+    private val input16k = FloatArray(160)
 
     /**
      * 初始化降噪器
@@ -91,7 +97,7 @@ class RnNoiseDenoiser {
 
     /**
      * 处理 16kHz 16-bit PCM 音频数据（原地修改）
-     * 自动完成：16kHz→48kHz上采样 → RNNoise降噪 → 48kHz→16kHz下采样
+     * 自动完成：16kHz→48kHz线性插值上采样 → RNNoise降噪 → 48kHz→16kHz抗混叠下采样
      *
      * @param audioData 16-bit PCM 音频数据
      * @param length 有效数据长度
@@ -108,16 +114,27 @@ class RnNoiseDenoiser {
         var offset = 0
 
         while (offset + frameSize16k <= length) {
-            // 1. short -> float（归一化到 -1~1），同时上采样 16kHz -> 48kHz（3倍）
-            // 使用最近邻插值（简单重复每个样本3次）
+            // 1. short -> float（归一化到 -1~1）
             for (i in 0 until frameSize16k) {
-                val sample = audioData[offset + i] / 32768.0f
-                input48k[i * 3] = sample
-                input48k[i * 3 + 1] = sample
-                input48k[i * 3 + 2] = sample
+                input16k[i] = audioData[offset + i] / 32768.0f
             }
 
-            // 2. RNNoise 处理（48kHz 480样本/帧）
+            // 2. 上采样 16kHz -> 48kHz（线性插值，替代最近邻插值）
+            // 线性插值能保留更多高频信息，避免音频听起来有"颗粒感"
+            for (j in 0 until 480) {
+                val pos = j / 3.0f
+                val i = pos.toInt()
+                val frac = pos - i
+                if (i + 1 < frameSize16k) {
+                    // 线性插值：output = input[i] * (1-frac) + input[i+1] * frac
+                    input48k[j] = input16k[i] * (1.0f - frac) + input16k[i + 1] * frac
+                } else {
+                    // 边界处理：最后一个样本直接复制
+                    input48k[j] = input16k[i]
+                }
+            }
+
+            // 3. RNNoise 处理（48kHz 480样本/帧）
             val vad = try {
                 library?.rnnoise_process_frame(state!!, output48k, input48k) ?: 0f
             } catch (e: Exception) {
@@ -127,9 +144,13 @@ class RnNoiseDenoiser {
             totalVad += vad
             frameCount++
 
-            // 3. 下采样 48kHz -> 16kHz（每3个样本取1个），同时 float -> short（反归一化）
+            // 4. 下采样 48kHz -> 16kHz（3点平均抗混叠滤波 + 抽取）
+            // 先做抗混叠低通滤波（3点移动平均），再抽取，避免高频噪声混叠到低频
             for (i in 0 until frameSize16k) {
-                val sample = (output48k[i * 3] * 32768.0f).toInt()
+                // 对每3个样本取平均，作为抗混叠滤波
+                val avg = (output48k[i * 3] + output48k[i * 3 + 1] + output48k[i * 3 + 2]) / 3.0f
+                // float -> short（反归一化）
+                val sample = (avg * 32768.0f).toInt()
                 audioData[offset + i] = sample.coerceIn(-32768, 32767).toShort()
             }
 

@@ -98,7 +98,6 @@ class SkillExecutor(private val context: Context) {
             "volume.down" -> adjustVolume(false)
             "volume.mute" -> setMute(true)
             "media.play" -> mediaKey(android.view.KeyEvent.KEYCODE_MEDIA_PLAY)
-            "media.search_play" -> searchAndPlay(intent.params["query"] ?: "")
             "media.pause" -> mediaKey(android.view.KeyEvent.KEYCODE_MEDIA_PAUSE)
             "media.next" -> mediaKey(android.view.KeyEvent.KEYCODE_MEDIA_NEXT)
             "media.prev" -> mediaKey(android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS)
@@ -113,7 +112,7 @@ class SkillExecutor(private val context: Context) {
             "wifi.on" -> setWifi(true)
             "wifi.off" -> setWifi(false)
             "ask.time" -> ExecutionResult(true, "现在是" + SimpleDateFormat("HH点mm分", Locale.CHINA).format(Date()))
-            "ask.help" -> ExecutionResult(true, "可以试试说：把音量调到五十、播放音乐、导航去机场、打开空调、关闭车窗")
+            "ask.help" -> ExecutionResult(true, "可以试试说：把音量调到五十、打开音乐、播放、暂停、下一首、导航去牛圩村、打开空调")
             "ask.weather" -> ExecutionResult(true, "离线模式下暂时查不了天气，建议联网后使用")
             "app.open" -> openApp(intent.params["app"] ?: "")
             else -> ExecutionResult(false, "这个指令我还不支持")
@@ -157,13 +156,14 @@ class SkillExecutor(private val context: Context) {
 
     /**
      * 音乐控制。
-     * PLAY 操作：先启动 MusicFree 播放器，延迟 3 秒再发播放按键（等 MusicService 初始化）。
-     * PAUSE/NEXT/PREVIOUS：立即发送媒体按键。
-     * 按键直接发送给 react-native-track-player 的 MusicService，最可靠。
+     * 所有操作（播放/暂停/下一首/上一首）都立即发送媒体按键，不启动播放器。
+     * 启动播放器的指令是"打开音乐"、"打开播放器"等（走 app.open 意图）。
+     *
+     * 注意："播放"是指播放器已打开后的播放/继续播放动作，不是启动播放器。
      */
     private fun mediaKey(keyCode: Int): ExecutionResult {
         val label = when (keyCode) {
-            android.view.KeyEvent.KEYCODE_MEDIA_PLAY -> "正在打开播放器"
+            android.view.KeyEvent.KEYCODE_MEDIA_PLAY -> "继续播放"
             android.view.KeyEvent.KEYCODE_MEDIA_PAUSE -> "已暂停"
             android.view.KeyEvent.KEYCODE_MEDIA_NEXT -> "下一首"
             android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS -> "上一首"
@@ -172,21 +172,13 @@ class SkillExecutor(private val context: Context) {
         return try {
             val playerPkg = getActiveMusicPlayer()
             if (playerPkg == null) {
-                return ExecutionResult(false, "未安装任何音乐播放器")
+                return ExecutionResult(false, "未安装任何音乐播放器，请先说打开音乐")
             }
             // 记录当前活跃播放器
             currentMusicPlayer = playerPkg
-            // 播放操作：先启动播放器（确保在运行），延迟后发播放按键
-            // 暂停/下一首/上一首：直接发按键
-            if (keyCode == android.view.KeyEvent.KEYCODE_MEDIA_PLAY) {
-                launchPlayerByPackage(playerPkg)
-                // 第一次播放按键：4秒后（等播放器初始化完成）
-                mainHandler.postDelayed({ dispatchMediaKey(keyCode, playerPkg) }, 4000)
-                // 第二次播放按键：5.5秒后（确保触发播放，防止第一次没响应）
-                mainHandler.postDelayed({ dispatchMediaKey(keyCode, playerPkg) }, 5500)
-            } else {
-                dispatchMediaKey(keyCode, playerPkg)
-            }
+            // 所有操作都直接发媒体按键（播放/暂停/下一首/上一首）
+            // 不启动播放器，启动播放器走 app.open 意图（"打开音乐"、"打开播放器"）
+            dispatchMediaKey(keyCode, playerPkg)
             ExecutionResult(true, label)
         } catch (e: Exception) {
             ExecutionResult(false, "音乐控制失败：${e.message ?: "未知错误"}")
@@ -292,38 +284,6 @@ class SkillExecutor(private val context: Context) {
             context.startActivity(intent)
             android.util.Log.d("SkillExecutor", "已启动系统默认音乐播放器")
         } catch (_: Exception) {
-        }
-    }
-
-    /**
-     * 启动音乐播放器并提示用户手动搜索（已移除无障碍自动搜索）。
-     *
-     * 工作流程：
-     * 1. 检测当前活跃的音乐播放器
-     * 2. 启动该播放器
-     * 3. 提示用户手动在播放器中搜索指定歌曲
-     *
-     * 注意：由于移除了无障碍服务，无法自动输入搜索关键词和读取搜索结果，
-     * 需要用户手动在播放器中操作。
-     */
-    private fun searchAndPlay(query: String): ExecutionResult {
-        val cleanQuery = query.trim()
-        if (cleanQuery.isEmpty()) return ExecutionResult(false, "没听清歌曲名")
-
-        return try {
-            val playerPkg = getActiveMusicPlayer()
-            if (playerPkg == null) {
-                return ExecutionResult(false, "未安装任何音乐播放器")
-            }
-            // 记录当前活跃播放器
-            currentMusicPlayer = playerPkg
-
-            // 启动播放器，提示用户手动搜索（去掉无障碍自动搜索）
-            launchPlayerByPackage(playerPkg)
-            android.util.Log.d("SkillExecutor", "已启动播放器 $playerPkg，待搜索: $cleanQuery")
-            ExecutionResult(true, "已打开播放器，请手动搜索「$cleanQuery」")
-        } catch (e: Exception) {
-            ExecutionResult(false, "搜索失败：${e.message}")
         }
     }
 
@@ -597,10 +557,15 @@ class SkillExecutor(private val context: Context) {
             if (intent != null) {
                 intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 context.startActivity(intent)
-                // 如果打开的是音乐播放器，设置为当前活跃播放器
+                // 如果打开的是音乐播放器，设置为当前活跃播放器，并自动播放
                 if (packageName in musicPlayerPackages) {
                     currentMusicPlayer = packageName
                     android.util.Log.d("SkillExecutor", "打开音乐播放器，设置为活跃: $packageName")
+                    // 自动播放：延迟4秒发第一次播放键（等播放器初始化完成）
+                    mainHandler.postDelayed({ dispatchMediaKey(android.view.KeyEvent.KEYCODE_MEDIA_PLAY, packageName) }, 4000)
+                    // 延迟5.5秒发第二次播放键（确保触发播放）
+                    mainHandler.postDelayed({ dispatchMediaKey(android.view.KeyEvent.KEYCODE_MEDIA_PLAY, packageName) }, 5500)
+                    android.util.Log.d("SkillExecutor", "已安排自动播放（4秒/5.5秒各发一次播放键）")
                 }
                 ExecutionResult(true, "已打开$displayName")
             } else {

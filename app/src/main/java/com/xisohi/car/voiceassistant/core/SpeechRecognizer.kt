@@ -4,25 +4,23 @@ import org.json.JSONObject
 import org.vosk.Model
 import org.vosk.Recognizer
 import java.io.File
+import kotlin.math.sqrt
 
 /**
  * 语音识别封装（Vosk，完全离线）。
  *
- * 关键用法：可传入 grammar（词表列表），把识别域锁死在车控指令
- * 句式上——自由听写下 small 模型的准确率撑不起车控，限定语法后
- * 准确率与速度都明显提升。grammar 由 [IntentParser] 从意图模板生成。
+ * 关键改进：不依赖 Vosk 内置的端点检测（太敏感，说话中间间隙就误判），
+ * 改为外部基于音频能量（RMS）自主判断静音端点。
+ *
+ * 用法：
+ * 1. 循环调用 feed() 获取 partial 识别结果
+ * 2. 外部自己计算 RMS 判断是否静音，连续静音超阈值则结束
+ * 3. 调用 finish() 获取最终识别文本
  */
 class SpeechRecognizer private constructor(
     private val model: Model,
     private val recognizer: Recognizer
 ) {
-
-    /** acceptWaveForm 返回 true 时表示检测到静音端点 */
-    @Volatile
-    private var endpointDetected = false
-
-    /** 端点检测时从 result 中取出的最终文本（Vosk 端点后 finalResult 会为空） */
-    private var endpointText: String? = null
 
     companion object {
         const val SAMPLE_RATE = 16000f
@@ -40,28 +38,39 @@ class SpeechRecognizer private constructor(
             }
             return SpeechRecognizer(model, rec)
         }
-    }
 
-    /** 喂入 16kHz 单声道 PCM16 数据；返回部分识别文本（可能为 null） */
-    fun feed(data: ByteArray, len: Int): String? {
-        val accepted = recognizer.acceptWaveForm(data, len)
-        return if (accepted) {
-            endpointDetected = true
-            // 端点时 result 包含最终文本，保存下来（Vosk 端点后 finalResult 会为空）
-            endpointText = textOf(recognizer.result)
-            endpointText
-        } else {
-            textOf(recognizer.partialResult).ifEmpty { null }
+        /**
+         * 计算 16-bit PCM 音频的 RMS（均方根）能量值
+         * 用于判断是否静音：值越小越安静
+         */
+        fun calculateRms(audioData: ShortArray, length: Int): Float {
+            if (length <= 0) return 0f
+            var sum = 0.0
+            for (i in 0 until length) {
+                val sample = audioData[i].toInt()
+                sum += (sample * sample).toDouble()
+            }
+            val rms = sqrt(sum / length)
+            return rms.toFloat()
         }
     }
 
-    /** 是否检测到语音结束（静音端点） */
-    fun isEndpoint(): Boolean = endpointDetected
+    /**
+     * 喂入 16kHz 单声道 PCM16 数据；返回部分识别文本（可能为 null）
+     * 注意：不依赖 Vosk 的 acceptWaveForm 返回值做端点判断，端点由外部基于 RMS 自主判断
+     */
+    fun feed(data: ByteArray, len: Int): String? {
+        // 调用 acceptWaveForm 让 Vosk 处理音频，但忽略返回值（不用于端点判断）
+        recognizer.acceptWaveForm(data, len)
+        // 总是返回 partial 结果
+        val partial = textOf(recognizer.partialResult)
+        return partial.ifEmpty { null }
+    }
 
-    /** 结束识别并返回最终文本 */
+    /**
+     * 结束识别并返回最终文本
+     */
     fun finish(): String {
-        // 端点时已从 result 取到最终文本，优先返回（Vosk 端点后 finalResult 为空）
-        endpointText?.let { return it }
         return textOf(recognizer.finalResult)
     }
 

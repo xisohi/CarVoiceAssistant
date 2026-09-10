@@ -28,7 +28,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import android.media.ToneGenerator
 import android.media.AudioManager
-import com.xisohi.car.voiceassistant.core.VoiceAssistantService.Companion.currentState
 
 class VoiceAssistantService : Service() {
 
@@ -92,7 +91,8 @@ class VoiceAssistantService : Service() {
         private const val NOTIF_ID = 1
         private const val MAX_RECORD_MS = 15_000L  // 最长录音 15 秒（给用户足够时间说话）
         private const val MIN_RECORD_MS = 2_000L    // 最短录音 2 秒（避免短暂停顿被误判为端点）
-        private const val ENDPOINT_WAIT_MS = 500L    // 检测到端点后再等 500ms，确认用户说完了
+        private const val SILENCE_RMS_THRESHOLD = 800f  // 静音 RMS 阈值（低于此值认为是静音，车机噪音大可调高）
+        private const val MAX_SILENCE_MS = 1200L      // 连续静音超过 800ms 才认为用户说完了（避免说话中间间隙误判）
 
         @Volatile
         private var instance: VoiceAssistantService? = null
@@ -186,7 +186,7 @@ class VoiceAssistantService : Service() {
                         isWakePromptSpeaking = false
                         android.util.Log.d("VoiceService", "唤醒提示音播报完成，开始录音识别")
                         // 延迟 50ms 再开始录音，确保 TTS 完全停止，不被录进语音指令
-                        // 开始录音前降低媒体音量，专注听用户说话
+                        // 录音时其他声音降到0（静音），提高识别准确率
                         mainHandler.postDelayed({
                             muteMediaVolume()
                             startRecognition()
@@ -198,7 +198,7 @@ class VoiceAssistantService : Service() {
                         isRetryListening = false
                         android.util.Log.d("VoiceService", "没听懂提示音播报完成，重新开始录音识别")
                         // 延迟 50ms 再开始录音，确保 TTS 完全停止
-                        // 开始录音前降低媒体音量，专注听用户说话
+                        // 录音时其他声音降到0（静音），提高识别准确率
                         mainHandler.postDelayed({
                             muteMediaVolume()
                             startRecognition()
@@ -427,7 +427,8 @@ class VoiceAssistantService : Service() {
 
         if (ttsEngine.isReady) {
             // TTS 可用：用语音说"在呢，您请说"，更人性化
-            // 先恢复音量让用户听到提示音，播报完成后（onSpeakDone）再降低音量开始录音
+            // 恢复系统音量到原始值，TTS 播报时请求音频焦点，音乐自动降低（duck）
+            // 播报完成后（onSpeakDone）保持原始音量值，不降到0
             restoreMediaVolume()
             isWakePromptSpeaking = true
             ttsEngine.speak(getString(R.string.tts_wake_prompt))
@@ -435,7 +436,7 @@ class VoiceAssistantService : Service() {
         } else {
             // TTS 不可用：兜底用哔哔声提示音
             android.util.Log.w("VoiceService", "TTS不可用，使用哔哔声作为唤醒提示")
-            // 先恢复音量让用户听到哔哔声
+            // 恢复系统音量到原始值，保证哔哔声够大
             restoreMediaVolume()
             playWakeBeep()
             // 延迟 550ms 再开始录音，确保两声提示音都播放完毕
@@ -507,9 +508,10 @@ class VoiceAssistantService : Service() {
             return
         }
         recognitionJob = scope.launch(Dispatchers.IO) {
-            // 小模型加载快（<1秒），直接创建识别器
-            // 使用 grammar 词表限定识别域，大幅提升车控指令识别准确率
-            val recognizer = SpeechRecognizer.create(modelDir, GRAMMAR_WORDS)
+            // 使用自由听写模式（不限制 Grammar 词表）
+            // 之前用 Grammar 模式导致大量词被 Vosk 忽略（Ignoring word missing in vocabulary），识别反而不准
+            // 自由听写模式能识别完整句子，包括地名、歌曲名等，后续通过同音字纠正和意图解析提高准确率
+            val recognizer = SpeechRecognizer.create(modelDir)
             val minBuf = AudioRecord.getMinBufferSize(
                 SpeechRecognizer.SAMPLE_RATE.toInt(),
                 AudioFormat.CHANNEL_IN_MONO,
@@ -539,67 +541,56 @@ class VoiceAssistantService : Service() {
             val byteBuf = ByteArray(1024)
             val startMs = SystemClock.elapsedRealtime()
             var lastPartial = ""
+            var silenceDuration = 0L  // 连续静音时长（ms）
 
             var finalText = ""
             try {
                 loop@ while (true) {
                     val n = record.read(shortBuf, 0, shortBuf.size)
                     if (n <= 0) continue
-                    // 应用降噪处理（高通滤波，去除低频发动机噪音）
-                    recNoiseReducer.process(shortBuf, n)
+                    // 应用降噪处理（只保留高通滤波，禁用 RNNoise）
+                    // RNNoise 在 16kHz 音频上会破坏人声特征（即使优化了重采样也不行），导致识别不准
+                    // 唤醒词检测阶段仍保留 RNNoise，因为降噪有助于噪音环境唤醒
+                    recNoiseReducer.process(shortBuf, n, enableRnNoise = false)
                     // 应用音频增益（与唤醒词检测使用相同的 gain，确保小声说话时指令也能识别清楚）
                     applyGain(shortBuf, n)
+
+                    // 计算 RMS 能量，判断是否静音（不依赖 Vosk 内置端点检测，太敏感）
+                    val rms = SpeechRecognizer.calculateRms(shortBuf, n)
+                    val isSilence = rms < SILENCE_RMS_THRESHOLD
+
+                    // 转换为字节并喂给识别器
                     shortsToBytes(shortBuf, n, byteBuf)
                     val partial = recognizer.feed(byteBuf, n * 2)
+
+                    // 更新 partial 显示
                     if (!partial.isNullOrEmpty() && partial != lastPartial) {
                         lastPartial = partial
                         lastPartialText = partial
-                        android.util.Log.d("VoiceService", "识别中: '$partial'")
+                        android.util.Log.d("VoiceService", "识别中: '$partial' (RMS=${rms.toInt()}, 静音=$isSilence)")
                         withContext(Dispatchers.Main) {
                             FloatViewService.updateSubtitle("💬 $partial")
                         }
                     }
-                    if (recognizer.isEndpoint()) {
-                        val recordDuration = SystemClock.elapsedRealtime() - startMs
-                        // 如果录音时间不足最短时间，忽略端点，继续录音
-                        if (recordDuration < MIN_RECORD_MS) {
-                            android.util.Log.d("VoiceService", "检测到端点但录音不足${MIN_RECORD_MS}ms，继续录音")
-                            // 延迟一小会儿避免频繁检测
-                            try { Thread.sleep(50) } catch (_: Exception) {}
-                            continue@loop
-                        }
-                        // 检测到端点后，再等 ENDPOINT_WAIT_MS，确认用户说完了
-                        android.util.Log.d("VoiceService", "检测到端点，等待${ENDPOINT_WAIT_MS}ms确认用户是否继续说话...")
-                        val endpointTime = SystemClock.elapsedRealtime()
-                        var userContinued = false
-                        // 继续录音一小段时间，看看用户是否继续说话
-                        val waitShortBuf = ShortArray(512)
-                        val waitByteBuffer = ByteArray(1024)
-                        while (SystemClock.elapsedRealtime() - endpointTime < ENDPOINT_WAIT_MS) {
-                            val waitShorts = record.read(waitShortBuf, 0, waitShortBuf.size)
-                            if (waitShorts > 0) {
-                                applyGain(waitShortBuf, waitShorts)
-                                shortsToBytes(waitShortBuf, waitShorts, waitByteBuffer)
-                                val waitPartial = recognizer.feed(waitByteBuffer, waitShorts * 2)
-                                // 如果 partial 结果有变化，说明用户还在说话
-                                if (!waitPartial.isNullOrEmpty() && waitPartial != lastPartialText) {
-                                    userContinued = true
-                                    android.util.Log.d("VoiceService", "用户继续说话: '$waitPartial'，继续录音")
-                                    break
-                                }
-                            }
-                        }
-                        if (userContinued) {
-                            // 用户继续说话，继续录音
-                            continue@loop
-                        } else {
-                            // 用户确实说完了，结束录音
-                            android.util.Log.d("VoiceService", "确认用户说完了，结束录音")
+
+                    // 基于 RMS 的端点检测：连续静音超过阈值才认为说完了
+                    val recordDuration = SystemClock.elapsedRealtime() - startMs
+                    if (isSilence) {
+                        // 累加静音时长（这一帧的时长 = 样本数 / 采样率 * 1000ms）
+                        silenceDuration += (n * 1000L / SpeechRecognizer.SAMPLE_RATE.toInt())
+                        // 只有连续静音超过阈值，且录音时间超过最短时间，才认为用户说完了
+                        if (silenceDuration >= MAX_SILENCE_MS && recordDuration >= MIN_RECORD_MS) {
+                            android.util.Log.d("VoiceService", "连续静音${silenceDuration}ms，确认用户说完了，结束录音 (RMS=${rms.toInt()})")
                             break@loop
                         }
+                    } else {
+                        // 有声音，重置静音计时
+                        silenceDuration = 0
                     }
-                    if (SystemClock.elapsedRealtime() - startMs > MAX_RECORD_MS) {
-                        android.util.Log.d("VoiceService", "录音超时")
+
+                    // 最长录音时间保护
+                    if (recordDuration > MAX_RECORD_MS) {
+                        android.util.Log.d("VoiceService", "录音超时（${MAX_RECORD_MS}ms）")
                         break@loop
                     }
                 }
@@ -641,12 +632,21 @@ class VoiceAssistantService : Service() {
      * 例如："牛围村" -> "牛圩村"（圩和围同音 wéi）
      */
     private fun correctHomophones(text: String): String {
-        var result = text
+        // 先去除空格（Vosk 识别结果中词之间有空格，如"导航 到 牛 为 春"）
+        var result = text.replace(" ", "")
         // 同音字纠正映射表：识别错的词 -> 正确的词
         val corrections = mapOf(
+            // 牛圩村的各种同音字/识别错误变体
             "牛围村" to "牛圩村",
             "牛为村" to "牛圩村",
             "牛韦村" to "牛圩村",
+            "牛围春" to "牛圩村",
+            "牛为春" to "牛圩村",
+            "牛韦春" to "牛圩村",
+            "牛围存" to "牛圩村",
+            "牛为存" to "牛圩村",
+            "牛韦存" to "牛圩村",
+            // 其他常见同音字纠正
             "娅" to "亚",
             "米娅" to "米亚"
             // 可以在这里继续添加其他同音字纠正，例如：
@@ -672,10 +672,11 @@ class VoiceAssistantService : Service() {
         lastRecognizedText = correctedText
         FloatViewService.updateSubtitle("👉 $correctedText")
         scheduleSubtitleClear(15000)
-        // 识别完成，恢复媒体音量，让 TTS 播报结果能听到
-        restoreMediaVolume()
 
         if (text.isBlank()) {
+            // 没听清：恢复系统音量到原始值，TTS 播报时请求音频焦点，音乐自动降低
+            // TTS结束后保持原始音量值，不降到0
+            restoreMediaVolume()
             FloatViewService.updateSubtitle(getString(R.string.subtitle_not_heard))
             ttsEngine.speak(getString(R.string.tts_not_heard))
             mainHandler.postDelayed({
@@ -687,9 +688,12 @@ class VoiceAssistantService : Service() {
             return
         }
 
-        val intent = intentParser.parse(text)
+        val intent = intentParser.parse(correctedText)
         if (intent == null) {
-            android.util.Log.w("VoiceService", "未匹配到意图: '$text'")
+            // 没听懂：恢复系统音量到原始值，TTS 播报时请求音频焦点，音乐自动降低
+            // TTS结束后保持原始音量值，不降到0
+            restoreMediaVolume()
+            android.util.Log.w("VoiceService", "未匹配到意图: '$correctedText'")
             FloatViewService.updateSubtitle(getString(R.string.subtitle_not_understood))
             // 设置标志位：TTS说完后直接重新监听，不需要唤醒词
             isRetryListening = true
@@ -704,6 +708,9 @@ class VoiceAssistantService : Service() {
             }
             return
         }
+
+        // 正常识别完成：恢复媒体音量到原始值，让 TTS 播报结果能听到
+        restoreMediaVolume()
         android.util.Log.i("VoiceService", "匹配意图: ${intent.action}, 参数: ${intent.params}")
         if (intent.action == "app.cancel") {
             currentState = State.IDLE

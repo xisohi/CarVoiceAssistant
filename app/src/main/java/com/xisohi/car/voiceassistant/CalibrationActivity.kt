@@ -148,8 +148,11 @@ class CalibrationActivity : AppCompatActivity() {
     private fun updateCurrentParams() {
         val threshold = WakeWordEngine.getDetectionThreshold()
         val gain = WakeWordEngine.getAudioGain()
-        val isExtreme = (gain > 3.0f || threshold < 0.05f)
-        val isRecommended = (threshold in 0.05f..0.12f && gain in 2.0f..2.6f)
+        // 三档配置：低(gain=3.5,threshold=0.02) / 中(gain=4.5,threshold=0.008) / 高(gain=5.5,threshold=0.001)
+        // 极端值：超过高档范围（gain>5.5 或 threshold<0.001）
+        val isExtreme = (gain > 5.5f || threshold < 0.001f)
+        // 推荐范围：围绕中档值，和下方推荐文本一致
+        val isRecommended = (threshold in 0.002f..0.01f && gain in 3.5f..5.0f)
 
         val statusText = when {
             isExtreme -> "⚠️ 当前参数较极端，可能影响校准准确性，建议重置为默认"
