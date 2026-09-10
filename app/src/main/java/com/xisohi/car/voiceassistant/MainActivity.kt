@@ -454,7 +454,7 @@ class MainActivity : AppCompatActivity() {
                 try {
                     // 备用：打开浏览器搜索讯飞语音+下载
                     val intent = Intent(Intent.ACTION_VIEW,
-                        android.net.Uri.parse("https://lcjly.cn/car/讯飞语记.apk"))
+                        android.net.Uri.parse("https://lcjly.cn/car/讯飞语记v8.4.1459.apk"))
                     startActivity(intent)
                     toast("请下载并安装「讯飞语音+」，安装后在系统设置中设为默认TTS引擎")
                 } catch (e2: Exception) {
