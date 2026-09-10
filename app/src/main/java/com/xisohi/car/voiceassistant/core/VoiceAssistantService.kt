@@ -318,6 +318,9 @@ class VoiceAssistantService : Service() {
                 return
             }
 
+            // 初始化音频降噪（系统降噪 + 高通滤波器）
+            val noiseReducer = AudioNoiseReducer.create(record)
+
             // 官方引擎需要的帧大小（由 engine.audioSamplesNeeded 获取）
             val frameSize = wakeWordEngine.audioSamplesNeeded
             if (frameSize <= 0) {
@@ -334,6 +337,8 @@ class VoiceAssistantService : Service() {
                 while (isWakeListening && !isInterrupted()) {
                     val read = record.read(audioBuffer, 0, frameSize, AudioRecord.READ_BLOCKING)
                     if (read == frameSize) {
+                        // 应用降噪处理（高通滤波，去除低频发动机噪音）
+                        noiseReducer.process(audioBuffer, read)
                         // process 可能在 service 销毁时访问已关闭的 session，捕获异常防止线程崩溃
                         val result = try {
                             wakeWordEngine.process(audioBuffer)
@@ -362,6 +367,7 @@ class VoiceAssistantService : Service() {
             } finally {
                 try { record.stop() } catch (_: Exception) {}
                 record.release()
+                noiseReducer.release()
                 android.util.Log.d("WakeAudioThread", "录音线程结束")
             }
         }
@@ -521,6 +527,10 @@ class VoiceAssistantService : Service() {
                 AudioFormat.ENCODING_PCM_16BIT,
                 maxOf(minBuf * 2, 16_000)
             )
+
+            // 初始化音频降噪（系统降噪 + 高通滤波器）
+            val recNoiseReducer = AudioNoiseReducer.create(record)
+
             currentState = State.LISTENING
             lastPartialText = ""
             record.startRecording()
@@ -535,6 +545,8 @@ class VoiceAssistantService : Service() {
                 loop@ while (true) {
                     val n = record.read(shortBuf, 0, shortBuf.size)
                     if (n <= 0) continue
+                    // 应用降噪处理（高通滤波，去除低频发动机噪音）
+                    recNoiseReducer.process(shortBuf, n)
                     // 应用音频增益（与唤醒词检测使用相同的 gain，确保小声说话时指令也能识别清楚）
                     applyGain(shortBuf, n)
                     shortsToBytes(shortBuf, n, byteBuf)
@@ -596,6 +608,7 @@ class VoiceAssistantService : Service() {
             } finally {
                 try { record.stop() } catch (_: Exception) {}
                 record.release()
+                recNoiseReducer.release()
                 try { recognizer.release() } catch (_: Exception) {}
                 recognitionJob = null
             }

@@ -106,6 +106,19 @@ android {
         viewBinding = true
         buildConfig = true
     }
+
+    // 排除重复的 META-INF 文件（JNA 和其他库可能有重复）
+    packaging {
+        resources {
+            excludes += "META-INF/AL2.0"
+            excludes += "META-INF/LGPL2.1"
+            excludes += "META-INF/DEPENDENCIES"
+            excludes += "META-INF/LICENSE"
+            excludes += "META-INF/LICENSE.txt"
+            excludes += "META-INF/NOTICE"
+            excludes += "META-INF/NOTICE.txt"
+        }
+    }
 }
 
 dependencies {
@@ -119,4 +132,7 @@ dependencies {
 
     // 离线语音识别（含 armeabi-v7a 原生库），同时用于唤醒（grammar 模式）和识别
     implementation("com.alphacephei:vosk-android:0.3.47")
+
+    // JNA（Java Native Access）：用于直接调用 RNNoise 原生降噪库，无需自己编译 JNI
+    implementation("net.java.dev.jna:jna:5.14.0@aar")
 }
