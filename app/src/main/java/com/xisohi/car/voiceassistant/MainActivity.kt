@@ -82,6 +82,10 @@ class MainActivity : AppCompatActivity() {
         refreshModelState()
         refreshPermissionState()
 
+        // 设置 AlarmManager 兜底闹钟：即使开机广播收不到，闹钟也会定期检查服务是否在运行
+        // 这是针对鼎微/全志车机系统的重要兜底机制
+        BootReceiver.scheduleAlarmCheck(this)
+
         binding.btnDownload.setOnClickListener { startDownload() }
 
         binding.btnToggleService.setOnClickListener {

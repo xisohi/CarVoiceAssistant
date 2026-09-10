@@ -28,10 +28,61 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import android.media.ToneGenerator
 import android.media.AudioManager
+import com.xisohi.car.voiceassistant.core.VoiceAssistantService.Companion.currentState
 
 class VoiceAssistantService : Service() {
 
     enum class State { IDLE, LISTENING, PROCESSING, SPEAKING }
+
+    /**
+     * Vosk Grammar 词表：限定识别域，大幅提升小模型识别准确率
+     * 包含车控场景所有常用词汇，模型只需在这些词中匹配，无需猜测所有中文
+     */
+    private val GRAMMAR_WORDS = listOf(
+            // ===== 唤醒/对话常用词 =====
+            "小娜", "你好", "谢谢", "好的", "可以", "不行", "不要", "是", "不是", "对", "错",
+            "嗯", "啊", "的", "了", "在", "有", "和", "与", "到", "去", "来", "把", "让", "给", "为", "对", "从", "以", "用",
+            "我", "你", "他", "她", "它", "我们", "你们", "他们", "这个", "那个", "什么", "怎么", "如何", "为什么", "哪", "哪里",
+            // ===== 音乐控制 =====
+            "播放", "暂停", "停止", "上一首", "下一首", "上一曲", "下一曲", "换一首", "换一曲", "切歌",
+            "放", "唱", "听", "歌", "音乐", "歌曲", "放歌", "播歌", "唱歌", "放音乐", "打开音乐", "来一首", "我想听", "唱一首", "放一首",
+            "继续", "别放了", "停一下", "停下", "先别放", "大一点", "大声点", "声音大", "小一点", "小声点", "声音小",
+            "第一首", "第二首", "第三首", "第四首", "第五首", "第六首", "第七首", "第八首", "第九首", "第十首",
+            // ===== 音量控制 =====
+            "音量", "调大", "加大", "提高", "调小", "减小", "降低", "静音", "关掉", "关闭", "声音",
+            "调到", "设为", "设置为", "调成", "改成", "调整到", "百分之", "把",
+            // ===== 数字（0-100） =====
+            "零", "一", "二", "三", "四", "五", "六", "七", "八", "九", "十",
+            "十一", "十二", "十三", "十四", "十五", "十六", "十七", "十八", "十九",
+            "二十", "二十一", "二十二", "二十三", "二十四", "二十五", "二十六", "二十七", "二十八", "二十九",
+            "三十", "三十一", "三十二", "三十三", "三十四", "三十五", "三十六", "三十七", "三十八", "三十九",
+            "四十", "四十一", "四十二", "四十三", "四十四", "四十五", "四十六", "四十七", "四十八", "四十九",
+            "五十", "五十一", "五十二", "五十三", "五十四", "五十五", "五十六", "五十七", "五十八", "五十九",
+            "六十", "六十一", "六十二", "六十三", "六十四", "六十五", "六十六", "六十七", "六十八", "六十九",
+            "七十", "七十一", "七十二", "七十三", "七十四", "七十五", "七十六", "七十七", "七十八", "七十九",
+            "八十", "八十一", "八十二", "八十三", "八十四", "八十五", "八十六", "八十七", "八十八", "八十九",
+            "九十", "九十一", "九十二", "九十三", "九十四", "九十五", "九十六", "九十七", "九十八", "九十九",
+            "一百", "两", "半", "点",
+            // ===== 导航 =====
+            "导航", "去", "前往", "路线", "地图", "高德", "百度", "导",
+            "公司", "家", "机场", "火车站", "汽车站", "高铁站", "医院", "学校", "商场", "超市", "公园", "广场",
+            "酒店", "餐厅", "银行", "邮局", "加油站", "停车场", "万达", "万象城", "大悦城", "银泰", "华联", "沃尔玛", "家乐福",
+            "牛圩村", "牛围村",  // 牛圩村（同音字牛围村也加进去，后面会做纠正）
+            "北京", "上海", "广州", "深圳", "杭州", "南京", "成都", "重庆", "武汉", "西安", "苏州", "天津",
+            // ===== 空调/气候 =====
+            "空调", "打开", "开启", "开", "关闭", "关", "关掉", "温度", "风速", "冷", "热", "暖", "凉", "制冷", "制热",
+            "度", "调到", "设定为", "设为", "高", "低", "中", "自动",
+            // ===== 车窗/天窗 =====
+            "车窗", "主驾驶", "副驾驶", "左后", "右后", "后排", "全部", "天窗", "窗户", "玻璃",
+            // ===== 其他设备 =====
+            "蓝牙", "WiFi", "wifi", "设置", "浏览器", "收音机", "电话", "座椅", "灯光", "雨刷", "后视镜", "大灯", "近光", "远光",
+            // ===== 应用名称 =====
+            "百度地图", "高德地图", "音乐", "设置", "蓝牙", "WiFi", "浏览器", "收音机",
+            // ===== 查询 =====
+            "几点", "时间", "天气", "预报", "今天", "功能", "帮助", "现在", "报时",
+            // ===== 结束/取消 =====
+            "退下", "算了", "没事", "结束", "退出", "助手", "关闭助手"
+        )
 
     companion object {
         const val ACTION_START = "com.xisohi.car.voiceassistant.action.START"
@@ -39,7 +90,9 @@ class VoiceAssistantService : Service() {
         const val ACTION_WAKE_TRIGGER = "com.xisohi.car.voiceassistant.action.WAKE_TRIGGER"
         private const val CHANNEL_ID = "voice_assistant"
         private const val NOTIF_ID = 1
-        private const val MAX_RECORD_MS = 10_000L
+        private const val MAX_RECORD_MS = 15_000L  // 最长录音 15 秒（给用户足够时间说话）
+        private const val MIN_RECORD_MS = 2_000L    // 最短录音 2 秒（避免短暂停顿被误判为端点）
+        private const val ENDPOINT_WAIT_MS = 500L    // 检测到端点后再等 500ms，确认用户说完了
 
         @Volatile
         private var instance: VoiceAssistantService? = null
@@ -449,7 +502,8 @@ class VoiceAssistantService : Service() {
         }
         recognitionJob = scope.launch(Dispatchers.IO) {
             // 小模型加载快（<1秒），直接创建识别器
-            val recognizer = SpeechRecognizer.create(modelDir, null)
+            // 使用 grammar 词表限定识别域，大幅提升车控指令识别准确率
+            val recognizer = SpeechRecognizer.create(modelDir, GRAMMAR_WORDS)
             val minBuf = AudioRecord.getMinBufferSize(
                 SpeechRecognizer.SAMPLE_RATE.toInt(),
                 AudioFormat.CHANNEL_IN_MONO,
@@ -494,8 +548,43 @@ class VoiceAssistantService : Service() {
                         }
                     }
                     if (recognizer.isEndpoint()) {
-                        android.util.Log.d("VoiceService", "检测到端点")
-                        break@loop
+                        val recordDuration = SystemClock.elapsedRealtime() - startMs
+                        // 如果录音时间不足最短时间，忽略端点，继续录音
+                        if (recordDuration < MIN_RECORD_MS) {
+                            android.util.Log.d("VoiceService", "检测到端点但录音不足${MIN_RECORD_MS}ms，继续录音")
+                            // 延迟一小会儿避免频繁检测
+                            try { Thread.sleep(50) } catch (_: Exception) {}
+                            continue@loop
+                        }
+                        // 检测到端点后，再等 ENDPOINT_WAIT_MS，确认用户说完了
+                        android.util.Log.d("VoiceService", "检测到端点，等待${ENDPOINT_WAIT_MS}ms确认用户是否继续说话...")
+                        val endpointTime = SystemClock.elapsedRealtime()
+                        var userContinued = false
+                        // 继续录音一小段时间，看看用户是否继续说话
+                        val waitShortBuf = ShortArray(512)
+                        val waitByteBuffer = ByteArray(1024)
+                        while (SystemClock.elapsedRealtime() - endpointTime < ENDPOINT_WAIT_MS) {
+                            val waitShorts = record.read(waitShortBuf, 0, waitShortBuf.size)
+                            if (waitShorts > 0) {
+                                applyGain(waitShortBuf, waitShorts)
+                                shortsToBytes(waitShortBuf, waitShorts, waitByteBuffer)
+                                val waitPartial = recognizer.feed(waitByteBuffer, waitShorts * 2)
+                                // 如果 partial 结果有变化，说明用户还在说话
+                                if (!waitPartial.isNullOrEmpty() && waitPartial != lastPartialText) {
+                                    userContinued = true
+                                    android.util.Log.d("VoiceService", "用户继续说话: '$waitPartial'，继续录音")
+                                    break
+                                }
+                            }
+                        }
+                        if (userContinued) {
+                            // 用户继续说话，继续录音
+                            continue@loop
+                        } else {
+                            // 用户确实说完了，结束录音
+                            android.util.Log.d("VoiceService", "确认用户说完了，结束录音")
+                            break@loop
+                        }
                     }
                     if (SystemClock.elapsedRealtime() - startMs > MAX_RECORD_MS) {
                         android.util.Log.d("VoiceService", "录音超时")
@@ -533,11 +622,42 @@ class VoiceAssistantService : Service() {
     }
 
     // ---------- 文本处理 ----------
+    /**
+     * 同音字/常见识别错误纠正
+     * 把语音识别中常见的同音字错误自动纠正为正确的词
+     * 例如："牛围村" -> "牛圩村"（圩和围同音 wéi）
+     */
+    private fun correctHomophones(text: String): String {
+        var result = text
+        // 同音字纠正映射表：识别错的词 -> 正确的词
+        val corrections = mapOf(
+            "牛围村" to "牛圩村",
+            "牛为村" to "牛圩村",
+            "牛韦村" to "牛圩村",
+            "娅" to "亚",
+            "米娅" to "米亚"
+            // 可以在这里继续添加其他同音字纠正，例如：
+            // "七里香" to "七里香",  // 如果识别成其他同音字
+            // "万达广场" to "万达广场",
+        )
+        for ((wrong, correct) in corrections) {
+            if (result.contains(wrong)) {
+                result = result.replace(wrong, correct)
+            }
+        }
+        return result
+    }
+
     private fun handleText(text: String) {
         currentState = State.PROCESSING
         android.util.Log.d("VoiceService", "识别文本: '$text'")
-        lastRecognizedText = text
-        FloatViewService.updateSubtitle("👉 $text")
+        // 同音字/常见错误纠正：把识别错的词自动纠正
+        val correctedText = correctHomophones(text)
+        if (correctedText != text) {
+            android.util.Log.d("VoiceService", "同音字纠正: '$text' -> '$correctedText'")
+        }
+        lastRecognizedText = correctedText
+        FloatViewService.updateSubtitle("👉 $correctedText")
         scheduleSubtitleClear(15000)
         // 识别完成，恢复媒体音量，让 TTS 播报结果能听到
         restoreMediaVolume()

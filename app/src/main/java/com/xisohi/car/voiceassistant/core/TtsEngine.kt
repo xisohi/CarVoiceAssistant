@@ -1,6 +1,8 @@
 package com.xisohi.car.voiceassistant.core
 
 import android.content.Context
+import android.media.AudioManager
+import android.os.Bundle
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.util.Log
@@ -36,6 +38,10 @@ class TtsEngine(private val context: Context) : TextToSpeech.OnInitListener {
     private var ready = false
     private val appContext = context.applicationContext
     private var currentEngineIndex = -1
+
+    // TTS 播报时的音量控制：临时调高系统媒体音量，播报完成后恢复
+    private var originalMediaVolume: Int = -1
+    private var isVolumeBoosted = false
 
     init {
         val preferred = BuildConfig.PREFERRED_TTS_ENGINE.ifBlank { null }
@@ -117,11 +123,15 @@ class TtsEngine(private val context: Context) : TextToSpeech.OnInitListener {
             }
 
             override fun onDone(utteranceId: String?) {
+                // TTS 播报完成，恢复系统媒体音量
+                restoreMediaVolume()
                 listener?.onSpeakDone()
             }
 
             @Deprecated("Deprecated in Java")
             override fun onError(utteranceId: String?) {
+                // 出错时也恢复音量
+                restoreMediaVolume()
                 listener?.onSpeakDone()
             }
         })
@@ -134,12 +144,58 @@ class TtsEngine(private val context: Context) : TextToSpeech.OnInitListener {
             listener?.onSpeakDone()
             return
         }
+        // 临时调高系统媒体音量（提高到最大音量的 80%），让 TTS 播报更响亮
+        boostMediaVolume()
+        // 设置 TTS 自身音量为最大（1.0）
+        val params = Bundle()
+        params.putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, 1.0f)
+        params.putFloat(TextToSpeech.Engine.KEY_PARAM_PAN, 0.0f)  // 左右声道平衡
         val utteranceId = UUID.randomUUID().toString()
-        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
+        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, params, utteranceId)
+    }
+
+    /**
+     * 临时调高系统媒体音量到最大音量的 80%，让 TTS 播报更响亮
+     * 播报完成后在 onSpeakDone 中恢复
+     */
+    private fun boostMediaVolume() {
+        try {
+            val audioManager = appContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            val currentVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+            val maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+            // 目标音量：最大音量的 80%，但不低于当前音量
+            val targetVolume = maxOf(currentVolume, (maxVolume * 0.8f).toInt())
+            if (targetVolume > currentVolume && !isVolumeBoosted) {
+                originalMediaVolume = currentVolume
+                audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, targetVolume, 0)
+                isVolumeBoosted = true
+                Log.d("TtsEngine", "TTS播报临时提高媒体音量: $currentVolume -> $targetVolume (最大: $maxVolume)")
+            }
+        } catch (e: Exception) {
+            Log.w("TtsEngine", "提高媒体音量失败: ${e.message}")
+        }
+    }
+
+    /**
+     * 恢复 TTS 播报前的系统媒体音量
+     */
+    private fun restoreMediaVolume() {
+        try {
+            if (isVolumeBoosted && originalMediaVolume >= 0) {
+                val audioManager = appContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+                audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, originalMediaVolume, 0)
+                Log.d("TtsEngine", "TTS播报完成，恢复媒体音量: $originalMediaVolume")
+                isVolumeBoosted = false
+                originalMediaVolume = -1
+            }
+        } catch (e: Exception) {
+            Log.w("TtsEngine", "恢复媒体音量失败: ${e.message}")
+        }
     }
 
     fun stopSpeaking() {
         tts?.stop()
+        restoreMediaVolume()
         listener?.onSpeakDone()
     }
 
@@ -149,6 +205,7 @@ class TtsEngine(private val context: Context) : TextToSpeech.OnInitListener {
             tts?.shutdown()
         } catch (_: Exception) {
         }
+        restoreMediaVolume()
         tts = null
         ready = false
     }

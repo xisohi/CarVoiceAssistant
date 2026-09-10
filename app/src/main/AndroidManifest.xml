@@ -71,23 +71,33 @@
             android:name=".core.FloatViewService"
             android:exported="false" />
 
-        <!-- 开机自启接收器 -->
+        <!-- 开机自启接收器（针对鼎微/全志车机优化） -->
         <receiver
             android:name=".BootReceiver"
             android:exported="true"
             android:directBootAware="true"
             android:enabled="true">
-            <intent-filter>
+            <intent-filter android:priority="2147483647">
+                <!-- 标准开机广播 -->
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
-                <action android:name="android.intent.action.USER_PRESENT" />
-                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
                 <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
                 <action android:name="android.intent.action.REBOOT" />
+                <action android:name="android.intent.action.USER_PRESENT" />
+                <!-- 快速开机广播（部分厂商使用） -->
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
                 <action android:name="com.htc.intent.action.QUICKBOOT_POWERON" />
-                <!-- 间接触发：网络连接、媒体挂载、蓝牙连接等 -->
+                <!-- 车机系统特有广播（鼎微/全志/MTK等车机方案） -->
+                <action android:name="android.intent.action.ACTION_BOOT_COMPLETED" />
+                <action android:name="com.android.systemui.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.BOOT_COMPLETED_FINISHED" />
+                <!-- 间接触发：网络连接、媒体挂载、蓝牙连接、USB连接等 -->
                 <action android:name="android.net.conn.CONNECTIVITY_CHANGE" />
                 <action android:name="android.intent.action.MEDIA_MOUNTED" />
                 <action android:name="android.bluetooth.adapter.action.STATE_CHANGED" />
+                <action android:name="android.hardware.usb.action.USB_STATE" />
+                <action android:name="android.intent.action.HEADSET_PLUG" />
+                <!-- 闹钟兜底触发（AlarmManager 设置的闹钟） -->
+                <action android:name="com.xisohi.car.voiceassistant.ACTION_ALARM_TRIGGER" />
             </intent-filter>
         </receiver>
 
