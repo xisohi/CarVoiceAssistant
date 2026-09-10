@@ -34,8 +34,15 @@ public class WakeWordEngine {
     private static final String TAG = "WakeWordEngine";
     private static final String MEL_MODEL = "melspectrogram.onnx";
 
-    /** 音频增益系数：放大输入音频，提高小声说话的检测率。 */
+    /** 音频增益系数：放大输入音频，提高小声说话的检测率（唤醒阶段专用）。 */
     private static float audioGain = 4.5f;
+
+    /**
+     * 识别专用增益：指令识别阶段使用，比唤醒增益保守，避免近场说话时削顶失真。
+     * 唤醒是远场检测（用户可能离麦克风较远），需要较大增益；
+     * 识别是指令阶段（用户通常已靠近或音量正常），过大会导致波形截断，反而降低 Vosk 识别率。
+     */
+    private static float asrGain = 1.5f;
 
     /** 唤醒检测阈值：sigmoid 概率超过此值即判定为唤醒。降低可提高灵敏度。 */
     private static float detectionThreshold = 0.008f;
@@ -192,15 +199,32 @@ public class WakeWordEngine {
     public static void clearTestLogs() {
         testLogs.clear();
     }
-    /** 获取当前音频增益 */
+    /** 获取当前音频增益（唤醒阶段） */
     public static float getAudioGain() { return audioGain; }
     /** 获取当前检测阈值 */
     public static float getDetectionThreshold() { return detectionThreshold; }
-    /** 直接设置增益和阈值（用于校准向导应用结果） */
+
+    /**
+     * 获取识别专用增益（指令识别阶段）
+     * 与唤醒增益独立，避免近场说话时 4.5x 过放大导致削顶
+     */
+    public static float getAsrGain() { return asrGain; }
+
+    /**
+     * 设置识别专用增益
+     * 建议范围 1.0~2.5：太小识别不清，太大削顶失真
+     * @param gain 增益值，会被限制在 [1.0, 3.0] 区间
+     */
+    public static void setAsrGain(float gain) {
+        asrGain = Math.max(1.0f, Math.min(3.0f, gain));
+        Log.i(TAG, "识别增益设置为: " + asrGain);
+    }
+
+    /** 直接设置增益和阈值（用于校准向导应用结果，仅影响唤醒参数） */
     public static void setGainAndThreshold(float gain, float threshold) {
         audioGain = gain;
         detectionThreshold = threshold;
-        Log.i(TAG, "参数已更新: gain=" + gain + ", threshold=" + threshold);
+        Log.i(TAG, "唤醒参数已更新: gain=" + gain + ", threshold=" + threshold);
     }
 
     public WakeWordEngine(Context context) {
@@ -318,7 +342,7 @@ public class WakeWordEngine {
         if (!loaded) return null;
 
         try {
-            // 1. Convert to float
+            // 1. Convert to float（唤醒阶段使用 audioGain，与 asrGain 无关）
             float[] floatAudio = new float[audio.length];
             for (int i = 0; i < audio.length; i++) {
                 floatAudio[i] = (float) audio[i] * audioGain;

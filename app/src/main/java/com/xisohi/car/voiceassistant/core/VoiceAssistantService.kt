@@ -38,50 +38,50 @@ class VoiceAssistantService : Service() {
      * 包含车控场景所有常用词汇，模型只需在这些词中匹配，无需猜测所有中文
      */
     private val GRAMMAR_WORDS = listOf(
-            // ===== 唤醒/对话常用词 =====
-            "小娜", "你好", "谢谢", "好的", "可以", "不行", "不要", "是", "不是", "对", "错",
-            "嗯", "啊", "的", "了", "在", "有", "和", "与", "到", "去", "来", "把", "让", "给", "为", "对", "从", "以", "用",
-            "我", "你", "他", "她", "它", "我们", "你们", "他们", "这个", "那个", "什么", "怎么", "如何", "为什么", "哪", "哪里",
-            // ===== 音乐控制 =====
-            "播放", "暂停", "停止", "上一首", "下一首", "上一曲", "下一曲", "换一首", "换一曲", "切歌",
-            "放", "唱", "听", "歌", "音乐", "歌曲", "放歌", "播歌", "唱歌", "放音乐", "打开音乐", "来一首", "我想听", "唱一首", "放一首",
-            "继续", "别放了", "停一下", "停下", "先别放", "大一点", "大声点", "声音大", "小一点", "小声点", "声音小",
-            "第一首", "第二首", "第三首", "第四首", "第五首", "第六首", "第七首", "第八首", "第九首", "第十首",
-            // ===== 音量控制 =====
-            "音量", "调大", "加大", "提高", "调小", "减小", "降低", "静音", "关掉", "关闭", "声音",
-            "调到", "设为", "设置为", "调成", "改成", "调整到", "百分之", "把",
-            // ===== 数字（0-100） =====
-            "零", "一", "二", "三", "四", "五", "六", "七", "八", "九", "十",
-            "十一", "十二", "十三", "十四", "十五", "十六", "十七", "十八", "十九",
-            "二十", "二十一", "二十二", "二十三", "二十四", "二十五", "二十六", "二十七", "二十八", "二十九",
-            "三十", "三十一", "三十二", "三十三", "三十四", "三十五", "三十六", "三十七", "三十八", "三十九",
-            "四十", "四十一", "四十二", "四十三", "四十四", "四十五", "四十六", "四十七", "四十八", "四十九",
-            "五十", "五十一", "五十二", "五十三", "五十四", "五十五", "五十六", "五十七", "五十八", "五十九",
-            "六十", "六十一", "六十二", "六十三", "六十四", "六十五", "六十六", "六十七", "六十八", "六十九",
-            "七十", "七十一", "七十二", "七十三", "七十四", "七十五", "七十六", "七十七", "七十八", "七十九",
-            "八十", "八十一", "八十二", "八十三", "八十四", "八十五", "八十六", "八十七", "八十八", "八十九",
-            "九十", "九十一", "九十二", "九十三", "九十四", "九十五", "九十六", "九十七", "九十八", "九十九",
-            "一百", "两", "半", "点",
-            // ===== 导航 =====
-            "导航", "去", "前往", "路线", "地图", "高德", "百度", "导",
-            "公司", "家", "机场", "火车站", "汽车站", "高铁站", "医院", "学校", "商场", "超市", "公园", "广场",
-            "酒店", "餐厅", "银行", "邮局", "加油站", "停车场", "万达", "万象城", "大悦城", "银泰", "华联", "沃尔玛", "家乐福",
-            "牛圩村", "牛围村",  // 牛圩村（同音字牛围村也加进去，后面会做纠正）
-            "北京", "上海", "广州", "深圳", "杭州", "南京", "成都", "重庆", "武汉", "西安", "苏州", "天津",
-            // ===== 空调/气候 =====
-            "空调", "打开", "开启", "开", "关闭", "关", "关掉", "温度", "风速", "冷", "热", "暖", "凉", "制冷", "制热",
-            "度", "调到", "设定为", "设为", "高", "低", "中", "自动",
-            // ===== 车窗/天窗 =====
-            "车窗", "主驾驶", "副驾驶", "左后", "右后", "后排", "全部", "天窗", "窗户", "玻璃",
-            // ===== 其他设备 =====
-            "蓝牙", "WiFi", "wifi", "设置", "浏览器", "收音机", "电话", "座椅", "灯光", "雨刷", "后视镜", "大灯", "近光", "远光",
-            // ===== 应用名称 =====
-            "百度地图", "高德地图", "音乐", "设置", "蓝牙", "WiFi", "浏览器", "收音机",
-            // ===== 查询 =====
-            "几点", "时间", "天气", "预报", "今天", "功能", "帮助", "现在", "报时",
-            // ===== 结束/取消 =====
-            "退下", "算了", "没事", "结束", "退出", "助手", "关闭助手"
-        )
+        // ===== 唤醒/对话常用词 =====
+        "小娜", "你好", "谢谢", "好的", "可以", "不行", "不要", "是", "不是", "对", "错",
+        "嗯", "啊", "的", "了", "在", "有", "和", "与", "到", "去", "来", "把", "让", "给", "为", "对", "从", "以", "用",
+        "我", "你", "他", "她", "它", "我们", "你们", "他们", "这个", "那个", "什么", "怎么", "如何", "为什么", "哪", "哪里",
+        // ===== 音乐控制 =====
+        "播放", "暂停", "停止", "上一首", "下一首", "上一曲", "下一曲", "换一首", "换一曲", "切歌",
+        "放", "唱", "听", "歌", "音乐", "歌曲", "放歌", "播歌", "唱歌", "放音乐", "打开音乐", "来一首", "我想听", "唱一首", "放一首",
+        "继续", "别放了", "停一下", "停下", "先别放", "大一点", "大声点", "声音大", "小一点", "小声点", "声音小",
+        "第一首", "第二首", "第三首", "第四首", "第五首", "第六首", "第七首", "第八首", "第九首", "第十首",
+        // ===== 音量控制 =====
+        "音量", "调大", "加大", "提高", "调小", "减小", "降低", "静音", "关掉", "关闭", "声音",
+        "调到", "设为", "设置为", "调成", "改成", "调整到", "百分之", "把",
+        // ===== 数字（0-100） =====
+        "零", "一", "二", "三", "四", "五", "六", "七", "八", "九", "十",
+        "十一", "十二", "十三", "十四", "十五", "十六", "十七", "十八", "十九",
+        "二十", "二十一", "二十二", "二十三", "二十四", "二十五", "二十六", "二十七", "二十八", "二十九",
+        "三十", "三十一", "三十二", "三十三", "三十四", "三十五", "三十六", "三十七", "三十八", "三十九",
+        "四十", "四十一", "四十二", "四十三", "四十四", "四十五", "四十六", "四十七", "四十八", "四十九",
+        "五十", "五十一", "五十二", "五十三", "五十四", "五十五", "五十六", "五十七", "五十八", "五十九",
+        "六十", "六十一", "六十二", "六十三", "六十四", "六十五", "六十六", "六十七", "六十八", "六十九",
+        "七十", "七十一", "七十二", "七十三", "七十四", "七十五", "七十六", "七十七", "七十八", "七十九",
+        "八十", "八十一", "八十二", "八十三", "八十四", "八十五", "八十六", "八十七", "八十八", "八十九",
+        "九十", "九十一", "九十二", "九十三", "九十四", "九十五", "九十六", "九十七", "九十八", "九十九",
+        "一百", "两", "半", "点",
+        // ===== 导航 =====
+        "导航", "去", "前往", "路线", "地图", "高德", "百度", "导",
+        "公司", "家", "机场", "火车站", "汽车站", "高铁站", "医院", "学校", "商场", "超市", "公园", "广场",
+        "酒店", "餐厅", "银行", "邮局", "加油站", "停车场", "万达", "万象城", "大悦城", "银泰", "华联", "沃尔玛", "家乐福",
+        "牛圩村", "牛围村",  // 牛圩村（同音字牛围村也加进去，后面会做纠正）
+        "北京", "上海", "广州", "深圳", "杭州", "南京", "成都", "重庆", "武汉", "西安", "苏州", "天津",
+        // ===== 空调/气候 =====
+        "空调", "打开", "开启", "开", "关闭", "关", "关掉", "温度", "风速", "冷", "热", "暖", "凉", "制冷", "制热",
+        "度", "调到", "设定为", "设为", "高", "低", "中", "自动",
+        // ===== 车窗/天窗 =====
+        "车窗", "主驾驶", "副驾驶", "左后", "右后", "后排", "全部", "天窗", "窗户", "玻璃",
+        // ===== 其他设备 =====
+        "蓝牙", "WiFi", "wifi", "设置", "浏览器", "收音机", "电话", "座椅", "灯光", "雨刷", "后视镜", "大灯", "近光", "远光",
+        // ===== 应用名称 =====
+        "百度地图", "高德地图", "音乐", "设置", "蓝牙", "WiFi", "浏览器", "收音机",
+        // ===== 查询 =====
+        "几点", "时间", "天气", "预报", "今天", "功能", "帮助", "现在", "报时",
+        // ===== 结束/取消 =====
+        "退下", "算了", "没事", "结束", "退出", "助手", "关闭助手"
+    )
 
     companion object {
         const val ACTION_START = "com.xisohi.car.voiceassistant.action.START"
@@ -91,8 +91,17 @@ class VoiceAssistantService : Service() {
         private const val NOTIF_ID = 1
         private const val MAX_RECORD_MS = 15_000L  // 最长录音 15 秒（给用户足够时间说话）
         private const val MIN_RECORD_MS = 2_000L    // 最短录音 2 秒（避免短暂停顿被误判为端点）
-        private const val SILENCE_RMS_THRESHOLD = 800f  // 静音 RMS 阈值（低于此值认为是静音，车机噪音大可调高）
-        private const val MAX_SILENCE_MS = 1200L      // 连续静音超过 800ms 才认为用户说完了（避免说话中间间隙误判）
+        private const val MAX_SILENCE_MS = 800L      // 连续静音超过 800ms 才认为用户说完了（避免说话中间间隙误判）
+        private const val WAIT_SPEECH_TIMEOUT_MS = 5_000L  // 用户开口前的等待上限（避免 TTS 刚说完就被静音截断）
+
+        // ===== 自适应静音阈值参数 =====
+        // 不再使用固定阈值，改为启动时采样环境噪音动态计算
+        // 公式：adaptiveThreshold = ambientRms * NOISE_MULTIPLIER，并限制在 [MIN, MAX] 区间
+        private const val SILENCE_RMS_MIN = 500f      // 绝对下限（安静停车环境）
+        private const val SILENCE_RMS_MAX = 2000f     // 绝对上限（防止噪音过大导致阈值过高）
+        private const val NOISE_MULTIPLIER = 2.5f     // 环境噪音倍数
+        private const val NOISE_WARMUP_MS = 100L      // 丢弃前 100ms（录音启动爆音）
+        private const val NOISE_SAMPLE_MS = 300L      // 环境噪音采样时长
 
         @Volatile
         private var instance: VoiceAssistantService? = null
@@ -537,11 +546,42 @@ class VoiceAssistantService : Service() {
             lastPartialText = ""
             record.startRecording()
             android.util.Log.d("VoiceService", "开始录音识别")
+
+            // ===== 环境噪音采样，动态设定静音阈值 =====
+            // 先丢弃前 100ms（录音刚启动时可能有爆音）
+            val warmupSamples = (NOISE_WARMUP_MS * SpeechRecognizer.SAMPLE_RATE / 1000).toInt()
+            val warmupBuf = ShortArray(warmupSamples)
+            try {
+                record.read(warmupBuf, 0, warmupBuf.size)
+            } catch (_: Exception) {
+            }
+
+            // 采样 300ms 环境噪音，计算自适应静音阈值
+            val noiseSampleCount = (NOISE_SAMPLE_MS * SpeechRecognizer.SAMPLE_RATE / 1000).toInt()
+            val noiseBuf = ShortArray(noiseSampleCount)
+            val noiseRead = try {
+                record.read(noiseBuf, 0, noiseSampleCount)
+            } catch (_: Exception) {
+                -1
+            }
+            val ambientRms = if (noiseRead > 0) {
+                SpeechRecognizer.calculateRms(noiseBuf, noiseRead)
+            } else {
+                SILENCE_RMS_MIN
+            }
+            // 动态阈值 = 环境噪音 RMS * 倍数，限制在 [MIN, MAX] 区间
+            val adaptiveSilenceThreshold = (ambientRms * NOISE_MULTIPLIER)
+                .coerceIn(SILENCE_RMS_MIN, SILENCE_RMS_MAX)
+            android.util.Log.d("VoiceService",
+                "环境噪音 RMS=${ambientRms.toInt()}, 自适应静音阈值=${adaptiveSilenceThreshold.toInt()}")
+            // =========================================
+
             val shortBuf = ShortArray(512)
             val byteBuf = ByteArray(1024)
             val startMs = SystemClock.elapsedRealtime()
             var lastPartial = ""
             var silenceDuration = 0L  // 连续静音时长（ms）
+            var hasSpeechStarted = false  // 用户是否已开口（开口前不累积静音，避免TTS刚说完就截断）
 
             var finalText = ""
             try {
@@ -552,12 +592,19 @@ class VoiceAssistantService : Service() {
                     // RNNoise 在 16kHz 音频上会破坏人声特征（即使优化了重采样也不行），导致识别不准
                     // 唤醒词检测阶段仍保留 RNNoise，因为降噪有助于噪音环境唤醒
                     recNoiseReducer.process(shortBuf, n, enableRnNoise = false)
-                    // 应用音频增益（与唤醒词检测使用相同的 gain，确保小声说话时指令也能识别清楚）
+                    // 应用音频增益（识别阶段专用增益，与唤醒增益独立，避免过放大削顶）
                     applyGain(shortBuf, n)
 
                     // 计算 RMS 能量，判断是否静音（不依赖 Vosk 内置端点检测，太敏感）
                     val rms = SpeechRecognizer.calculateRms(shortBuf, n)
-                    val isSilence = rms < SILENCE_RMS_THRESHOLD
+                    // 使用自适应阈值（基于环境噪音动态计算）
+                    val isSilence = rms < adaptiveSilenceThreshold
+
+                    // 检测到第一次有效语音后，标记用户已开口，之后才开始静音计时
+                    if (!hasSpeechStarted && !isSilence) {
+                        hasSpeechStarted = true
+                        android.util.Log.d("VoiceService", "检测到用户开口 (RMS=${rms.toInt()})")
+                    }
 
                     // 转换为字节并喂给识别器
                     shortsToBytes(shortBuf, n, byteBuf)
@@ -573,24 +620,27 @@ class VoiceAssistantService : Service() {
                         }
                     }
 
-                    // 基于 RMS 的端点检测：连续静音超过阈值才认为说完了
+                    // 基于 RMS 的端点检测：用户开口后，连续静音超过阈值才认为说完了
                     val recordDuration = SystemClock.elapsedRealtime() - startMs
-                    if (isSilence) {
+                    if (hasSpeechStarted && isSilence) {
                         // 累加静音时长（这一帧的时长 = 样本数 / 采样率 * 1000ms）
                         silenceDuration += (n * 1000L / SpeechRecognizer.SAMPLE_RATE.toInt())
                         // 只有连续静音超过阈值，且录音时间超过最短时间，才认为用户说完了
                         if (silenceDuration >= MAX_SILENCE_MS && recordDuration >= MIN_RECORD_MS) {
-                            android.util.Log.d("VoiceService", "连续静音${silenceDuration}ms，确认用户说完了，结束录音 (RMS=${rms.toInt()})")
+                            android.util.Log.d("VoiceService",
+                                "连续静音${silenceDuration}ms，确认用户说完了，结束录音 (RMS=${rms.toInt()}, 阈值=${adaptiveSilenceThreshold.toInt()})")
                             break@loop
                         }
-                    } else {
+                    } else if (!isSilence) {
                         // 有声音，重置静音计时
                         silenceDuration = 0
                     }
 
-                    // 最长录音时间保护
-                    if (recordDuration > MAX_RECORD_MS) {
-                        android.util.Log.d("VoiceService", "录音超时（${MAX_RECORD_MS}ms）")
+                    // 超时保护：用户开口前用 WAIT_SPEECH_TIMEOUT_MS，开口后用 MAX_RECORD_MS
+                    val timeoutLimit = if (hasSpeechStarted) MAX_RECORD_MS else WAIT_SPEECH_TIMEOUT_MS
+                    if (recordDuration > timeoutLimit) {
+                        android.util.Log.d("VoiceService",
+                            "录音超时（${if (hasSpeechStarted) "已开口" else "未检测到语音"}，${recordDuration}ms）")
                         break@loop
                     }
                 }
@@ -608,19 +658,20 @@ class VoiceAssistantService : Service() {
     }
 
     /**
-     * 对 PCM 音频数据应用增益放大
-     * 与唤醒词检测使用相同的 gain，确保小声说话时指令也能识别清楚
+     * 对 PCM 音频数据应用增益放大（识别阶段专用）
+     * 使用独立的 asrGain（默认 1.5x），比唤醒增益（默认 4.5x）保守，
+     * 避免近场说话时波形削顶失真，反而降低 Vosk 识别率。
      */
     private fun applyGain(buffer: ShortArray, length: Int) {
-        val gain = WakeWordEngine.getAudioGain()
+        val gain = WakeWordEngine.getAsrGain()
         if (gain <= 1.0f) return  // 增益为 1.0 时不需要处理
         for (i in 0 until length) {
-            val amplified = (buffer[i] * gain).toInt()
+            val amplified = buffer[i] * gain
             // 防止溢出，截断到 short 范围
             buffer[i] = when {
                 amplified > Short.MAX_VALUE -> Short.MAX_VALUE
                 amplified < Short.MIN_VALUE -> Short.MIN_VALUE
-                else -> amplified.toShort()
+                else -> amplified.toInt().toShort()
             }
         }
     }
