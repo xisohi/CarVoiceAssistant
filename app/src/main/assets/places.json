@@ -1,5 +1,5 @@
 [
-  {"name": "牛圩村", "pinyin": "niuweicun"},
+  {"name": "米亚", "pinyin": "miya"},
   {"name": "蚌埠站", "pinyin": "bengbuzhan"},
   {"name": "蚌埠南站", "pinyin": "bengbunanzhan"},
   {"name": "蚌埠火车站", "pinyin": "bengbuhuochezhan"},
@@ -57,9 +57,13 @@
   {"name": "鲍集镇", "pinyin": "baojizhen"},
   {"name": "龙亢镇", "pinyin": "longkangzhen"},
   {"name": "河溜镇", "pinyin": "heliuzhen"},
+  {"name": "罗新庄村马场", "pinyin": "luoxinzhuangcunmachang"},
   {"name": "唐集镇", "pinyin": "tangjizhen"},
+  {"name": "牛圩村", "pinyin": "niuweicun"},
+  {"name": "大徐村", "pinyin": "daxucun"},
   {"name": "常坟镇", "pinyin": "changfenzhen"},
   {"name": "万福镇", "pinyin": "wanfuzhen"},
+  {"name": "八里王", "pinyin": "baliwang"},
   {"name": "魏庄镇", "pinyin": "weizhuangzhen"},
   {"name": "双桥镇", "pinyin": "shuangqiaozhen"},
   {"name": "古城镇", "pinyin": "guchengzhen"},
@@ -104,5 +108,6 @@
   {"name": "公司", "pinyin": "gongsi"},
   {"name": "家", "pinyin": "jia"},
   {"name": "机场", "pinyin": "jichang"},
+  {"name": "蓰赢老年公寓", "pinyin": "xiyinglaoniangongyu"},
   {"name": "高铁站", "pinyin": "gaotiezhan"}
 ]

@@ -8,106 +8,141 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:padding="16dp">
+        android:padding="10dp">
 
-        <!-- 标题 -->
-        <TextView
-            android:layout_width="wrap_content"
+        <!-- 标题栏 -->
+        <LinearLayout
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="@string/app_name"
-            android:textSize="22sp"
-            android:textStyle="bold"
-            android:textColor="#1A1B1C" />
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginBottom="8dp">
 
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="纯离线运行 · 仅首次安装联网"
-            android:textSize="13sp"
-            android:textColor="#6B7280"
-            android:layout_marginTop="2dp"
-            android:layout_marginBottom="12dp" />
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/app_name"
+                    android:textSize="18sp"
+                    android:textStyle="bold"
+                    android:textColor="#1A1B1C" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="纯离线运行 · 仅首次安装联网"
+                    android:textSize="11sp"
+                    android:textColor="#6B7280"
+                    android:layout_marginTop="1dp" />
+            </LinearLayout>
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnBackground"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="后台运行"
+                android:textSize="12sp"
+                android:minWidth="0dp"
+                android:minHeight="0dp"
+                android:paddingHorizontal="12dp"
+                android:paddingVertical="6dp"
+                android:enabled="false" />
+        </LinearLayout>
 
         <!-- 服务状态卡 -->
         <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="12dp">
-
+            android:layout_marginBottom="8dp">
 
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
-                android:padding="14dp">
+                android:padding="10dp">
 
-                <TextView
-                    android:layout_width="wrap_content"
+                <LinearLayout
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="服务状态"
-                    android:textSize="12sp"
-                    android:textColor="#6B7280" />
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
 
-                <TextView
-                    android:id="@+id/tvServiceState"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="○ 已停止"
-                    android:textSize="18sp"
-                    android:textStyle="bold"
-                    android:layout_marginTop="4dp" />
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
 
-                <TextView
-                    android:id="@+id/tvVoiceState"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="—"
-                    android:textSize="14sp"
-                    android:layout_marginTop="4dp" />
+                        <TextView
+                            android:id="@+id/tvServiceState"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="○ 已停止"
+                            android:textSize="16sp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:id="@+id/tvVoiceState"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="—"
+                            android:textSize="12sp"
+                            android:textColor="#6B7280"
+                            android:layout_marginTop="1dp" />
+                    </LinearLayout>
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnToggleService"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="启动服务"
+                        android:textSize="13sp"
+                        android:minWidth="0dp"
+                        android:minHeight="0dp"
+                        android:paddingHorizontal="16dp"
+                        android:paddingVertical="8dp" />
+                </LinearLayout>
 
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="最近识别"
-                    android:textSize="11sp"
+                    android:textSize="10sp"
                     android:textColor="#6B7280"
-                    android:layout_marginTop="8dp" />
+                    android:layout_marginTop="6dp" />
 
                 <TextView
                     android:id="@+id/tvLastRecognized"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:text="—"
-                    android:textSize="13sp"
+                    android:textSize="12sp"
                     android:textColor="#1A1B1C"
                     android:layout_marginTop="2dp"
                     android:background="#F4F5F7"
-                    android:padding="6dp" />
+                    android:padding="5dp" />
 
                 <TextView
                     android:id="@+id/tvLastIntent"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:text=""
-                    android:textSize="12sp"
-                    android:textColor="#6B7280"
-                    android:layout_marginTop="2dp" />
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="唤醒方式：小娜/你好小娜/小娜小娜"
                     android:textSize="11sp"
                     android:textColor="#6B7280"
-                    android:layout_marginTop="6dp" />
+                    android:layout_marginTop="1dp" />
 
-                <!-- TTS 引擎状态 -->
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="horizontal"
                     android:gravity="center_vertical"
-                    android:layout_marginTop="6dp">
+                    android:layout_marginTop="4dp">
 
                     <TextView
                         android:id="@+id/tvTtsState"
@@ -115,104 +150,192 @@
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
                         android:text="TTS：检测中..."
-                        android:textSize="12sp"
+                        android:textSize="11sp"
                         android:textColor="#6B7280" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="唤醒：小娜/你好小娜"
+                        android:textSize="10sp"
+                        android:textColor="#6B7280"
+                        android:layout_marginEnd="8dp" />
 
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/btnTtsSettings"
                         style="@style/Widget.MaterialComponents.Button.TextButton"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="设置"
-                        android:textSize="12sp"
+                        android:text="TTS设置"
+                        android:textSize="11sp"
                         android:minWidth="0dp"
                         android:minHeight="0dp"
-                        android:paddingHorizontal="8dp"
-                        android:paddingVertical="4dp" />
+                        android:paddingHorizontal="6dp"
+                        android:paddingVertical="2dp" />
                 </LinearLayout>
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnToggleService"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="启动服务"
-                    android:layout_marginTop="10dp" />
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnBackground"
-                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="返回后台运行"
-                    android:layout_marginTop="6dp"
-                    android:enabled="false" />
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="提示：服务运行中时，点击「返回后台运行」或按返回键只关闭本页面，语音助手在后台继续运行，不会停止服务。"
-                    android:textSize="11sp"
-                    android:textColor="#6B7280"
-                    android:layout_marginTop="6dp"
-                    android:lineSpacingExtra="2dp" />
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
-        <!-- 权限设置卡 -->
-        <com.google.android.material.card.MaterialCardView
+        <!-- 权限 + 模型 两列布局 -->
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="12dp">
+            android:orientation="horizontal"
+            android:layout_marginBottom="8dp">
 
-            <LinearLayout
-                android:layout_width="match_parent"
+            <!-- 权限设置卡 -->
+            <com.google.android.material.card.MaterialCardView
+                android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:padding="14dp">
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="权限设置"
-                    android:textSize="12sp"
-                    android:textColor="#6B7280" />
+                android:layout_weight="1"
+                android:layout_marginEnd="4dp">
 
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:layout_marginTop="8dp"
-                    android:gravity="center_vertical">
+                    android:orientation="vertical"
+                    android:padding="10dp">
 
                     <TextView
-                        android:layout_width="0dp"
+                        android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="悬浮窗权限"
-                        android:textSize="14sp" />
+                        android:text="权限设置"
+                        android:textSize="11sp"
+                        android:textColor="#6B7280" />
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:layout_marginTop="6dp"
+                        android:gravity="center_vertical">
+
+                        <TextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="悬浮窗"
+                            android:textSize="13sp" />
+
+                        <TextView
+                            android:id="@+id/tvOverlayState"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="检测中…"
+                            android:textSize="12sp"
+                            android:textColor="#6B7280" />
+                    </LinearLayout>
+
+                    <View
+                        android:layout_width="match_parent"
+                        android:layout_height="1dp"
+                        android:background="#E4E3DD"
+                        android:layout_marginTop="6dp"
+                        android:layout_marginBottom="6dp" />
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical">
+
+                        <TextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="开机自启"
+                            android:textSize="13sp" />
+
+                        <androidx.appcompat.widget.SwitchCompat
+                            android:id="@+id/switchAutoStart"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:checked="true" />
+                    </LinearLayout>
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnOpenAutoStartSettings"
+                        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="系统自启设置"
+                        android:textSize="11sp"
+                        android:layout_marginTop="8dp"
+                        android:minWidth="0dp"
+                        android:minHeight="0dp"
+                        android:paddingVertical="4dp" />
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+
+            <!-- 离线模型卡 -->
+            <com.google.android.material.card.MaterialCardView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginStart="4dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="10dp">
 
                     <TextView
-                        android:id="@+id/tvOverlayState"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="离线模型"
+                        android:textSize="11sp"
+                        android:textColor="#6B7280" />
+
+                    <TextView
+                        android:id="@+id/tvModelState"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="检测中…"
-                        android:textSize="13sp"
-                        android:textColor="#6B7280" />
+                        android:textSize="14sp"
+                        android:textStyle="bold"
+                        android:layout_marginTop="4dp" />
+
+                    <ProgressBar
+                        android:id="@+id/progressDownload"
+                        style="?android:attr/progressBarStyleHorizontal"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnDownload"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="下载语音包"
+                        android:textSize="12sp"
+                        android:layout_marginTop="8dp"
+                        android:minWidth="0dp"
+                        android:minHeight="0dp"
+                        android:paddingVertical="6dp" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="约50-100MB，WiFi下下载"
+                        android:textSize="10sp"
+                        android:textColor="#6B7280"
+                        android:layout_marginTop="4dp" />
                 </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+        </LinearLayout>
 
-                <View
-                    android:layout_width="match_parent"
-                    android:layout_height="1dp"
-                    android:background="#E4E3DD"
-                    android:layout_marginTop="8dp"
-                    android:layout_marginBottom="8dp" />
+        <!-- 唤醒灵敏度卡 -->
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="8dp">
 
-                <View
-                    android:layout_width="match_parent"
-                    android:layout_height="1dp"
-                    android:background="#E4E3DD"
-                    android:layout_marginTop="12dp"
-                    android:layout_marginBottom="8dp" />
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="10dp">
 
                 <LinearLayout
                     android:layout_width="match_parent"
@@ -224,119 +347,24 @@
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
-                        android:text="开机自启动"
-                        android:textSize="14sp" />
+                        android:text="唤醒灵敏度"
+                        android:textSize="13sp"
+                        android:textStyle="bold" />
 
-                    <androidx.appcompat.widget.SwitchCompat
-                        android:id="@+id/switchAutoStart"
+                    <TextView
+                        android:id="@+id/tvSensitivityDesc"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:checked="true" />
+                        android:text="中（增益4.5x，阈值0.008）"
+                        android:textSize="12sp"
+                        android:textColor="#1A73E8" />
                 </LinearLayout>
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnOpenAutoStartSettings"
-                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="打开系统自启动设置"
-                    android:layout_marginTop="10dp" />
-
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="提示：如果开机后服务没有自动启动，请在系统设置中找到本应用，开启自启动/后台运行权限。不同车机系统设置路径可能不同。"
-                    android:textSize="12sp"
-                    android:textColor="#6B7280"
-                    android:layout_marginTop="8dp" />
-            </LinearLayout>
-        </com.google.android.material.card.MaterialCardView>
-
-        <!-- 模型初始化卡 -->
-        <com.google.android.material.card.MaterialCardView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="12dp">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:padding="14dp">
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="离线模型"
-                    android:textSize="12sp"
-                    android:textColor="#6B7280" />
-
-                <TextView
-                    android:id="@+id/tvModelState"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="检测中…"
-                    android:textSize="16sp"
-                    android:textStyle="bold"
-                    android:layout_marginTop="4dp" />
-
-                <ProgressBar
-                    android:id="@+id/progressDownload"
-                    style="?android:attr/progressBarStyleHorizontal"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="10dp" />
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnDownload"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="下载离线语音包"
-                    android:layout_marginTop="10dp" />
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="首次使用需下载约 50-100MB 语音包（WiFi 下进行），完成后永久离线。"
-                    android:textSize="11sp"
-                    android:textColor="#6B7280"
-                    android:layout_marginTop="6dp" />
-            </LinearLayout>
-        </com.google.android.material.card.MaterialCardView>
-
-        <!-- 唤醒灵敏度设置卡 -->
-        <com.google.android.material.card.MaterialCardView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="12dp">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:padding="14dp">
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="唤醒灵敏度"
-                    android:textSize="12sp"
-                    android:textColor="#6B7280" />
-
-                <TextView
-                    android:id="@+id/tvSensitivityDesc"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="当前：中（增益4.5x，阈值0.008）"
-                    android:textSize="14sp"
-                    android:textStyle="bold"
-                    android:layout_marginTop="4dp" />
 
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="horizontal"
-                    android:layout_marginTop="10dp">
+                    android:layout_marginTop="8dp">
 
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/btnSensLow"
@@ -345,8 +373,11 @@
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
                         android:text="低"
-                        android:textSize="14sp"
-                        android:layout_marginEnd="4dp" />
+                        android:textSize="13sp"
+                        android:layout_marginEnd="4dp"
+                        android:minWidth="0dp"
+                        android:minHeight="0dp"
+                        android:paddingVertical="6dp" />
 
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/btnSensMedium"
@@ -355,8 +386,11 @@
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
                         android:text="中"
-                        android:textSize="14sp"
-                        android:layout_marginEnd="4dp" />
+                        android:textSize="13sp"
+                        android:layout_marginEnd="4dp"
+                        android:minWidth="0dp"
+                        android:minHeight="0dp"
+                        android:paddingVertical="6dp" />
 
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/btnSensHigh"
@@ -365,60 +399,78 @@
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
                         android:text="高"
-                        android:textSize="14sp" />
+                        android:textSize="13sp"
+                        android:minWidth="0dp"
+                        android:minHeight="0dp"
+                        android:paddingVertical="6dp" />
                 </LinearLayout>
 
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="点击预设按钮将参数填充到下方滑块，可微调后点击「应用手动参数」生效。低：保守；中：平衡；高：灵敏。"
-                    android:textSize="11sp"
-                    android:textColor="#6B7280"
-                    android:layout_marginTop="8dp" />
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnCalibration"
-                    style="@style/Widget.MaterialComponents.Button.TextButton"
+                <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="自动校准（四步测试推荐参数）"
-                    android:textSize="12sp"
-                    android:layout_marginTop="4dp" />
+                    android:orientation="horizontal"
+                    android:layout_marginTop="6dp">
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnCalibration"
+                        style="@style/Widget.MaterialComponents.Button.TextButton"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="自动校准"
+                        android:textSize="12sp"
+                        android:minWidth="0dp"
+                        android:minHeight="0dp"
+                        android:paddingVertical="4dp" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnPlaceManager"
+                        style="@style/Widget.MaterialComponents.Button.TextButton"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="同音字词库"
+                        android:textSize="12sp"
+                        android:minWidth="0dp"
+                        android:minHeight="0dp"
+                        android:paddingVertical="4dp" />
+                </LinearLayout>
 
                 <View
                     android:layout_width="match_parent"
                     android:layout_height="1dp"
                     android:background="#E4E3DD"
-                    android:layout_marginTop="10dp"
-                    android:layout_marginBottom="8dp" />
+                    android:layout_marginTop="8dp"
+                    android:layout_marginBottom="6dp" />
 
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="手动调节（高级）"
-                    android:textSize="12sp"
-                    android:textColor="#6B7280" />
+                    android:text="手动调节"
+                    android:textSize="11sp"
+                    android:textColor="#6B7280"
+                    android:textStyle="bold" />
 
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="horizontal"
                     android:gravity="center_vertical"
-                    android:layout_marginTop="6dp">
+                    android:layout_marginTop="4dp">
 
                     <TextView
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
                         android:text="检测阈值 threshold"
-                        android:textSize="13sp" />
+                        android:textSize="12sp" />
 
                     <TextView
                         android:id="@+id/tvThresholdValue"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="0.008"
-                        android:textSize="13sp"
+                        android:textSize="12sp"
                         android:textStyle="bold"
                         android:textColor="#1A73E8" />
                 </LinearLayout>
@@ -429,35 +481,28 @@
                     android:layout_height="wrap_content"
                     android:max="99"
                     android:progress="7"
-                    android:layout_marginTop="2dp" />
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="范围：0.001（灵敏）~ 0.10（保守），步长 0.001"
-                    android:textSize="10sp"
-                    android:textColor="#6B7280" />
+                    android:layout_marginTop="0dp" />
 
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="horizontal"
                     android:gravity="center_vertical"
-                    android:layout_marginTop="10dp">
+                    android:layout_marginTop="4dp">
 
                     <TextView
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
                         android:text="音频增益 gain"
-                        android:textSize="13sp" />
+                        android:textSize="12sp" />
 
                     <TextView
                         android:id="@+id/tvGainValue"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="4.5x"
-                        android:textSize="13sp"
+                        android:textSize="12sp"
                         android:textStyle="bold"
                         android:textColor="#1A73E8" />
                 </LinearLayout>
@@ -468,29 +513,25 @@
                     android:layout_height="wrap_content"
                     android:max="45"
                     android:progress="35"
-                    android:layout_marginTop="2dp" />
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="范围：1.0x ~ 5.5x，步长 0.1x"
-                    android:textSize="10sp"
-                    android:textColor="#6B7280" />
+                    android:layout_marginTop="0dp" />
 
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="horizontal"
-                    android:layout_marginTop="10dp">
+                    android:layout_marginTop="8dp">
 
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/btnApplyManual"
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
-                        android:text="应用手动参数"
-                        android:textSize="13sp"
-                        android:layout_marginEnd="6dp" />
+                        android:text="应用参数"
+                        android:textSize="12sp"
+                        android:layout_marginEnd="6dp"
+                        android:minWidth="0dp"
+                        android:minHeight="0dp"
+                        android:paddingVertical="6dp" />
 
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/btnResetManual"
@@ -499,67 +540,19 @@
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
                         android:text="恢复默认"
-                        android:textSize="13sp" />
+                        android:textSize="12sp"
+                        android:minWidth="0dp"
+                        android:minHeight="0dp"
+                        android:paddingVertical="6dp" />
                 </LinearLayout>
 
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="✅ 参数立即生效，无需重启服务或APP"
-                    android:textSize="11sp"
+                    android:text="✅ 参数立即生效，无需重启"
+                    android:textSize="10sp"
                     android:textColor="#2E7D32"
-                    android:layout_marginTop="8dp" />
-
-                <View
-                    android:layout_width="match_parent"
-                    android:layout_height="1dp"
-                    android:background="#E4E3DD"
-                    android:layout_marginTop="12dp"
-                    android:layout_marginBottom="8dp" />
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="调节建议"
-                    android:textSize="11sp"
-                    android:textColor="#6B7280"
-                    android:textStyle="bold" />
-
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="• threshold（检测阈值）：越低越容易唤醒，但误唤醒风险增加；越高越保守，需更大声音。建议范围 0.002 ~ 0.02"
-                    android:textSize="11sp"
-                    android:textColor="#6B7280"
-                    android:layout_marginTop="4dp"
-                    android:lineSpacingMultiplier="1.3" />
-
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="• gain（音频增益）：放大麦克风音量，同时作用于唤醒和指令识别。小声说话难唤醒时可调高。建议范围 3.5x ~ 5.0x"
-                    android:textSize="11sp"
-                    android:textColor="#6B7280"
-                    android:layout_marginTop="4dp"
-                    android:lineSpacingMultiplier="1.3" />
-
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="• 注意：gain > 5x 可能导致音频削波失真，反而降低识别率；背景噪音大时高增益会同时放大噪音。"
-                    android:textSize="11sp"
-                    android:textColor="#E65100"
-                    android:layout_marginTop="4dp"
-                    android:lineSpacingMultiplier="1.3" />
-
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="• 推荐组合：车机环境嘈杂建议 threshold=0.03 ~ 0.06, gain=2.8x ~ 3.5x；安静环境可降低 gain 到 3.5x 减少误唤醒。"
-                    android:textSize="11sp"
-                    android:textColor="#1565C0"
-                    android:layout_marginTop="4dp"
-                    android:lineSpacingMultiplier="1.3" />
+                    android:layout_marginTop="6dp" />
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
@@ -572,28 +565,28 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
-                android:padding="14dp">
+                android:padding="10dp">
 
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="运行日志"
-                    android:textSize="12sp"
+                    android:textSize="11sp"
                     android:textColor="#6B7280" />
 
                 <ScrollView
                     android:id="@+id/scrollLog"
                     android:layout_width="match_parent"
-                    android:layout_height="220dp"
-                    android:layout_marginTop="8dp"
+                    android:layout_height="160dp"
+                    android:layout_marginTop="6dp"
                     android:background="#F4F5F7"
-                    android:padding="8dp">
+                    android:padding="6dp">
 
                     <TextView
                         android:id="@+id/tvLog"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:textSize="12sp"
+                        android:textSize="11sp"
                         android:typeface="monospace"
                         android:textColor="#1A1B1C" />
                 </ScrollView>

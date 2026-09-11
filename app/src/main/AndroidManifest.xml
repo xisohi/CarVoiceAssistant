@@ -60,6 +60,12 @@
             android:exported="false"
             android:label="唤醒灵敏度校准" />
 
+        <activity
+            android:name=".PlaceManagerActivity"
+            android:exported="false"
+            android:label="同音字词库"
+            android:windowSoftInputMode="stateVisible|adjustResize" />
+
         <!-- 常驻语音服务：API 34+ 需要 microphone 前台服务类型 -->
         <service
             android:name=".core.VoiceAssistantService"

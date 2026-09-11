@@ -131,6 +131,11 @@ class MainActivity : AppCompatActivity() {
         binding.btnCalibration.setOnClickListener {
             startActivity(android.content.Intent(this, CalibrationActivity::class.java))
         }
+
+        // 地名管理按钮：打开地名管理页面
+        binding.btnPlaceManager.setOnClickListener {
+            startActivity(android.content.Intent(this, PlaceManagerActivity::class.java))
+        }
         // 初始化灵敏度显示（如果有手动参数，显示手动；否则显示当前引擎参数）
         val savedThreshold = prefs.getFloat(KEY_MANUAL_THRESHOLD, -1f)
         val savedGain = prefs.getFloat(KEY_MANUAL_GAIN, -1f)

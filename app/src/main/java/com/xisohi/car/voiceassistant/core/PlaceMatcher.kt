@@ -32,29 +32,99 @@ class PlaceMatcher(context: Context) {
     // 0.7 表示允许约 30% 的字符差异（如"牛为春" vs "牛圩村"，拼音差异很小）
     private val similarityThreshold = 0.70f
 
+    // 内置地名集合（用于判断是否可删除）
+    private val builtinNames = mutableSetOf<String>()
+    private var appContext: Context? = null
+
     init {
+        appContext = context
         loadPlaces(context)
     }
 
     /**
-     * 从 assets/places.json 加载地名词库
+     * 加载地名词库：先加载内置词库，再加载外部自定义词库（追加/覆盖）
+     *
+     * 外部自定义词库路径：/sdcard/Android/data/com.xisohi.car.voiceassistant/files/places_custom.json
+     * 用户可以直接编辑该文件添加地名，不需要重新打包 APK
      */
     private fun loadPlaces(context: Context) {
+        // 1. 加载内置词库（assets/places.json）
+        var builtinCount = 0
         try {
             val json = context.assets.open("places.json").bufferedReader().use { it.readText() }
-            val array = JSONArray(json)
-            for (i in 0 until array.length()) {
-                val obj = array.getJSONObject(i)
-                val name = obj.getString("name")
-                val pinyin = obj.optString("pinyin", "").ifEmpty {
-                    // 如果 JSON 中没预计算拼音，运行时转换
-                    toPinyin(name)
-                }
-                places.add(Place(name, pinyin))
-            }
-            android.util.Log.d("PlaceMatcher", "已加载 ${places.size} 个地名")
+            builtinCount = parseAndAddPlaces(json)
+            // 记录内置地名（用于判断是否可删除）
+            builtinNames.addAll(places.map { it.name })
+            android.util.Log.d("PlaceMatcher", "内置词库加载: $builtinCount 个地名")
         } catch (e: Exception) {
-            android.util.Log.w("PlaceMatcher", "加载地名词库失败: ${e.message}")
+            android.util.Log.w("PlaceMatcher", "内置词库加载失败: ${e.message}")
+        }
+
+        // 2. 加载外部自定义词库（/sdcard/Android/data/<pkg>/files/places_custom.json）
+        var customCount = 0
+        try {
+            val externalDir = context.getExternalFilesDir(null)
+            if (externalDir != null) {
+                val customFile = java.io.File(externalDir, "places_custom.json")
+                if (customFile.exists()) {
+                    val json = customFile.readText()
+                    customCount = parseAndAddPlaces(json, override = true)
+                    android.util.Log.d("PlaceMatcher", "自定义词库加载: $customCount 个地名（来自 ${customFile.absolutePath}）")
+                } else {
+                    // 外部文件不存在，创建示例文件，方便用户编辑
+                    createSampleCustomFile(customFile)
+                    android.util.Log.d("PlaceMatcher", "已创建自定义词库示例: ${customFile.absolutePath}")
+                }
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("PlaceMatcher", "自定义词库加载失败: ${e.message}")
+        }
+
+        android.util.Log.d("PlaceMatcher", "地名总数: ${places.size}（内置 $builtinCount + 自定义 $customCount）")
+    }
+
+    /**
+     * 解析 JSON 并添加到词库
+     * @param override true=同名地名覆盖已有，false=跳过
+     * @return 实际添加的数量
+     */
+    private fun parseAndAddPlaces(json: String, override: Boolean = false): Int {
+        val array = JSONArray(json)
+        var added = 0
+        for (i in 0 until array.length()) {
+            val obj = array.getJSONObject(i)
+            val name = obj.getString("name")
+            val pinyin = obj.optString("pinyin", "").ifEmpty {
+                toPinyin(name)
+            }
+            if (override) {
+                // 覆盖模式：先移除同名，再添加
+                places.removeAll { it.name == name }
+                places.add(Place(name, pinyin))
+                added++
+            } else {
+                // 追加模式：跳过同名
+                if (places.none { it.name == name }) {
+                    places.add(Place(name, pinyin))
+                    added++
+                }
+            }
+        }
+        return added
+    }
+
+    /**
+     * 创建自定义词库示例文件
+     */
+    private fun createSampleCustomFile(file: java.io.File) {
+        try {
+            val sample = """[
+  {"name": "示例小区", "pinyin": "shilixiaoqu"},
+  {"name": "示例公司", "pinyin": "shiligongsi"}
+]"""
+            file.writeText(sample)
+        } catch (e: Exception) {
+            android.util.Log.w("PlaceMatcher", "创建示例文件失败: ${e.message}")
         }
     }
 
@@ -131,6 +201,69 @@ class PlaceMatcher(context: Context) {
             null
         }
     }
+
+    // ========== 地名管理方法（供设置页调用） ==========
+
+    /** 获取所有地名（内置+自定义） */
+    fun getAllPlaces(): List<Place> = places.toList()
+
+    /** 判断是否为内置地名（内置的不能删除） */
+    fun isBuiltin(name: String): Boolean {
+        return builtinNames.contains(name)
+    }
+
+    /**
+     * 添加地名到自定义词库
+     * @return true=添加成功，false=已存在或失败
+     */
+    fun addPlace(name: String, pinyin: String = ""): Boolean {
+        if (name.isBlank()) return false
+        if (places.any { it.name == name }) return false
+        val py = pinyin.ifEmpty { toPinyin(name) }
+        places.add(Place(name, py))
+        saveCustomPlaces()
+        android.util.Log.d("PlaceMatcher", "添加地名: $name ($py)")
+        return true
+    }
+
+    /**
+     * 删除自定义地名（内置地名不能删）
+     * @return true=删除成功，false=是内置地名或不存在
+     */
+    fun removePlace(name: String): Boolean {
+        if (isBuiltin(name)) {
+            android.util.Log.w("PlaceMatcher", "内置地名不能删除: $name")
+            return false
+        }
+        val removed = places.removeAll { it.name == name }
+        if (removed) {
+            saveCustomPlaces()
+            android.util.Log.d("PlaceMatcher", "删除地名: $name")
+        }
+        return removed
+    }
+
+    /** 保存自定义词库到外部文件 */
+    private fun saveCustomPlaces() {
+        try {
+            val externalDir = appContext?.getExternalFilesDir(null) ?: return
+            val customFile = java.io.File(externalDir, "places_custom.json")
+            val customPlaces = places.filter { !builtinNames.contains(it.name) }
+            val array = org.json.JSONArray()
+            for (p in customPlaces) {
+                val obj = org.json.JSONObject()
+                obj.put("name", p.name)
+                obj.put("pinyin", p.pinyin)
+                array.put(obj)
+            }
+            customFile.writeText(array.toString(2))
+            android.util.Log.d("PlaceMatcher", "已保存 ${customPlaces.size} 个自定义地名")
+        } catch (e: Exception) {
+            android.util.Log.w("PlaceMatcher", "保存自定义词库失败: ${e.message}")
+        }
+    }
+
+    // 内置地名集合（用于判断是否可删除）
 
     /**
      * 计算两个字符串的相似度（基于编辑距离/Levenshtein）
