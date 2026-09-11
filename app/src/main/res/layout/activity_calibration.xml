@@ -9,13 +9,13 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:padding="16dp">
+        android:padding="8dp">
 
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="唤醒灵敏度自动校准"
-            android:textSize="22sp"
+            android:textSize="16sp"
             android:textStyle="bold"
             android:textColor="#1A1B1C" />
 
@@ -23,16 +23,16 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="四步测试后自动计算最佳参数"
-            android:textSize="13sp"
+            android:textSize="11sp"
             android:textColor="#6B7280"
-            android:layout_marginTop="2dp"
-            android:layout_marginBottom="12dp" />
+            android:layout_marginBottom="6dp" />
 
         <!-- 当前参数提示 -->
         <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="12dp"
+            android:layout_marginBottom="6dp"
+            app:cardCornerRadius="6dp"
             app:cardBackgroundColor="#FFF8E1"
             app:strokeColor="#FFB300"
             app:strokeWidth="1dp">
@@ -41,7 +41,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
-                android:padding="12dp">
+                android:padding="6dp">
 
                 <LinearLayout
                     android:layout_width="match_parent"
@@ -54,7 +54,7 @@
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
                         android:text="⚠️ 测试前请确认参数"
-                        android:textSize="13sp"
+                        android:textSize="12sp"
                         android:textStyle="bold"
                         android:textColor="#E65100" />
 
@@ -62,10 +62,13 @@
                         android:id="@+id/btnResetParams"
                         style="@style/Widget.MaterialComponents.Button.TextButton"
                         android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
+                        android:layout_height="28dp"
                         android:text="重置为默认"
-                        android:textSize="11sp"
-                        android:minHeight="36dp" />
+                        android:textSize="10sp"
+                        android:minWidth="0dp"
+                        android:minHeight="0dp"
+                        android:paddingHorizontal="6dp"
+                        android:paddingVertical="0dp" />
                 </LinearLayout>
 
                 <TextView
@@ -73,10 +76,10 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:text=""
-                    android:textSize="12sp"
+                    android:textSize="11sp"
                     android:textColor="#E65100"
-                    android:layout_marginTop="4dp"
-                    android:lineSpacingExtra="2dp" />
+                    android:layout_marginTop="2dp"
+                    android:lineSpacingExtra="1dp" />
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
@@ -84,20 +87,21 @@
         <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="12dp">
+            android:layout_marginBottom="6dp"
+            app:cardCornerRadius="6dp">
 
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
-                android:padding="14dp">
+                android:padding="8dp">
 
                 <TextView
                     android:id="@+id/tvStep"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="第1步/共4步"
-                    android:textSize="18sp"
+                    android:textSize="14sp"
                     android:textStyle="bold" />
 
                 <TextView
@@ -105,9 +109,9 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:text=""
-                    android:textSize="14sp"
-                    android:layout_marginTop="8dp"
-                    android:lineSpacingExtra="4dp" />
+                    android:textSize="12sp"
+                    android:layout_marginTop="4dp"
+                    android:lineSpacingExtra="2dp" />
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
@@ -115,28 +119,29 @@
         <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="12dp">
+            android:layout_marginBottom="6dp"
+            app:cardCornerRadius="6dp">
 
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
-                android:padding="14dp">
+                android:padding="8dp">
 
                 <TextView
                     android:id="@+id/tvProgress"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="准备开始"
-                    android:textSize="16sp"
+                    android:textSize="13sp"
                     android:textStyle="bold" />
 
                 <ProgressBar
                     android:id="@+id/progressBar"
                     style="?android:attr/progressBarStyleHorizontal"
                     android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
+                    android:layout_height="4dp"
+                    android:layout_marginTop="4dp"
                     android:max="100"
                     android:progress="0" />
 
@@ -145,9 +150,9 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="实时数据：等待开始"
-                    android:textSize="12sp"
+                    android:textSize="10sp"
                     android:textColor="#6B7280"
-                    android:layout_marginTop="8dp"
+                    android:layout_marginTop="4dp"
                     android:typeface="monospace" />
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
@@ -161,28 +166,36 @@
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnStart"
                 android:layout_width="0dp"
-                android:layout_height="wrap_content"
+                android:layout_height="36dp"
                 android:layout_weight="1"
                 android:text="开始测试"
-                android:layout_marginEnd="8dp" />
+                android:textSize="12sp"
+                android:layout_marginEnd="4dp"
+                android:minWidth="0dp"
+                android:minHeight="0dp"
+                android:paddingVertical="0dp" />
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnNext"
                 style="@style/Widget.MaterialComponents.Button.OutlinedButton"
                 android:layout_width="0dp"
-                android:layout_height="wrap_content"
+                android:layout_height="36dp"
                 android:layout_weight="1"
                 android:text="下一步"
-                android:enabled="false" />
+                android:textSize="12sp"
+                android:enabled="false"
+                android:minWidth="0dp"
+                android:minHeight="0dp"
+                android:paddingVertical="0dp" />
         </LinearLayout>
 
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="提示：校准过程中请确保语音助手服务正在运行。校准完成后需要重启服务使参数完全生效。"
-            android:textSize="11sp"
+            android:textSize="10sp"
             android:textColor="#6B7280"
-            android:layout_marginTop="12dp" />
+            android:layout_marginTop="6dp" />
 
     </LinearLayout>
 </ScrollView>
