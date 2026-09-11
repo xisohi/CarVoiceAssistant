@@ -140,7 +140,7 @@ class MainActivity : AppCompatActivity() {
         val savedThreshold = prefs.getFloat(KEY_MANUAL_THRESHOLD, -1f)
         val savedGain = prefs.getFloat(KEY_MANUAL_GAIN, -1f)
         if (savedThreshold > 0 && savedGain > 0) {
-            binding.tvSensitivityDesc.text = "当前：手动（增益${String.format("%.1f", savedGain)}x，阈值${String.format("%.2f", savedThreshold)}）"
+            binding.tvSensitivityDesc.text = "当前：（增益${String.format("%.1f", savedGain)}x，阈值${String.format("%.2f", savedThreshold)}）"
             // 有手动参数时，不高亮任何预设按钮
             binding.btnSensLow.isEnabled = true
             binding.btnSensMedium.isEnabled = true
