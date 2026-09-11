@@ -1,7 +1,6 @@
 package com.xisohi.car.voiceassistant.core
 
 import android.Manifest
-import android.app.Activity
 import android.bluetooth.BluetoothAdapter
 import android.content.Context
 import android.content.Intent
@@ -12,7 +11,6 @@ import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
-import android.text.TextUtils
 import android.content.ClipData
 import android.content.ClipboardManager
 import androidx.core.content.ContextCompat

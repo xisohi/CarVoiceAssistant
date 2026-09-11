@@ -20,7 +20,7 @@ class BootReceiver : BroadcastReceiver() {
         private const val PREFS_NAME = "voice_assistant_prefs"
         private const val KEY_AUTO_START = "auto_start_on_boot"
         private const val ACTION_ALARM_TRIGGER = "com.xisohi.car.voiceassistant.ACTION_ALARM_TRIGGER"
-        private const val ALARM_INTERVAL_MS = 5 * 60 * 1000L  // 5分钟检查一次
+        private const val ALARM_INTERVAL_MS = 15 * 60 * 1000L  // 15分钟检查一次（Android 6.0+ Doze模式下最小间隔约9分钟，15分钟符合系统限制）
         private const val MAX_RETRY_COUNT = 3  // 最大重试次数
 
         /**
@@ -39,7 +39,7 @@ class BootReceiver : BroadcastReceiver() {
                     PendingIntent.FLAG_UPDATE_CURRENT
                 }
                 val pendingIntent = PendingIntent.getBroadcast(context, 0, intent, flags)
-                // 设置为不精确的重复闹钟，每5分钟触发一次
+                // 设置为不精确的重复闹钟，每15分钟触发一次（符合 Android 6.0+ Doze 模式限制）
                 alarmManager.setInexactRepeating(
                     AlarmManager.ELAPSED_REALTIME_WAKEUP,
                     SystemClock.elapsedRealtime() + ALARM_INTERVAL_MS,

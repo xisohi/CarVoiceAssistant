@@ -33,56 +33,6 @@ class VoiceAssistantService : Service() {
 
     enum class State { IDLE, LISTENING, PROCESSING, SPEAKING }
 
-    /**
-     * Vosk Grammar 词表：限定识别域，大幅提升小模型识别准确率
-     * 包含车控场景所有常用词汇，模型只需在这些词中匹配，无需猜测所有中文
-     */
-    private val GRAMMAR_WORDS = listOf(
-        // ===== 唤醒/对话常用词 =====
-        "小娜", "你好", "谢谢", "好的", "可以", "不行", "不要", "是", "不是", "对", "错",
-        "嗯", "啊", "的", "了", "在", "有", "和", "与", "到", "去", "来", "把", "让", "给", "为", "对", "从", "以", "用",
-        "我", "你", "他", "她", "它", "我们", "你们", "他们", "这个", "那个", "什么", "怎么", "如何", "为什么", "哪", "哪里",
-        // ===== 音乐控制 =====
-        "播放", "暂停", "停止", "上一首", "下一首", "上一曲", "下一曲", "换一首", "换一曲", "切歌",
-        "放", "唱", "听", "歌", "音乐", "歌曲", "放歌", "播歌", "唱歌", "放音乐", "打开音乐", "来一首", "我想听", "唱一首", "放一首",
-        "继续", "别放了", "停一下", "停下", "先别放", "大一点", "大声点", "声音大", "小一点", "小声点", "声音小",
-        "第一首", "第二首", "第三首", "第四首", "第五首", "第六首", "第七首", "第八首", "第九首", "第十首",
-        // ===== 音量控制 =====
-        "音量", "调大", "加大", "提高", "调小", "减小", "降低", "静音", "关掉", "关闭", "声音",
-        "调到", "设为", "设置为", "调成", "改成", "调整到", "百分之", "把",
-        // ===== 数字（0-100） =====
-        "零", "一", "二", "三", "四", "五", "六", "七", "八", "九", "十",
-        "十一", "十二", "十三", "十四", "十五", "十六", "十七", "十八", "十九",
-        "二十", "二十一", "二十二", "二十三", "二十四", "二十五", "二十六", "二十七", "二十八", "二十九",
-        "三十", "三十一", "三十二", "三十三", "三十四", "三十五", "三十六", "三十七", "三十八", "三十九",
-        "四十", "四十一", "四十二", "四十三", "四十四", "四十五", "四十六", "四十七", "四十八", "四十九",
-        "五十", "五十一", "五十二", "五十三", "五十四", "五十五", "五十六", "五十七", "五十八", "五十九",
-        "六十", "六十一", "六十二", "六十三", "六十四", "六十五", "六十六", "六十七", "六十八", "六十九",
-        "七十", "七十一", "七十二", "七十三", "七十四", "七十五", "七十六", "七十七", "七十八", "七十九",
-        "八十", "八十一", "八十二", "八十三", "八十四", "八十五", "八十六", "八十七", "八十八", "八十九",
-        "九十", "九十一", "九十二", "九十三", "九十四", "九十五", "九十六", "九十七", "九十八", "九十九",
-        "一百", "两", "半", "点",
-        // ===== 导航 =====
-        "导航", "去", "前往", "路线", "地图", "高德", "百度", "导",
-        "公司", "家", "机场", "火车站", "汽车站", "高铁站", "医院", "学校", "商场", "超市", "公园", "广场",
-        "酒店", "餐厅", "银行", "邮局", "加油站", "停车场", "万达", "万象城", "大悦城", "银泰", "华联", "沃尔玛", "家乐福",
-        "牛圩村", "牛围村",  // 牛圩村（同音字牛围村也加进去，后面会做纠正）
-        "北京", "上海", "广州", "深圳", "杭州", "南京", "成都", "重庆", "武汉", "西安", "苏州", "天津",
-        // ===== 空调/气候 =====
-        "空调", "打开", "开启", "开", "关闭", "关", "关掉", "温度", "风速", "冷", "热", "暖", "凉", "制冷", "制热",
-        "度", "调到", "设定为", "设为", "高", "低", "中", "自动",
-        // ===== 车窗/天窗 =====
-        "车窗", "主驾驶", "副驾驶", "左后", "右后", "后排", "全部", "天窗", "窗户", "玻璃",
-        // ===== 其他设备 =====
-        "蓝牙", "WiFi", "wifi", "设置", "浏览器", "收音机", "电话", "座椅", "灯光", "雨刷", "后视镜", "大灯", "近光", "远光",
-        // ===== 应用名称 =====
-        "百度地图", "高德地图", "音乐", "设置", "蓝牙", "WiFi", "浏览器", "收音机",
-        // ===== 查询 =====
-        "几点", "时间", "天气", "预报", "今天", "功能", "帮助", "现在", "报时",
-        // ===== 结束/取消 =====
-        "退下", "算了", "没事", "结束", "退出", "助手", "关闭助手"
-    )
-
     companion object {
         const val ACTION_START = "com.xisohi.car.voiceassistant.action.START"
         const val ACTION_STOP = "com.xisohi.car.voiceassistant.action.STOP"
@@ -190,6 +140,10 @@ class VoiceAssistantService : Service() {
                 }
 
                 override fun onSpeakDone() {
+                    // 如果已经是 IDLE 且没有待处理标志，说明是重复回调，忽略
+                    if (currentState == State.IDLE && !isWakePromptSpeaking && !isRetryListening) {
+                        return
+                    }
                     // 如果是唤醒提示音（"在呢，您请说"）刚说完，开始录音识别用户指令
                     if (isWakePromptSpeaking) {
                         isWakePromptSpeaking = false
@@ -430,10 +384,8 @@ class VoiceAssistantService : Service() {
         // 停止唤醒监听
         stopWakeListening()
 
-        // 唤醒时先降低媒体音量（音乐、导航等），减少背景噪音
-        // 注意：TTS播报前会临时恢复音量，让用户听到提示音
-        muteMediaVolume()
-
+        // 注意：TTS播报前会恢复音量，让用户听到提示音
+        // （已删除开头的 muteMediaVolume()，因为后面马上 restoreMediaVolume()，中间无作用）
         if (ttsEngine.isReady) {
             // TTS 可用：用语音说"在呢，您请说"，更人性化
             // 恢复系统音量到原始值，TTS 播报时请求音频焦点，音乐自动降低（duck）
@@ -589,6 +541,7 @@ class VoiceAssistantService : Service() {
             var lastPartial = ""
             var silenceDuration = 0L  // 连续静音时长（ms）
             var hasSpeechStarted = false  // 用户是否已开口（开口前不累积静音，避免TTS刚说完就截断）
+            var speechFrameCount = 0  // 连续非静音帧数（连续3帧非静音才算开口，避免噪音波动误触发）
 
             var finalText = ""
             try {
@@ -607,10 +560,18 @@ class VoiceAssistantService : Service() {
                     // 使用自适应阈值（基于环境噪音动态计算）
                     val isSilence = rms < adaptiveSilenceThreshold
 
-                    // 检测到第一次有效语音后，标记用户已开口，之后才开始静音计时
-                    if (!hasSpeechStarted && !isSilence) {
-                        hasSpeechStarted = true
-                        android.util.Log.d("VoiceService", "检测到用户开口 (RMS=${rms.toInt()})")
+                    // 检测到连续3帧有效语音后，标记用户已开口，之后才开始静音计时
+                    // （连续3帧非静音才算开口，避免环境噪音波动（如路过大车）误触发）
+                    if (!hasSpeechStarted) {
+                        if (!isSilence) {
+                            speechFrameCount++
+                            if (speechFrameCount >= 3) {
+                                hasSpeechStarted = true
+                                android.util.Log.d("VoiceService", "检测到用户开口 (连续${speechFrameCount}帧非静音, RMS=${rms.toInt()})")
+                            }
+                        } else {
+                            speechFrameCount = 0  // 静音，重置计数
+                        }
                     }
 
                     // 转换为字节并喂给识别器
@@ -658,7 +619,7 @@ class VoiceAssistantService : Service() {
                 record.release()
                 recNoiseReducer.release()
                 try { recognizer.release() } catch (_: Exception) {}
-                recognitionJob = null
+                withContext(Dispatchers.Main) { recognitionJob = null }
             }
             withContext(Dispatchers.Main) { handleText(finalText) }
         }
@@ -736,13 +697,17 @@ class VoiceAssistantService : Service() {
             // TTS结束后保持原始音量值，不降到0
             restoreMediaVolume()
             FloatViewService.updateSubtitle(getString(R.string.subtitle_not_heard))
+            // 设置标志位：TTS说完后直接重新监听，不需要唤醒词（和没听懂分支一致，避免固定3秒延迟竞态）
+            isRetryListening = true
             ttsEngine.speak(getString(R.string.tts_not_heard))
-            mainHandler.postDelayed({
-                if (currentState != VoiceAssistantService.State.IDLE) {
-                    currentState = State.IDLE
-                    resumeWake()
-                }
-            }, 3000)
+            if (!ttsEngine.isReady) {
+                // TTS不可用时，直接重新监听
+                isRetryListening = false
+                android.util.Log.d("VoiceService", "TTS不可用，直接重新开始录音识别")
+                mainHandler.postDelayed({
+                    startRecognition()
+                }, 300)
+            }
             return
         }
 

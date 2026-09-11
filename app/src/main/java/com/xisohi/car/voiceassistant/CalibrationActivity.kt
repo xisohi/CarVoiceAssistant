@@ -10,7 +10,6 @@ import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.xisohi.car.voiceassistant.core.wakeword.WakeWordEngine
 import java.util.Locale
-import kotlin.math.ln
 
 /**
  * 唤醒灵敏度自动校准向导
@@ -151,8 +150,9 @@ class CalibrationActivity : AppCompatActivity() {
         // 三档配置：低(gain=3.5,threshold=0.02) / 中(gain=4.5,threshold=0.008) / 高(gain=5.5,threshold=0.001)
         // 极端值：超过高档范围（gain>5.5 或 threshold<0.001）
         val isExtreme = (gain > 5.5f || threshold < 0.001f)
-        // 推荐范围：围绕中档值，和下方推荐文本一致
-        val isRecommended = (threshold in 0.002f..0.01f && gain in 3.5f..5.0f)
+        // 推荐范围：gain 3.0~5.5（覆盖低/中/高三档，与 isExtreme>5.5 不重叠）
+        // threshold 0.002~0.05（与 calculatedThreshold.coerceIn 一致，覆盖低档 0.02）
+        val isRecommended = (threshold in 0.002f..0.05f && gain in 3.0f..5.5f)
 
         val statusText = when {
             isExtreme -> "⚠️ 当前参数较极端，可能影响校准准确性，建议重置为默认"
@@ -160,7 +160,7 @@ class CalibrationActivity : AppCompatActivity() {
             else -> "⚠️ 当前参数偏离推荐范围，建议重置为默认"
         }
 
-        tvCurrentParams.text = "当前：threshold=${String.format("%.2f", threshold)}, gain=${String.format("%.1f", gain)}x\n$statusText\n推荐：threshold=0.002~0.01, gain=3.5~5.0x（中档默认）"
+        tvCurrentParams.text = "当前：threshold=${String.format("%.3f", threshold)}, gain=${String.format("%.1f", gain)}x\n$statusText\n推荐：threshold=0.002~0.05, gain=3.0~5.5x（覆盖低/中/高三档）"
     }
 
     private fun showStep() {
@@ -276,7 +276,7 @@ class CalibrationActivity : AppCompatActivity() {
         val silentP95 = if (silentProbs.isNotEmpty()) percentile(silentProbs, 95f) else 0.08f
         val noiseMax = if (noiseProbs.isNotEmpty()) percentile(noiseProbs, 100f) else 0.10f
         calculatedThreshold = maxOf(silentP95 + 0.05f, noiseMax + 0.05f)
-        calculatedThreshold = calculatedThreshold.coerceIn(0.20f, 0.6f)
+        calculatedThreshold = calculatedThreshold.coerceIn(0.002f, 0.05f)
 
         // 计算增益
         val quietAvg = if (quietProbs.isNotEmpty()) quietProbs.average().toFloat() else 0.3f
@@ -293,9 +293,10 @@ class CalibrationActivity : AppCompatActivity() {
         } else {
             // 需要增大增益，按 prob 比值估算（粗略，因为sigmoid非线性）
             val ratio = targetProb / quietMin.coerceAtLeast(0.01f)
-            (currentGain * ratio).coerceAtMost(3.5f)
+            currentGain * ratio
         }
-        calculatedGain = calculatedGain.coerceIn(1.0f, 3.5f)
+        // 统一限制在 3.0~6.0 范围（覆盖低档3.5到高档5.5）
+        calculatedGain = calculatedGain.coerceIn(3.0f, 6.0f)
 
         val normalMin = percentile(normalProbs, 0f)
 
@@ -309,7 +310,7 @@ class CalibrationActivity : AppCompatActivity() {
             
             推荐参数：
             ─────────────────
-            检测阈值 threshold = ${String.format("%.2f", calculatedThreshold)}
+            检测阈值 threshold = ${String.format("%.3f", calculatedThreshold)}
             音频增益 gain = ${String.format("%.1f", calculatedGain)}x
             
             说明：
@@ -353,8 +354,4 @@ class CalibrationActivity : AppCompatActivity() {
         return sorted[idx]
     }
 
-    private fun probToLogit(prob: Float): Float {
-        val p = prob.coerceIn(0.001f, 0.999f)
-        return ln(p / (1 - p))
-    }
 }
