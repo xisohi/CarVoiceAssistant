@@ -105,6 +105,7 @@ class VoiceAssistantService : Service() {
     private var isRetryListening = false
     private lateinit var skillExecutor: SkillExecutor
     private lateinit var ttsEngine: TtsEngine
+    private lateinit var placeMatcher: PlaceMatcher  // 地名模糊匹配器（导航同音字纠正）
 
     private var recognitionJob: Job? = null
     // 小模型加载快（<1秒），不需要预加载，每次识别时直接创建即可
@@ -133,6 +134,7 @@ class VoiceAssistantService : Service() {
 
         intentParser = IntentParser(this)
         skillExecutor = SkillExecutor(this)
+        placeMatcher = PlaceMatcher(this)
         ttsEngine = TtsEngine(this).apply {
             listener = object : TtsEngine.Listener {
                 override fun onSpeakStart() {
@@ -711,7 +713,27 @@ class VoiceAssistantService : Service() {
             return
         }
 
-        val intent = intentParser.parse(correctedText)
+        val rawIntent = intentParser.parse(correctedText)
+        // 导航意图的地名同音字纠正：如果是 nav.to，对 dest 参数做拼音模糊匹配
+        val intent = if (rawIntent != null && rawIntent.action == "nav.to") {
+            val dest = rawIntent.params["dest"]
+            if (dest != null) {
+                val matchedDest = placeMatcher.match(dest)
+                if (matchedDest != null && matchedDest != dest) {
+                    android.util.Log.d("VoiceService", "地名匹配: '$dest' -> '$matchedDest'")
+                    // 创建新的 VoiceIntent，替换 dest 参数
+                    val newParams = rawIntent.params.toMutableMap()
+                    newParams["dest"] = matchedDest
+                    VoiceIntent(rawIntent.id, rawIntent.action, newParams)
+                } else {
+                    rawIntent
+                }
+            } else {
+                rawIntent
+            }
+        } else {
+            rawIntent
+        }
         if (intent == null) {
             // 没听懂：恢复系统音量到原始值，TTS 播报时请求音频焦点，音乐自动降低
             // TTS结束后保持原始音量值，不降到0

@@ -135,4 +135,7 @@ dependencies {
 
     // JNA（Java Native Access）：用于直接调用 RNNoise 原生降噪库，无需自己编译 JNI
     implementation("net.java.dev.jna:jna:5.14.0@aar")
+
+    // pinyin4j：中文转拼音库（Maven Central，无需 JitPack，用于地名同音字模糊匹配）
+    implementation("com.belerweb:pinyin4j:2.5.1")
 }
