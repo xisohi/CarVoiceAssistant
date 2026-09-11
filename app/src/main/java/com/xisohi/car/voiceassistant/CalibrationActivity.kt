@@ -296,7 +296,7 @@ class CalibrationActivity : AppCompatActivity() {
             currentGain * ratio
         }
         // 统一限制在 3.0~6.0 范围（覆盖低档3.5到高档5.5）
-        calculatedGain = calculatedGain.coerceIn(3.0f, 6.0f)
+        calculatedGain = calculatedGain.coerceIn(3.0f, 5.5f)
 
         val normalMin = percentile(normalProbs, 0f)
 
