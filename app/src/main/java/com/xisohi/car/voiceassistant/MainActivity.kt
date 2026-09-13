@@ -15,6 +15,7 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import com.xisohi.car.voiceassistant.core.LogUtils
 import com.xisohi.car.voiceassistant.core.VoiceAssistantService
 import com.xisohi.car.voiceassistant.core.wakeword.WakeWordEngine
 import com.xisohi.car.voiceassistant.databinding.ActivityMainBinding
@@ -67,6 +68,9 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
+        // 初始化文件日志系统
+        LogUtils.init(this)
+
         // 返回后台运行按钮：只关闭页面，不停止服务
         binding.btnBackground.setOnClickListener {
             toast(getString(R.string.toast_running_in_background))
@@ -84,7 +88,7 @@ class MainActivity : AppCompatActivity() {
 
         // 设置 AlarmManager 兜底闹钟：即使开机广播收不到，闹钟也会定期检查服务是否在运行
         // 这是针对鼎微/全志车机系统的重要兜底机制
-        BootReceiver.scheduleAlarmCheck(this)
+        BootReceiver.scheduleAutoStartCheck(this)
 
         binding.btnDownload.setOnClickListener { startDownload() }
 
@@ -135,6 +139,10 @@ class MainActivity : AppCompatActivity() {
         // 地名管理按钮：打开地名管理页面
         binding.btnPlaceManager.setOnClickListener {
             startActivity(android.content.Intent(this, PlaceManagerActivity::class.java))
+        }
+
+        binding.btnLogViewer.setOnClickListener {
+            startActivity(android.content.Intent(this, LogViewerActivity::class.java))
         }
         // 初始化灵敏度显示（如果有手动参数，显示手动；否则显示当前引擎参数）
         val savedThreshold = prefs.getFloat(KEY_MANUAL_THRESHOLD, -1f)

@@ -11,6 +11,7 @@ import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
 import com.xisohi.car.voiceassistant.core.FloatViewService
+import com.xisohi.car.voiceassistant.core.LogUtils
 import com.xisohi.car.voiceassistant.core.VoiceAssistantService
 
 class BootReceiver : BroadcastReceiver() {
@@ -24,38 +25,27 @@ class BootReceiver : BroadcastReceiver() {
         private const val MAX_RETRY_COUNT = 3  // 最大重试次数
 
         /**
-         * 设置 AlarmManager 兜底闹钟：即使开机广播收不到，闹钟也会定期触发自启动检查
-         * 在应用启动时调用一次即可
+         * 设置 WorkManager 周期性自启动检查
+         *
+         * 使用 WorkManager 而不是 AlarmManager 的原因：
+         * - WorkManager 任务持久化，设备重启后自动恢复，不需要重新设置
+         * - 不依赖开机广播（BOOT_COMPLETED），即使系统限制了开机广播也能正常工作
+         * - 系统级优化，更省电，兼容 Doze 模式
+         *
+         * 在应用启动时调用一次即可，任务会持久化，重启后自动恢复
          */
-        fun scheduleAlarmCheck(context: Context) {
-            try {
-                val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-                val intent = Intent(context, BootReceiver::class.java).apply {
-                    action = ACTION_ALARM_TRIGGER
-                }
-                val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-                } else {
-                    PendingIntent.FLAG_UPDATE_CURRENT
-                }
-                val pendingIntent = PendingIntent.getBroadcast(context, 0, intent, flags)
-                // 设置为不精确的重复闹钟，每15分钟触发一次（符合 Android 6.0+ Doze 模式限制）
-                alarmManager.setInexactRepeating(
-                    AlarmManager.ELAPSED_REALTIME_WAKEUP,
-                    SystemClock.elapsedRealtime() + ALARM_INTERVAL_MS,
-                    ALARM_INTERVAL_MS,
-                    pendingIntent
-                )
-                Log.d(TAG, "AlarmManager 兜底闹钟已设置，每${ALARM_INTERVAL_MS / 60000}分钟检查一次")
-            } catch (e: Exception) {
-                Log.w(TAG, "设置 AlarmManager 失败: ${e.message}")
-            }
+        fun scheduleAutoStartCheck(context: Context) {
+            com.xisohi.car.voiceassistant.core.AutoStartWorker.schedule(context)
         }
     }
 
     override fun onReceive(context: Context, intent: Intent) {
+        // 初始化文件日志（如果还没初始化）
+        LogUtils.init(context)
         val action = intent.action
-        Log.d(TAG, "收到广播: $action")
+        // 记录收到的广播到文件（即使应用被杀，重新打开后也能看到）
+        LogUtils.logBroadcast(action)
+        LogUtils.d(TAG, "收到广播: $action")
 
         // 开机相关广播（直接触发）
         val bootActions = listOf(
@@ -90,18 +80,18 @@ class BootReceiver : BroadcastReceiver() {
         // 检查自启开关
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val autoStart = prefs.getBoolean(KEY_AUTO_START, true)
-        Log.d(TAG, "开机自启开关: $autoStart")
+        LogUtils.d(TAG, "开机自启开关: $autoStart")
         if (!autoStart) return
 
         // 如果服务已在运行，跳过
         if (VoiceAssistantService.isRunning) {
-            Log.d(TAG, "服务已在运行，检查悬浮窗...")
+            LogUtils.d(TAG, "服务已在运行，检查悬浮窗...")
             if (!FloatViewService.isRunning) {
                 try {
                     FloatViewService.start(context)
-                    Log.i(TAG, "补启动悬浮窗")
+                    LogUtils.i(TAG, "补启动悬浮窗")
                 } catch (e: Exception) {
-                    Log.w(TAG, "补启动悬浮窗失败: ${e.message}")
+                    LogUtils.w(TAG, "补启动悬浮窗失败: ${e.message}")
                 }
             }
             return
@@ -110,7 +100,7 @@ class BootReceiver : BroadcastReceiver() {
         // 开机广播：延迟启动，等待系统完全就绪（车机系统启动较慢）
         // 间接触发：立即启动
         val delayMs = if (isBootAction) 8000L else 0L
-        Log.d(TAG, "${if (isBootAction) "开机广播" else "间接触发"}，延迟${delayMs}ms后启动服务...")
+        LogUtils.d(TAG, "${if (isBootAction) "开机广播" else "间接触发"}，延迟${delayMs}ms后启动服务...")
 
         Handler(Looper.getMainLooper()).postDelayed({
             tryStartServices(context, 0)
@@ -118,39 +108,39 @@ class BootReceiver : BroadcastReceiver() {
     }
 
     private fun tryStartServices(context: Context, retryCount: Int) {
-        Log.d(TAG, "尝试启动服务（第${retryCount + 1}次）...")
+        LogUtils.d(TAG, "尝试启动服务（第${retryCount + 1}次）...")
         try {
             // 确保使用前台服务启动（安卓10要求）
             VoiceAssistantService.start(context)
-            Log.i(TAG, "已启动语音助手服务")
+            LogUtils.i(TAG, "已启动语音助手服务")
 
             // 延迟启动悬浮窗
             Handler(Looper.getMainLooper()).postDelayed({
                 try {
                     FloatViewService.start(context)
-                    Log.i(TAG, "已启动悬浮窗")
+                    LogUtils.i(TAG, "已启动悬浮窗")
                 } catch (e: Exception) {
-                    Log.w(TAG, "启动悬浮窗失败: ${e.message}")
+                    LogUtils.w(TAG, "启动悬浮窗失败: ${e.message}")
                 }
             }, 2000)
 
-            // 启动成功后，设置 AlarmManager 兜底闹钟（确保后续如果服务被杀死也能重启）
-            scheduleAlarmCheck(context)
+            // 启动成功后，设置 WorkManager 周期性检查（确保后续如果服务被杀死也能重启）
+            scheduleAutoStartCheck(context)
 
         } catch (e: Exception) {
-            Log.e(TAG, "自启失败: ${e.message}", e)
+            LogUtils.e(TAG, "自启失败: ${e.message}", e)
             // 重试机制：最多重试3次，每次间隔递增
             if (retryCount < MAX_RETRY_COUNT) {
                 val nextRetry = retryCount + 1
                 val retryDelay = (nextRetry * 5000L)  // 5秒、10秒、15秒
-                Log.d(TAG, "${retryDelay}ms后进行第${nextRetry + 1}次重试...")
+                LogUtils.d(TAG, "${retryDelay}ms后进行第${nextRetry + 1}次重试...")
                 Handler(Looper.getMainLooper()).postDelayed({
                     tryStartServices(context, nextRetry)
                 }, retryDelay)
             } else {
-                Log.e(TAG, "已达到最大重试次数($MAX_RETRY_COUNT)，放弃本次自启")
-                // 即使启动失败，也设置 AlarmManager 兜底，下次闹钟触发时再试
-                scheduleAlarmCheck(context)
+                LogUtils.e(TAG, "已达到最大重试次数($MAX_RETRY_COUNT)，放弃本次自启")
+                // 即使启动失败，也设置 WorkManager 兜底，下次任务触发时再试
+                scheduleAutoStartCheck(context)
             }
         }
     }

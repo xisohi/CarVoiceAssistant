@@ -441,6 +441,18 @@
                         android:minWidth="0dp"
                         android:minHeight="0dp"
                         android:paddingVertical="0dp" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnLogViewer"
+                        style="@style/Widget.MaterialComponents.Button.TextButton"
+                        android:layout_width="0dp"
+                        android:layout_height="28dp"
+                        android:layout_weight="1"
+                        android:text="查看日志"
+                        android:textSize="11sp"
+                        android:minWidth="0dp"
+                        android:minHeight="0dp"
+                        android:paddingVertical="0dp" />
                 </LinearLayout>
 
                 <View

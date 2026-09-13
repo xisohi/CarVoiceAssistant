@@ -65,6 +65,11 @@
             android:label="同音字词库"
             android:windowSoftInputMode="stateVisible|adjustResize" />
 
+        <activity
+            android:name=".LogViewerActivity"
+            android:exported="false"
+            android:label="日志查看" />
+
         <!-- 常驻语音服务：API 34+ 需要 microphone 前台服务类型 -->
         <service
             android:name=".core.VoiceAssistantService"

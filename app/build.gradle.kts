@@ -138,4 +138,7 @@ dependencies {
 
     // pinyin4j：中文转拼音库（Maven Central，无需 JitPack，用于地名同音字模糊匹配）
     implementation("com.belerweb:pinyin4j:2.5.1")
+
+    // WorkManager：周期性任务调度，重启后自动恢复，不依赖开机广播
+    implementation("androidx.work:work-runtime-ktx:2.9.0")
 }
