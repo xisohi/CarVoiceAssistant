@@ -191,24 +191,19 @@ class FloatViewService : Service() {
     }
 
     private fun updateBallState() {
-        val stateText = floatView.findViewById<TextView>(R.id.tvFloatState)
         val icon = floatView.findViewById<ImageView>(R.id.ivFloatIcon)
         when (VoiceAssistantService.currentState) {
             VoiceAssistantService.State.IDLE -> {
-                stateText?.text = getString(R.string.float_state_idle)
-                icon?.setColorFilter(getColor(R.color.float_idle))
+                icon?.setImageResource(R.drawable.robot_idle)  // 微笑：待机
             }
             VoiceAssistantService.State.LISTENING -> {
-                stateText?.text = getString(R.string.state_listening)
-                icon?.setColorFilter(getColor(R.color.float_listening))
+                icon?.setImageResource(R.drawable.robot_listen)  // 眨眼：聆听中
             }
             VoiceAssistantService.State.PROCESSING -> {
-                stateText?.text = getString(R.string.state_processing)
-                icon?.setColorFilter(getColor(R.color.float_processing))
+                icon?.setImageResource(R.drawable.robot_talk)  // 波浪嘴：处理中
             }
             VoiceAssistantService.State.SPEAKING -> {
-                stateText?.text = getString(R.string.state_speaking)
-                icon?.setColorFilter(getColor(R.color.float_speaking))
+                icon?.setImageResource(R.drawable.robot_talk)  // 波浪嘴：说话中
             }
         }
     }

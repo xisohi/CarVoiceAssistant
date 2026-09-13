@@ -3,38 +3,30 @@
     android:layout_width="wrap_content"
     android:layout_height="wrap_content"
     android:orientation="vertical"
-    android:gravity="center_horizontal"
-    android:background="@drawable/float_ball_bg"
-    android:padding="8dp">
+    android:gravity="center_horizontal">
 
+    <!-- 机器人卡通形象（根据状态切换表情） -->
     <ImageView
         android:id="@+id/ivFloatIcon"
-        android:layout_width="32dp"
-        android:layout_height="32dp"
-        android:src="@android:drawable/ic_btn_speak_now"
-        android:contentDescription="语音助手" />
+        android:layout_width="72dp"
+        android:layout_height="72dp"
+        android:src="@drawable/robot_idle"
+        android:contentDescription="语音助手"
+        android:scaleType="fitCenter" />
 
-    <TextView
-        android:id="@+id/tvFloatState"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="语音助手"
-        android:textColor="#FFFFFF"
-        android:textSize="8sp"
-        android:layout_marginTop="2dp" />
-
-    <!-- 实时识别内容（显示在悬浮球下方） -->
+    <!-- 实时识别内容（显示在机器人下方） -->
     <TextView
         android:id="@+id/tvFloatSubtitle"
-        android:layout_width="180dp"
+        android:layout_width="200dp"
         android:layout_height="wrap_content"
         android:text=""
-        android:textColor="#FFFF00"
-        android:textSize="12sp"
+        android:textColor="#FFFFFF"
+        android:textSize="13sp"
         android:gravity="center"
         android:layout_marginTop="4dp"
         android:visibility="gone"
-        android:background="#80000000"
-        android:padding="4dp" />
+        android:background="#B3000000"
+        android:padding="6dp"
+        android:radius="8dp" />
 
 </LinearLayout>
