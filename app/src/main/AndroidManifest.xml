@@ -42,7 +42,6 @@
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:supportsRtl="true"
-        android:directBootAware="true"
         android:theme="@style/Theme.CarVoiceAssistant">
 
         <activity
@@ -72,18 +71,18 @@
             android:exported="false"
             android:foregroundServiceType="microphone" />
 
-        <!-- 悬浮窗服务 -->
+        <!-- 悬浮窗服务：前台服务，避免后台启动被系统拦截 -->
         <service
             android:name=".core.FloatViewService"
-            android:exported="false" />
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
 
         <!-- 开机自启接收器（针对鼎微/全志车机优化） -->
         <receiver
             android:name=".BootReceiver"
             android:exported="true"
-            android:directBootAware="true"
             android:enabled="true">
-            <intent-filter android:priority="2147483647">
+            <intent-filter android:priority="1000">
                 <!-- 标准开机广播 -->
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
                 <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />

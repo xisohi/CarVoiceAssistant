@@ -95,7 +95,15 @@ class BootReceiver : BroadcastReceiver() {
 
         // 如果服务已在运行，跳过
         if (VoiceAssistantService.isRunning) {
-            Log.d(TAG, "服务已在运行，跳过")
+            Log.d(TAG, "服务已在运行，检查悬浮窗...")
+            if (!FloatViewService.isRunning) {
+                try {
+                    FloatViewService.start(context)
+                    Log.i(TAG, "补启动悬浮窗")
+                } catch (e: Exception) {
+                    Log.w(TAG, "补启动悬浮窗失败: ${e.message}")
+                }
+            }
             return
         }
 

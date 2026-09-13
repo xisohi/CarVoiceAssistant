@@ -1,6 +1,8 @@
 package com.xisohi.car.voiceassistant.core
 
 import android.annotation.SuppressLint
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.app.Service
 import android.content.Context
 import android.content.Intent
@@ -13,6 +15,7 @@ import android.view.View
 import android.view.WindowManager
 import android.widget.ImageView
 import android.widget.TextView
+import androidx.core.app.NotificationCompat
 import com.xisohi.car.voiceassistant.R
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -25,8 +28,17 @@ import kotlinx.coroutines.launch
 class FloatViewService : Service() {
 
     companion object {
+        @Volatile
+        var isRunning = false
+            private set
+
         fun start(context: Context) {
-            context.startService(Intent(context, FloatViewService::class.java))
+            val intent = Intent(context, FloatViewService::class.java)
+            if (Build.VERSION.SDK_INT >= 26) {
+                context.startForegroundService(intent)
+            } else {
+                context.startService(intent)
+            }
         }
         fun stop(context: Context) {
             context.stopService(Intent(context, FloatViewService::class.java))
@@ -38,6 +50,7 @@ class FloatViewService : Service() {
         /** 外部调用更新字幕，自动切换到主线程 */
         fun updateSubtitle(text: String?) {
             android.os.Handler(android.os.Looper.getMainLooper()).post {
+                if (!isRunning) return@post
                 val tv = subtitleTextView
                 if (tv == null) {
                     android.util.Log.w("FloatView", "字幕 TextView 未初始化，无法显示")
@@ -68,6 +81,24 @@ class FloatViewService : Service() {
     @SuppressLint("ClickableViewAccessibility")
     override fun onCreate() {
         super.onCreate()
+        isRunning = true
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                "float_view_channel",
+                "悬浮窗",
+                NotificationManager.IMPORTANCE_LOW
+            )
+            (getSystemService(NOTIFICATION_SERVICE) as NotificationManager)
+                .createNotificationChannel(channel)
+
+            val notification = NotificationCompat.Builder(this, "float_view_channel")
+                .setSmallIcon(R.drawable.ic_stat_mic)
+                .setContentTitle("语音助手悬浮窗")
+                .setContentText("正在运行")
+                .setOngoing(true)
+                .build()
+            startForeground(2, notification)  // NOTIF_ID=2，和 VoiceAssistantService 的 1 区分
+        }
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
 
         // ---------- 1. 创建悬浮球（可拖动） ----------
@@ -178,6 +209,7 @@ class FloatViewService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        isRunning = false
         stateJob?.cancel()
         scope.cancel()
 
