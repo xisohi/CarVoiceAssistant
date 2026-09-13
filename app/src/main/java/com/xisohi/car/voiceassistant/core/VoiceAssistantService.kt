@@ -829,6 +829,74 @@ class VoiceAssistantService : Service() {
             return
         }
 
+        // 天气查询（需要网络请求，在后台线程执行）
+        if (intent.action == "ask.weather") {
+            // 从意图参数中提取城市名（用户说"北京天气"时）
+            // 支持"明天蚌埠天气"这种说法：提取"蚌埠"作为城市名
+            val rawCity = intent.params["city"]
+            val specifiedCity = when {
+                rawCity.isNullOrBlank() -> null
+                skillExecutor.isOnlyTimeWord(rawCity) -> null  // 只有时间词，没有城市名
+                else -> skillExecutor.extractCity(rawCity)  // 去掉时间词，提取城市名
+            }
+
+            // 先播报"正在查询"，让用户知道正在处理
+            val searchingText = if (!specifiedCity.isNullOrBlank()) {
+                "正在查询${specifiedCity}天气，请稍候"
+            } else {
+                "正在查询当前位置天气，请稍候"
+            }
+            FloatViewService.updateSubtitle("🔍 $searchingText")
+            ttsEngine.speak(searchingText)
+
+            // 在后台线程执行网络请求
+            Thread {
+                try {
+                    // 从识别文本中提取时间词（今天/明天/后天）
+                    val timeIndex = skillExecutor.getTimeIndex(correctedText)
+                    val weatherResult = skillExecutor.queryWeather(specifiedCity, timeIndex)
+
+                    if (weatherResult == null) {
+                        // 定位失败：提示用户说城市名，引导用户重新说
+                        LogUtils.w("VoiceService", "天气查询定位失败，提示用户说城市名")
+                        mainHandler.post {
+                            val guideText = "无法确定当前位置，您可以说北京天气、上海天气来查询指定城市的天气"
+                            FloatViewService.updateSubtitle("📍 $guideText")
+                            ttsEngine.speak(guideText)
+                            // TTS说完后重新进入聆听状态，让用户说城市名
+                            isRetryListening = true
+                            if (!ttsEngine.isReady) {
+                                isRetryListening = false
+                                mainHandler.postDelayed({ startRecognition() }, 300)
+                            }
+                        }
+                    } else {
+                        // 查询成功：播报天气结果
+                        LogUtils.i("VoiceService", "天气查询结果: $weatherResult")
+                        mainHandler.post {
+                            FloatViewService.updateSubtitle("🌤️ $weatherResult")
+                            ttsEngine.speak(weatherResult)
+                            lastIntentResult = "天气: $weatherResult"
+                            if (!ttsEngine.isReady) {
+                                currentState = State.IDLE
+                                resumeWake()
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    LogUtils.w("VoiceService", "天气查询异常: ${e.message}")
+                    mainHandler.post {
+                        val errorText = "天气查询失败，请检查网络连接"
+                        FloatViewService.updateSubtitle("❌ $errorText")
+                        ttsEngine.speak(errorText)
+                        currentState = State.IDLE
+                        resumeWake()
+                    }
+                }
+            }.start()
+            return
+        }
+
         val result = skillExecutor.execute(intent)
         LogUtils.i("VoiceService", "执行结果: handled=${result.handled}, spoken='${result.spoken}'")
         lastIntentResult = if (result.handled) getString(R.string.result_executed, result.spoken) else getString(R.string.result_unmatched, result.spoken)
