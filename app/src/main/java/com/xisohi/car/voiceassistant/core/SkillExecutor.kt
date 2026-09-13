@@ -788,7 +788,22 @@ class SkillExecutor(private val context: Context) {
         "Moderate or heavy snow with thunder" to "中到大雷雪",
         "Thundery outbreaks possible" to "可能有雷阵雨",
         "Blowing snow" to "吹雪",
-        "Blizzard" to "暴风雪"
+        "Blizzard" to "暴风雪",
+        // ===== 雾霾/沙尘 =====
+        "Smoky haze" to "霾",
+        "Haze" to "薄雾",
+        "Smoke" to "烟雾",
+        "Widespread dust" to "大范围浮尘",
+        "Dust" to "浮尘",
+        "Sandstorm" to "沙尘暴",
+        "Sand/dust whirls" to "沙尘",
+        "Strong sandstorm" to "强沙尘暴",
+        // ===== 其他 =====
+        "Whiteout" to "白茫茫",
+        "Freezing drizzle" to "冻毛毛雨",
+        "Heavy freezing drizzle" to "大冻毛毛雨",
+        "Patchy freezing drizzle possible" to "可能有零星冻毛毛雨",
+        "Patchy freezing drizzle nearby" to "附近有零星冻毛毛雨"
     )
 
     /**
