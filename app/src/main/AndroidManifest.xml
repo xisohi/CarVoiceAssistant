@@ -75,7 +75,11 @@
         <service
             android:name=".core.FloatViewService"
             android:exported="false"
-            android:foregroundServiceType="dataSync" />
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="floating window for voice assistant" />
+        </service>
 
         <!-- 开机自启接收器（针对鼎微/全志车机优化） -->
         <receiver

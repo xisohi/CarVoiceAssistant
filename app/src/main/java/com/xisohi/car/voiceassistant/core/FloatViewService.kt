@@ -82,6 +82,8 @@ class FloatViewService : Service() {
     override fun onCreate() {
         super.onCreate()
         isRunning = true
+        android.util.Log.d("FloatView", "onCreate 开始，准备创建悬浮窗...")
+        try {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 "float_view_channel",
@@ -104,7 +106,7 @@ class FloatViewService : Service() {
         // ---------- 1. 创建悬浮球（可拖动） ----------
         floatView = View.inflate(this, R.layout.float_ball, null)
         // 找到悬浮球布局中的实时识别 TextView（显示在悬浮球下方）
-        subtitleTextView = floatView.findViewById(R.id.tvFloatSubtitle)
+        Companion.subtitleTextView = floatView.findViewById(R.id.tvFloatSubtitle)
         val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
         } else {
@@ -154,8 +156,14 @@ class FloatViewService : Service() {
         }
 
         windowManager.addView(floatView, layoutParams)
+        android.util.Log.d("FloatView", "悬浮窗已添加到窗口，位置: x=${layoutParams.x}, y=${layoutParams.y}")
 
         startStateMonitoring()
+        } catch (e: Exception) {
+            android.util.Log.e("FloatView", "创建悬浮窗失败: ${e.message}", e)
+            // 即使失败也不要崩溃，停止服务
+            stopSelf()
+        }
     }
 
     // ---------- 原有功能 ----------
@@ -218,6 +226,6 @@ class FloatViewService : Service() {
             windowManager.removeView(floatView)
         } catch (_: Exception) {
         }
-        subtitleTextView = null
+        Companion.subtitleTextView = null
     }
 }

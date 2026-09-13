@@ -82,8 +82,8 @@ class BootReceiver : BroadcastReceiver() {
         val isIndirectAction = action in indirectActions
         if (!isBootAction && !isIndirectAction) return
 
-        // 间接触发广播只在服务未运行时才尝试启动，避免频繁触发
-        if (isIndirectAction && VoiceAssistantService.isRunning) {
+        // 间接触发广播：语音服务和悬浮窗都在运行时才跳过，避免悬浮窗被杀后补不回来
+        if (isIndirectAction && VoiceAssistantService.isRunning && FloatViewService.isRunning) {
             return
         }
 

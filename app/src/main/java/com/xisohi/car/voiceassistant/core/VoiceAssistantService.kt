@@ -197,8 +197,10 @@ class VoiceAssistantService : Service() {
         currentState = State.IDLE
         resumeWake()
         try {
+            android.util.Log.d("VoiceAssistant", "启动悬浮窗服务...")
             FloatViewService.start(this)
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            android.util.Log.w("VoiceAssistant", "启动悬浮窗服务失败: ${e.message}")
         }
         return START_STICKY
     }
