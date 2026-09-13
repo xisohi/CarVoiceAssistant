@@ -3,6 +3,7 @@ package com.xisohi.car.voiceassistant.core
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import com.xisohi.car.voiceassistant.core.LogUtils
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
@@ -26,6 +27,7 @@ class AutoStartWorker(
 ) : CoroutineWorker(context, params) {
 
     companion object {
+        private const val TAG = "AutoStartWorker"
         private const val WORK_NAME = "auto_start_check"
         private const val CHECK_INTERVAL_MINUTES = 15L
 
@@ -44,20 +46,22 @@ class AutoStartWorker(
                     ExistingPeriodicWorkPolicy.KEEP,  // 如果已存在就保持，不重复创建
                     workRequest
                 )
-                android.util.Log.d("AutoStartWorker", "已调度周期性自启动检查，每${CHECK_INTERVAL_MINUTES}分钟一次")
+                LogUtils.d(TAG, "已调度周期性自启动检查，每${CHECK_INTERVAL_MINUTES}分钟一次")
             } catch (e: Exception) {
-                android.util.Log.w("AutoStartWorker", "调度自启动检查失败: ${e.message}")
+                LogUtils.w(TAG, "调度自启动检查失败: ${e.message}")
             }
         }
     }
 
     override suspend fun doWork(): Result {
+        // 初始化文件日志（如果还没初始化）
+        LogUtils.init(applicationContext)
         return try {
-            android.util.Log.d("AutoStartWorker", "自启动检查触发，检查服务状态...")
+            LogUtils.d(TAG, "自启动检查触发，检查服务状态...")
 
             // 检查语音助手服务是否在运行
             if (!VoiceAssistantService.isRunning) {
-                android.util.Log.i("AutoStartWorker", "服务未运行，尝试启动...")
+                LogUtils.i(TAG, "服务未运行，尝试启动...")
 
                 // 检查自启动开关
                 val prefs = applicationContext.getSharedPreferences(
@@ -66,38 +70,38 @@ class AutoStartWorker(
                 )
                 val autoStart = prefs.getBoolean("auto_start_on_boot", true)
                 if (!autoStart) {
-                    android.util.Log.d("AutoStartWorker", "自启动开关已关闭，跳过")
+                    LogUtils.d(TAG, "自启动开关已关闭，跳过")
                     return Result.success()
                 }
 
                 // 启动语音助手服务
                 VoiceAssistantService.start(applicationContext)
-                android.util.Log.i("AutoStartWorker", "已启动语音助手服务")
+                LogUtils.i(TAG, "已启动语音助手服务")
 
                 // 延迟2秒启动悬浮窗（等语音服务初始化完成）
                 Handler(Looper.getMainLooper()).postDelayed({
                     try {
                         if (!FloatViewService.isRunning) {
                             FloatViewService.start(applicationContext)
-                            android.util.Log.i("AutoStartWorker", "已启动悬浮窗")
+                            LogUtils.i(TAG, "已启动悬浮窗")
                         }
                     } catch (e: Exception) {
-                        android.util.Log.w("AutoStartWorker", "启动悬浮窗失败: ${e.message}")
+                        LogUtils.w(TAG, "启动悬浮窗失败: ${e.message}")
                     }
                 }, 2000)
             } else {
-                android.util.Log.d("AutoStartWorker", "服务已在运行，跳过")
+                LogUtils.d(TAG, "服务已在运行，跳过")
 
                 // 服务在运行但悬浮窗可能被杀了，补启动悬浮窗
                 if (!FloatViewService.isRunning) {
-                    android.util.Log.i("AutoStartWorker", "悬浮窗未运行，补启动...")
+                    LogUtils.i(TAG, "悬浮窗未运行，补启动...")
                     FloatViewService.start(applicationContext)
                 }
             }
 
             Result.success()
         } catch (e: Exception) {
-            android.util.Log.e("AutoStartWorker", "自启动检查失败: ${e.message}", e)
+            LogUtils.e(TAG, "自启动检查失败: ${e.message}", e)
             Result.retry()
         }
     }
