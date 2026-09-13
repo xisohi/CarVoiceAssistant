@@ -37,12 +37,15 @@ class VoiceAssistantService : Service() {
         const val ACTION_START = "com.xisohi.car.voiceassistant.action.START"
         const val ACTION_STOP = "com.xisohi.car.voiceassistant.action.STOP"
         const val ACTION_WAKE_TRIGGER = "com.xisohi.car.voiceassistant.action.WAKE_TRIGGER"
+        // 识别结果广播 Action（用于通知 MainActivity 显示到运行日志）
+        const val ACTION_RECOGNITION_LOG = "com.xisohi.car.voiceassistant.ACTION_RECOGNITION_LOG"
+        const val EXTRA_LOG_MESSAGE = "log_message"
         private const val CHANNEL_ID = "voice_assistant"
         private const val NOTIF_ID = 1
-        private const val MAX_RECORD_MS = 15_000L  // 最长录音 15 秒（给用户足够时间说话）
+        private const val MAX_RECORD_MS = 20_000L  // 最长录音 20 秒（给用户足够时间说话）
         private const val MIN_RECORD_MS = 2_000L    // 最短录音 2 秒（避免短暂停顿被误判为端点）
-        private const val MAX_SILENCE_MS = 800L      // 连续静音超过 800ms 才认为用户说完了（避免说话中间间隙误判）
-        private const val WAIT_SPEECH_TIMEOUT_MS = 5_000L  // 用户开口前的等待上限（避免 TTS 刚说完就被静音截断）
+        private const val MAX_SILENCE_MS = 1500L     // 连续静音超过 1500ms 才认为用户说完了（避免说话中间间隙误判）
+        private const val WAIT_SPEECH_TIMEOUT_MS = 8_000L  // 用户开口前的等待上限（8秒没有效声音就自动退出，避免无限循环"没有听清"）
 
         // ===== 自适应静音阈值参数 =====
         // 不再使用固定阈值，改为启动时采样环境噪音动态计算
@@ -103,6 +106,12 @@ class VoiceAssistantService : Service() {
     private var isMediaVolumeMuted = false
     // 没听懂后是否需要重新监听（true=TTS说完后直接开始录音，不需要唤醒词）
     private var isRetryListening = false
+
+    // 本次识别用户是否开口了（用于区分"没开口超时"和"开口了但没识别到内容"）
+    private var hasSpeechStartedThisSession = false
+    // 连续没说话的重试次数（唤醒后长时间不说话，连续2次就自动退出，避免无限循环"没有听清"）
+    private var noSpeechRetryCount = 0
+    private val MAX_NO_SPEECH_RETRY = 2  // 最多重试2次，第3次就自动退出
     private lateinit var skillExecutor: SkillExecutor
     private lateinit var ttsEngine: TtsEngine
     private lateinit var placeMatcher: PlaceMatcher  // 地名模糊匹配器（导航同音字纠正）
@@ -382,6 +391,8 @@ class VoiceAssistantService : Service() {
     // ---------- 唤醒触发 ----------
     private fun onWakeWord() {
         if (currentState != State.IDLE) return
+        // 每次唤醒都重置连续没说话的计数
+        noSpeechRetryCount = 0
         // 清除旧字幕
         FloatViewService.updateSubtitle("")
         mainHandler.removeCallbacks(clearSubtitleRunnable)
@@ -395,9 +406,11 @@ class VoiceAssistantService : Service() {
             // 恢复系统音量到原始值，TTS 播报时请求音频焦点，音乐自动降低（duck）
             // 播报完成后（onSpeakDone）保持原始音量值，不降到0
             restoreMediaVolume()
-            isWakePromptSpeaking = true
+            // 立即切换悬浮窗为聆听状态（视觉提示，不用等TTS播报完）
+            currentState = State.LISTENING
+                        isWakePromptSpeaking = true
             ttsEngine.speak(getString(R.string.tts_wake_prompt))
-            android.util.Log.d("VoiceService", "唤醒提示：TTS播报'在呢，您请说'，播报完成后开始录音")
+            LogUtils.d("VoiceService", "唤醒提示：TTS播报'在呢，您请说'，播报完成后开始录音")
         } else {
             // TTS 不可用：兜底用哔哔声提示音
             android.util.Log.w("VoiceService", "TTS不可用，使用哔哔声作为唤醒提示")
@@ -466,6 +479,8 @@ class VoiceAssistantService : Service() {
 
 
     private fun startRecognition() {
+        // 重置本次识别的开口标志
+        hasSpeechStartedThisSession = false
         val modelDir = ModelManager.findAsrModelDir(this)
         if (modelDir == null) {
             ttsEngine.speak(getString(R.string.tts_model_unavailable))
@@ -571,6 +586,7 @@ class VoiceAssistantService : Service() {
                             speechFrameCount++
                             if (speechFrameCount >= 3) {
                                 hasSpeechStarted = true
+                                hasSpeechStartedThisSession = true
                                 android.util.Log.d("VoiceService", "检测到用户开口 (连续${speechFrameCount}帧非静音, RMS=${rms.toInt()})")
                             }
                         } else {
@@ -686,20 +702,49 @@ class VoiceAssistantService : Service() {
 
     private fun handleText(text: String) {
         currentState = State.PROCESSING
-        android.util.Log.d("VoiceService", "识别文本: '$text'")
+        // 记录用户说的话到文件日志（方便用户在日志查看页面查看识别是否完整）
+        LogUtils.i("VoiceService", "识别文本: '$text'")
         // 同音字/常见错误纠正：把识别错的词自动纠正
         val correctedText = correctHomophones(text)
         if (correctedText != text) {
-            android.util.Log.d("VoiceService", "同音字纠正: '$text' -> '$correctedText'")
+            LogUtils.i("VoiceService", "同音字纠正: '$text' -> '$correctedText'")
         }
         lastRecognizedText = correctedText
         FloatViewService.updateSubtitle("👉 $correctedText")
         scheduleSubtitleClear(15000)
 
+        // 发送广播，将识别文本显示到设置页的运行日志中（不管有没有匹配到意图）
+        if (correctedText.isNotBlank()) {
+            sendRecognitionLog("🎤 识别: $correctedText")
+        }
+
         if (text.isBlank()) {
             // 没听清：恢复系统音量到原始值，TTS 播报时请求音频焦点，音乐自动降低
             // TTS结束后保持原始音量值，不降到0
             restoreMediaVolume()
+
+            if (!hasSpeechStartedThisSession) {
+                // 用户根本没开口（8秒超时）：直接退出到待机状态，不提示"没有听清"
+                LogUtils.i("VoiceService", "唤醒后8秒未检测到有效语音，自动退出到待机状态")
+                FloatViewService.updateSubtitle("")
+                currentState = State.IDLE
+                                resumeWake()
+                return
+            }
+
+            // 用户开口了但是没识别到内容（可能是噪音或说话太小）：提示"没有听清"，可以重试
+            noSpeechRetryCount++
+            LogUtils.w("VoiceService", "用户开口了但未识别到有效内容（第${noSpeechRetryCount}次）")
+
+            if (noSpeechRetryCount >= MAX_NO_SPEECH_RETRY) {
+                // 连续2次开口但没识别到，自动退出
+                LogUtils.i("VoiceService", "连续${MAX_NO_SPEECH_RETRY}次未识别到有效内容，自动退出到待机状态")
+                FloatViewService.updateSubtitle("")
+                currentState = State.IDLE
+                                resumeWake()
+                return
+            }
+
             FloatViewService.updateSubtitle(getString(R.string.subtitle_not_heard))
             // 设置标志位：TTS说完后直接重新监听，不需要唤醒词（和没听懂分支一致，避免固定3秒延迟竞态）
             isRetryListening = true
@@ -707,7 +752,7 @@ class VoiceAssistantService : Service() {
             if (!ttsEngine.isReady) {
                 // TTS不可用时，直接重新监听
                 isRetryListening = false
-                android.util.Log.d("VoiceService", "TTS不可用，直接重新开始录音识别")
+                LogUtils.d("VoiceService", "TTS不可用，直接重新开始录音识别")
                 mainHandler.postDelayed({
                     startRecognition()
                 }, 300)
@@ -722,7 +767,7 @@ class VoiceAssistantService : Service() {
             if (dest != null) {
                 val matchedDest = placeMatcher.match(dest)
                 if (matchedDest != null && matchedDest != dest) {
-                    android.util.Log.d("VoiceService", "地名匹配: '$dest' -> '$matchedDest'")
+                    LogUtils.d("VoiceService", "地名匹配: '$dest' -> '$matchedDest'")
                     // 创建新的 VoiceIntent，替换 dest 参数
                     val newParams = rawIntent.params.toMutableMap()
                     newParams["dest"] = matchedDest
@@ -740,7 +785,9 @@ class VoiceAssistantService : Service() {
             // 没听懂：恢复系统音量到原始值，TTS 播报时请求音频焦点，音乐自动降低
             // TTS结束后保持原始音量值，不降到0
             restoreMediaVolume()
-            android.util.Log.w("VoiceService", "未匹配到意图: '$correctedText'")
+            LogUtils.w("VoiceService", "未匹配到意图: '$correctedText'")
+            // 发送广播，将没听懂的结果显示到设置页的运行日志中
+            sendRecognitionLog("❌ 未匹配: $correctedText")
             FloatViewService.updateSubtitle(getString(R.string.subtitle_not_understood))
             // 设置标志位：TTS说完后直接重新监听，不需要唤醒词
             isRetryListening = true
@@ -758,7 +805,11 @@ class VoiceAssistantService : Service() {
 
         // 正常识别完成：恢复媒体音量到原始值，让 TTS 播报结果能听到
         restoreMediaVolume()
-        android.util.Log.i("VoiceService", "匹配意图: ${intent.action}, 参数: ${intent.params}")
+        // 成功识别，重置连续没说话的计数
+        noSpeechRetryCount = 0
+        LogUtils.i("VoiceService", "匹配意图: ${intent.action}, 参数: ${intent.params}")
+        // 发送广播，将意图匹配结果显示到设置页的运行日志中
+        sendRecognitionLog("✅ 匹配: ${intent.action} → ${intent.params}")
         if (intent.action == "app.cancel") {
             currentState = State.IDLE
             FloatViewService.updateSubtitle(getString(R.string.subtitle_cancelled))
@@ -779,7 +830,7 @@ class VoiceAssistantService : Service() {
         }
 
         val result = skillExecutor.execute(intent)
-        android.util.Log.i("VoiceService", "执行结果: handled=${result.handled}, spoken='${result.spoken}'")
+        LogUtils.i("VoiceService", "执行结果: handled=${result.handled}, spoken='${result.spoken}'")
         lastIntentResult = if (result.handled) getString(R.string.result_executed, result.spoken) else getString(R.string.result_unmatched, result.spoken)
         FloatViewService.updateSubtitle("✅ ${result.spoken}")
 
@@ -793,6 +844,22 @@ class VoiceAssistantService : Service() {
         if (!ttsEngine.isReady) {
             currentState = State.IDLE
             resumeWake()
+        }
+    }
+
+    /**
+     * 发送识别日志广播，通知 MainActivity 显示到设置页的运行日志中
+     * 只发送有效的、有内容的识别结果
+     */
+    private fun sendRecognitionLog(message: String) {
+        try {
+            val intent = Intent(ACTION_RECOGNITION_LOG).apply {
+                setPackage(packageName)
+                putExtra(EXTRA_LOG_MESSAGE, message)
+            }
+            sendBroadcast(intent)
+        } catch (e: Exception) {
+            LogUtils.w("VoiceService", "发送识别日志广播失败: ${e.message}")
         }
     }
 

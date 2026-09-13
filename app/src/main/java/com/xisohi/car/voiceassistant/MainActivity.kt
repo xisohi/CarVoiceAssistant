@@ -1,8 +1,10 @@
 package com.xisohi.car.voiceassistant
 
 import android.Manifest
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
@@ -42,6 +44,15 @@ class MainActivity : AppCompatActivity() {
     }
 
     private lateinit var binding: ActivityMainBinding
+
+    // 识别结果广播接收器：接收 VoiceAssistantService 发送的识别结果，显示到运行日志
+    private val recognitionLogReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            val message = intent?.getStringExtra(VoiceAssistantService.EXTRA_LOG_MESSAGE) ?: return
+            log(message)
+        }
+    }
+
     // TTS 检测（只检测一次，避免每500ms创建销毁TTS实例的性能问题）
     private var ttsChecker: TextToSpeech? = null
     private var ttsChecked = false
@@ -70,6 +81,14 @@ class MainActivity : AppCompatActivity() {
 
         // 初始化文件日志系统
         LogUtils.init(this)
+
+        // 注册识别结果广播接收器（实时显示识别结果到运行日志）
+        val filter = IntentFilter(VoiceAssistantService.ACTION_RECOGNITION_LOG)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(recognitionLogReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(recognitionLogReceiver, filter)
+        }
 
         // 返回后台运行按钮：只关闭页面，不停止服务
         binding.btnBackground.setOnClickListener {
@@ -362,24 +381,7 @@ class MainActivity : AppCompatActivity() {
             VoiceAssistantService.State.PROCESSING -> getString(R.string.state_processing)
             VoiceAssistantService.State.SPEAKING -> getString(R.string.state_speaking)
         }
-        // 刷新识别文本：聆听中显示实时识别结果，否则显示最终识别结果
-        val isListening = (VoiceAssistantService.currentState == VoiceAssistantService.State.LISTENING)
-        val partialText = VoiceAssistantService.lastPartialText
-        val finalText = VoiceAssistantService.lastRecognizedText
-        when {
-            isListening && partialText.isNotBlank() -> {
-                binding.tvLastRecognized.text = "💬 $partialText"
-                binding.tvLastRecognized.setTextColor(android.graphics.Color.parseColor("#1565C0"))
-            }
-            finalText.isNotBlank() -> {
-                binding.tvLastRecognized.text = finalText
-                binding.tvLastRecognized.setTextColor(android.graphics.Color.parseColor("#1A1B1C"))
-            }
-            else -> {
-                binding.tvLastRecognized.text = "—"
-                binding.tvLastRecognized.setTextColor(android.graphics.Color.parseColor("#1A1B1C"))
-            }
-        }
+        // 刷新最近意图结果
         val lastIntent = VoiceAssistantService.lastIntentResult
         binding.tvLastIntent.text = lastIntent
     }
