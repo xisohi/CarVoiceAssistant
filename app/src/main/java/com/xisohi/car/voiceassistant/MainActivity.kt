@@ -384,6 +384,21 @@ class MainActivity : AppCompatActivity() {
         // 刷新最近意图结果
         val lastIntent = VoiceAssistantService.lastIntentResult
         binding.tvLastIntent.text = lastIntent
+
+        // 刷新录音 RMS 峰值（车机上看不到日志，峰值更有意义）
+        // 显示本次录音的峰值，下次录音开始时重置
+        // 注意：这里的 RMS 是增益后的值，不是原始音频的 RMS
+        // 合理范围：5000~10000 最佳，10000~15000 可接受但偏高，>15000 削顶风险
+        val rms = VoiceAssistantService.peakRms
+        val rmsStatus = when {
+            rms == 0 -> "待机"
+            rms < 5000 -> "偏低"
+            rms < 10000 -> "✅最佳"
+            rms < 15000 -> "偏高"
+            rms < 20000 -> "⚠️削顶风险"
+            else -> "❌严重削顶"
+        }
+        binding.tvRms.text = "录音峰值: $rms ($rmsStatus)"
     }
 
     /**

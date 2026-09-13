@@ -67,6 +67,17 @@ class VoiceAssistantService : Service() {
         var lastRecognizedText: String = ""
             private set
 
+        // 当前录音的 RMS 值（实时值，录音结束后停留在最后一帧）
+        @Volatile
+        var currentRms: Int = 0
+            private set
+
+        // 本次录音的 RMS 峰值（设置页显示这个值，车机上看不到日志，峰值更有意义）
+        // 下次录音开始时重置为0
+        @Volatile
+        var peakRms: Int = 0
+            private set
+
         @Volatile
         var lastPartialText: String = ""
             private set
@@ -481,6 +492,8 @@ class VoiceAssistantService : Service() {
     private fun startRecognition() {
         // 重置本次识别的开口标志
         hasSpeechStartedThisSession = false
+        // 重置本次录音的 RMS 峰值（设置页显示峰值，下次录音开始时重置）
+        peakRms = 0
         val modelDir = ModelManager.findAsrModelDir(this)
         if (modelDir == null) {
             ttsEngine.speak(getString(R.string.tts_model_unavailable))
@@ -576,6 +589,12 @@ class VoiceAssistantService : Service() {
 
                     // 计算 RMS 能量，判断是否静音（不依赖 Vosk 内置端点检测，太敏感）
                     val rms = SpeechRecognizer.calculateRms(shortBuf, n)
+                    // 更新静态变量，供设置页实时显示（帮助调整增益参数）
+                    currentRms = rms.toInt()
+                    // 更新峰值（取最大值），设置页显示峰值，车机上看不到日志，峰值更有意义
+                    if (rms.toInt() > peakRms) {
+                        peakRms = rms.toInt()
+                    }
                     // 使用自适应阈值（基于环境噪音动态计算）
                     val isSilence = rms < adaptiveSilenceThreshold
 

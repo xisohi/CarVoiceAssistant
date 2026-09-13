@@ -119,6 +119,16 @@
                     android:maxLines="1"
                     android:ellipsize="end" />
 
+                <TextView
+                    android:id="@+id/tvRms"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="录音RMS: --"
+                    android:textSize="10sp"
+                    android:textColor="#9E9E9E"
+                    android:maxLines="1"
+                    android:layout_marginTop="1dp" />
+
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
