@@ -305,7 +305,7 @@ class MainActivity : AppCompatActivity() {
                 .remove(KEY_MANUAL_ASR_GAIN)
                 .apply()
             // 恢复识别增益默认值
-            WakeWordEngine.setAsrGain(5.0f)
+            WakeWordEngine.setAsrGain(6.5f)
             // 恢复到中档预设
             fillPresetToSliders(1)
             toast(getString(R.string.toast_sensitivity_reset))

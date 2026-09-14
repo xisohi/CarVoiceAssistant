@@ -42,7 +42,7 @@ public class WakeWordEngine {
      * 唤醒是远场检测（用户可能离麦克风较远），需要较大增益；
      * 识别是指令阶段（用户通常已靠近或音量正常），过大会导致波形截断，反而降低 Vosk 识别率。
      */
-    private static float asrGain = 5.0f;
+    private static float asrGain = 6.5f;
 
     /** 唤醒检测阈值：sigmoid 概率超过此值即判定为唤醒。降低可提高灵敏度。 */
     private static float detectionThreshold = 0.008f;

@@ -153,7 +153,7 @@ class VoiceAssistantService : Service() {
         android.util.Log.i("VoiceService", "唤醒灵敏度: ${WakeWordEngine.getSensitivityName()} (增益=${WakeWordEngine.getAudioGain()}, 阈值=${WakeWordEngine.getDetectionThreshold()})")
 
         // 读取保存的识别增益（asrGain），避免服务重启后用户设置丢失
-        val savedAsrGain = prefs.getFloat("asr_gain_override", 5.0f)
+        val savedAsrGain = prefs.getFloat("asr_gain_override", 6.5f)
         WakeWordEngine.setAsrGain(savedAsrGain)
         android.util.Log.i("VoiceService", "识别增益: ${WakeWordEngine.getAsrGain()}")
 
@@ -657,7 +657,8 @@ class VoiceAssistantService : Service() {
                         // 累加静音时长（这一帧的时长 = 样本数 / 采样率 * 1000ms）
                         silenceDuration += (n * 1000L / SpeechRecognizer.SAMPLE_RATE.toInt())
                         // 只有连续静音超过阈值，且录音时间超过最短时间，才认为用户说完了
-                        if (silenceDuration >= MAX_SILENCE_MS && recordDuration >= MIN_RECORD_MS) {
+                        val dynamicSilenceMs = if (lastPartial.isNotEmpty()) MAX_SILENCE_MS else MAX_SILENCE_MS * 2
+                        if (silenceDuration >= dynamicSilenceMs && recordDuration >= MIN_RECORD_MS) {
                             android.util.Log.d("VoiceService",
                                 "连续静音${silenceDuration}ms，确认用户说完了，结束录音 (RMS=${rms.toInt()}, 阈值=${adaptiveSilenceThreshold.toInt()})")
                                 sendRecognitionLog("⏹️ 结束录音 (静音${silenceDuration}ms, RMS=${rms.toInt()})")
