@@ -151,8 +151,20 @@ class LogViewerActivity : AppCompatActivity() {
                 if (volume.isPrimary) continue
                 // 只考虑可移除的存储（U盘/SD卡）
                 if (!volume.isRemovable) continue
-                // 获取挂载路径
-                val dir = volume.directory ?: continue
+                // 获取挂载路径（用反射兼容 Android 10 及以下，getDirectory() 是 API 30 才有的）
+                val dirPath = try {
+                    // 优先用反射调用 getPath()（所有版本都有）
+                    val getPathMethod = volume.javaClass.getMethod("getPath")
+                    getPathMethod.invoke(volume) as? String
+                } catch (e: Exception) {
+                    // 反射失败，尝试用 getDirectory()（API 30+）
+                    try {
+                        volume.directory?.absolutePath
+                    } catch (e2: Exception) {
+                        null
+                    }
+                } ?: continue
+                val dir = java.io.File(dirPath)
                 if (dir.exists() && dir.isDirectory) {
                     // 尝试创建临时文件测试可写性
                     val testFile = java.io.File(dir, ".test_write_${System.currentTimeMillis()}")
