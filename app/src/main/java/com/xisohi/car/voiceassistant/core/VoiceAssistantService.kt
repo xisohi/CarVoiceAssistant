@@ -573,7 +573,7 @@ class VoiceAssistantService : Service() {
 // 关键：采样音频也走和循环相同的处理路径（降噪 + 增益）
 // 这样 ambientRms 和循环 rms 才在同一基准上，阈值才有意义
             if (noiseRead > 0) {
-                recNoiseReducer.process(noiseBuf, noiseRead, enableRnNoise = true)
+                recNoiseReducer.process(noiseBuf, noiseRead, enableRnNoise = false)
                 applyGain(noiseBuf, noiseRead)
             }
             val ambientRms = if (noiseRead > 0) {
@@ -606,7 +606,7 @@ class VoiceAssistantService : Service() {
                     // 应用降噪处理（高通滤波 + RNNoise）
                     // 注意：RNNoise 在 16kHz 音频上可能破坏人声特征，如识别率下降可改回 false
                     // 唤醒词检测阶段也启用 RNNoise，降噪有助于噪音环境唤醒
-                    recNoiseReducer.process(shortBuf, n, enableRnNoise = true)
+                    recNoiseReducer.process(shortBuf, n, enableRnNoise = false)
                     // 应用音频增益（识别阶段专用增益，与唤醒增益独立，避免过放大削顶）
                     applyGain(shortBuf, n)
 
@@ -657,7 +657,9 @@ class VoiceAssistantService : Service() {
                         // 累加静音时长（这一帧的时长 = 样本数 / 采样率 * 1000ms）
                         silenceDuration += (n * 1000L / SpeechRecognizer.SAMPLE_RATE.toInt())
                         // 只有连续静音超过阈值，且录音时间超过最短时间，才认为用户说完了
-                        val dynamicSilenceMs = if (lastPartial.isNotEmpty()) MAX_SILENCE_MS else MAX_SILENCE_MS * 2
+                        // 动态静音判定：已识别到内容说明用户在说话，中间可能停顿，用3000ms多等一会儿；
+                        // 没识别到内容说明用户可能没说话，用1500ms快速结束
+                        val dynamicSilenceMs = if (lastPartial.isNotEmpty()) MAX_SILENCE_MS * 2 else MAX_SILENCE_MS
                         if (silenceDuration >= dynamicSilenceMs && recordDuration >= MIN_RECORD_MS) {
                             android.util.Log.d("VoiceService",
                                 "连续静音${silenceDuration}ms，确认用户说完了，结束录音 (RMS=${rms.toInt()}, 阈值=${adaptiveSilenceThreshold.toInt()})")

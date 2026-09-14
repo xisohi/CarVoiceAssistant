@@ -178,16 +178,17 @@ class LogViewerActivity : AppCompatActivity() {
                     LogUtils.i("LogViewer", "  跳过：路径不存在或不是目录")
                     continue
                 }
-                // 尝试创建临时文件测试可写性
-                val testFile = java.io.File(dir, ".test_write_${System.currentTimeMillis()}")
+                // 测试可写性（创建普通文件，不创建隐藏文件，某些文件系统不支持隐藏文件）
+                val testFile = java.io.File(dir, "test_write_${System.currentTimeMillis()}.tmp")
                 val canWrite = try {
                     testFile.createNewFile()
+                    testFile.writeText("test")  // 写几个字节测试真正可写
                     testFile.delete()
                     true
-                } catch (_: Exception) {
-                    false
+                } catch (e: Exception) {
+                    LogUtils.i("LogViewer", "  可写性测试失败: ${e.message}")
+                    dir.canWrite()  // 退化为用 canWrite() 判断
                 }
-                if (!canWrite) {
                     LogUtils.i("LogViewer", "  跳过：不可写")
                     continue
                 }
@@ -231,14 +232,15 @@ class LogViewerActivity : AppCompatActivity() {
                         canonicalPath.contains("/self")) {
                         continue
                     }
-                    // 测试可写性
-                    val testFile = java.io.File(dir, ".test_write_${System.currentTimeMillis()}")
+                    // 测试可写性（创建普通文件，不创建隐藏文件）
+                    val testFile = java.io.File(dir, "test_write_${System.currentTimeMillis()}.tmp")
                     val canWrite = try {
                         testFile.createNewFile()
+                        testFile.writeText("test")
                         testFile.delete()
                         true
-                    } catch (_: Exception) {
-                        false
+                    } catch (e: Exception) {
+                        dir.canWrite()
                     }
                     if (canWrite) {
                         usbDir = dir
@@ -264,22 +266,20 @@ class LogViewerActivity : AppCompatActivity() {
         } else {
             // 没找到U盘，先尝试导出到内置存储的 Download 目录（车机可能没有文件选择器）
             try {
-                val downloadDir = java.io.File(
-                    android.os.Environment.getExternalStoragePublicDirectory(
-                        android.os.Environment.DIRECTORY_DOWNLOADS
-                    ), "CarVoiceAssistant"
-                )
-                if (!downloadDir.exists()) {
-                    downloadDir.mkdirs()
+                // 使用应用自己的外部存储目录（Android 10+ 分区存储限制，不能写公共 Download 目录）
+                val appExternalDir = getExternalFilesDir(null)
+                val exportDir = java.io.File(appExternalDir, "export")
+                if (!exportDir.exists()) {
+                    exportDir.mkdirs()
                 }
-                val destFile = java.io.File(downloadDir, "CarVoiceAssistant_${logFile.name}")
+                val destFile = java.io.File(exportDir, "CarVoiceAssistant_${logFile.name}")
                 logFile.copyTo(destFile, overwrite = true)
                 Toast.makeText(
                     this,
                     "未检测到U盘，已导出到: ${destFile.absolutePath}",
                     Toast.LENGTH_LONG
                 ).show()
-                LogUtils.i("LogViewer", "未检测到U盘，已导出到内置存储: ${destFile.absolutePath}")
+                LogUtils.i("LogViewer", "未检测到U盘，已导出到应用目录: ${destFile.absolutePath}")
             } catch (e: Exception) {
                 // 内置存储也失败，尝试用系统文件选择器
                 LogUtils.w("LogViewer", "导出到内置存储失败: ${e.message}")
