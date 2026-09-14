@@ -212,11 +212,11 @@ public class WakeWordEngine {
 
     /**
      * 设置识别专用增益
-     * 建议范围 3.0~8.0：太小识别不清，太大削顶失真
-     * @param gain 增益值，会被限制在 [3.0, 8.0] 区间
+     * 建议范围 5.0~8.0：太小识别不清，太大削顶失真
+     * @param gain 增益值，会被限制在 [5.0, 10.0] 区间
      */
     public static void setAsrGain(float gain) {
-        asrGain = Math.max(3.0f, Math.min(8.0f, gain));
+        asrGain = Math.max(5.0f, Math.min(10.0f, gain));
         Log.i(TAG, "识别增益设置为: " + asrGain);
     }
 

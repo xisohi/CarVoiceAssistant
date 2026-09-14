@@ -271,7 +271,7 @@ class MainActivity : AppCompatActivity() {
         // asrGain 滑块：3.0 ~ 8.0，步长 0.1
         binding.seekAsrGain.setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: android.widget.SeekBar?, progress: Int, fromUser: Boolean) {
-                val asrGain = 3.0f + progress * 0.1f
+                val asrGain = 5.0f + progress * 0.1f
                 binding.tvAsrGainValue.text = String.format("%.1fx", asrGain)
             }
             override fun onStartTrackingTouch(seekBar: android.widget.SeekBar?) {}
@@ -282,7 +282,7 @@ class MainActivity : AppCompatActivity() {
         binding.btnApplyManual.setOnClickListener {
             val threshold = (binding.seekThreshold.progress + 1) * 0.001f
             val gain = 1.0f + binding.seekGain.progress * 0.1f
-            val asrGain = 3.0f + binding.seekAsrGain.progress * 0.1f
+            val asrGain = 5.0f + binding.seekAsrGain.progress * 0.1f
             WakeWordEngine.setGainAndThreshold(gain, threshold)
             WakeWordEngine.setAsrGain(asrGain)
             // 保存到 SharedPreferences
@@ -305,7 +305,7 @@ class MainActivity : AppCompatActivity() {
                 .remove(KEY_MANUAL_ASR_GAIN)
                 .apply()
             // 恢复识别增益默认值
-            WakeWordEngine.setAsrGain(6.5f)
+            WakeWordEngine.setAsrGain(8.0f)
             // 恢复到中档预设
             fillPresetToSliders(1)
             toast(getString(R.string.toast_sensitivity_reset))
@@ -329,7 +329,7 @@ class MainActivity : AppCompatActivity() {
      * asrGain: 3.0 ~ 8.0 -> progress 0 ~ 50
      */
     private fun updateAsrGainUI(asrGain: Float) {
-        val asrGainProgress = ((asrGain - 3.0f) / 0.1f).toInt().coerceIn(0, 50)
+        val asrGainProgress = ((asrGain - 5.0f) / 0.1f).toInt().coerceIn(0, 50)
         binding.seekAsrGain.progress = asrGainProgress
         binding.tvAsrGainValue.text = String.format("%.1fx", asrGain)
     }

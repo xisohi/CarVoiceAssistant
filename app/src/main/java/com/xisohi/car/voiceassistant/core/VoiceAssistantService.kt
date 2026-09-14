@@ -153,7 +153,7 @@ class VoiceAssistantService : Service() {
         android.util.Log.i("VoiceService", "唤醒灵敏度: ${WakeWordEngine.getSensitivityName()} (增益=${WakeWordEngine.getAudioGain()}, 阈值=${WakeWordEngine.getDetectionThreshold()})")
 
         // 读取保存的识别增益（asrGain），避免服务重启后用户设置丢失
-        val savedAsrGain = prefs.getFloat("asr_gain_override", 6.5f)
+        val savedAsrGain = prefs.getFloat("asr_gain_override", 8.0f)
         WakeWordEngine.setAsrGain(savedAsrGain)
         android.util.Log.i("VoiceService", "识别增益: ${WakeWordEngine.getAsrGain()}")
 

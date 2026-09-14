@@ -552,7 +552,7 @@
                         android:id="@+id/tvAsrGainValue"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="5.0x"
+                        android:text="8.0x"
                         android:textSize="11sp"
                         android:textStyle="bold"
                         android:textColor="#1A73E8" />
@@ -563,7 +563,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:max="50"
-                    android:progress="20"
+                    android:progress="30"
                     android:minHeight="24dp" />
 
                 <LinearLayout

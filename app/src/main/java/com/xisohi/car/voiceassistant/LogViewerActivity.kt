@@ -190,14 +190,23 @@ class LogViewerActivity : AppCompatActivity() {
         // 方法2：扫描常见的U盘挂载路径（车机可能用自定义路径）
         if (usbDir == null) {
             val usbPaths = listOf(
-                "/storage/usb0", "/storage/usb1", "/storage/usb2",
+                // 标准 Android 路径
+                "/storage/usb0", "/storage/usb1", "/storage/usb2", "/storage/usb3",
                 "/storage/usbdisk", "/storage/UDisk", "/storage/udisk",
-                "/storage/usb_storage", "/storage/usbhost",
-                "/mnt/usb", "/mnt/usb0", "/mnt/usb1", "/mnt/udisk", "/mnt/usbdisk",
-                "/mnt/usb_storage", "/mnt/usbhost",
+                "/storage/usb_storage", "/storage/usbhost", "/storage/UsbDrive",
+                // mnt 路径
+                "/mnt/usb", "/mnt/usb0", "/mnt/usb1", "/mnt/usb2", "/mnt/udisk", "/mnt/usbdisk",
+                "/mnt/usb_storage", "/mnt/usbhost", "/mnt/UsbDrive",
+                // 车机常见路径（全志/鼎微/方易通等方案）
                 "/storage/external_storage", "/storage/extSdCard",
-                "/storage/sdcard1", "/storage/sdcard2",
-                "/mnt/external_sd", "/mnt/ext_sd"
+                "/storage/sdcard1", "/storage/sdcard2", "/storage/sdcard3",
+                "/mnt/external_sd", "/mnt/ext_sd", "/mnt/sdcard",
+                // 其他常见路径
+                "/storage/udisk0", "/storage/udisk1",
+                "/mnt/udisk0", "/mnt/udisk1",
+                "/storage/USBdisk", "/storage/USBdisk1",
+                "/mnt/USBdisk", "/mnt/USBdisk1",
+                "/storage/usb_disk", "/mnt/usb_disk"
             )
             for (path in usbPaths) {
                 val dir = java.io.File(path)
@@ -240,17 +249,38 @@ class LogViewerActivity : AppCompatActivity() {
                 LogUtils.e("LogViewer", "导出到U盘失败: ${e.message}", e)
             }
         } else {
-            // 没找到U盘，用系统文件选择器
-            Toast.makeText(this, "未检测到U盘，请选择保存位置", Toast.LENGTH_SHORT).show()
-            val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
-                type = "text/plain"
-                putExtra(Intent.EXTRA_TITLE, "CarVoiceAssistant_${logFile.name}")
-                addCategory(Intent.CATEGORY_OPENABLE)
-            }
+            // 没找到U盘，先尝试导出到内置存储的 Download 目录（车机可能没有文件选择器）
             try {
-                startActivityForResult(intent, REQUEST_CODE_SAVE_FILE)
+                val downloadDir = java.io.File(
+                    android.os.Environment.getExternalStoragePublicDirectory(
+                        android.os.Environment.DIRECTORY_DOWNLOADS
+                    ), "CarVoiceAssistant"
+                )
+                if (!downloadDir.exists()) {
+                    downloadDir.mkdirs()
+                }
+                val destFile = java.io.File(downloadDir, "CarVoiceAssistant_${logFile.name}")
+                logFile.copyTo(destFile, overwrite = true)
+                Toast.makeText(
+                    this,
+                    "未检测到U盘，已导出到: ${destFile.absolutePath}",
+                    Toast.LENGTH_LONG
+                ).show()
+                LogUtils.i("LogViewer", "未检测到U盘，已导出到内置存储: ${destFile.absolutePath}")
             } catch (e: Exception) {
-                Toast.makeText(this, "无法打开文件选择器: ${e.message}", Toast.LENGTH_SHORT).show()
+                // 内置存储也失败，尝试用系统文件选择器
+                LogUtils.w("LogViewer", "导出到内置存储失败: ${e.message}")
+                Toast.makeText(this, "未检测到U盘，请选择保存位置", Toast.LENGTH_SHORT).show()
+                val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                    type = "text/plain"
+                    putExtra(Intent.EXTRA_TITLE, "CarVoiceAssistant_${logFile.name}")
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                }
+                try {
+                    startActivityForResult(intent, REQUEST_CODE_SAVE_FILE)
+                } catch (e2: Exception) {
+                    Toast.makeText(this, "导出失败: ${e2.message}", Toast.LENGTH_SHORT).show()
+                }
             }
         }
     }
