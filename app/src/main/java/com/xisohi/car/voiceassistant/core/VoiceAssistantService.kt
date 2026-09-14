@@ -157,6 +157,22 @@ class VoiceAssistantService : Service() {
         WakeWordEngine.setAsrGain(savedAsrGain)
         android.util.Log.i("VoiceService", "识别增益: ${WakeWordEngine.getAsrGain()}")
 
+        // 预加载 Vosk 语音识别模型（后台线程，不阻塞服务启动）
+        // 这样第一次唤醒识别时不需要等 2-3 秒模型加载，车机上从唤醒到录音可从 5 秒降到 1 秒内
+        scope.launch(Dispatchers.IO) {
+            try {
+                val modelDir = ModelManager.findAsrModelDir(this@VoiceAssistantService)
+                if (modelDir != null) {
+                    SpeechRecognizer.preload(modelDir)
+                    android.util.Log.i("VoiceService", "Vosk 模型预加载完成: ${modelDir.name}")
+                } else {
+                    android.util.Log.w("VoiceService", "Vosk 模型目录未找到，跳过预加载")
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("VoiceService", "Vosk 模型预加载失败", e)
+            }
+        }
+
         intentParser = IntentParser(this)
         skillExecutor = SkillExecutor(this)
         placeMatcher = PlaceMatcher(this)
@@ -965,6 +981,8 @@ class VoiceAssistantService : Service() {
         // 防止线程还在访问已关闭的 session 导致崩溃
         stopWakeListening()
         wakeWordEngine.close()
+        // 释放缓存的 Vosk Model，避免一直占内存（小模型约120MB，大模型可能1.5GB）
+        SpeechRecognizer.releaseCachedModel()
         ttsEngine.shutdown()
         // 释放提示音播放器
         toneGenerator?.release()

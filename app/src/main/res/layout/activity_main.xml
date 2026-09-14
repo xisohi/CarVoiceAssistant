@@ -562,7 +562,7 @@
                     android:id="@+id/seekAsrGain"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:max="30"
+                    android:max="50"
                     android:progress="20"
                     android:minHeight="24dp" />
 

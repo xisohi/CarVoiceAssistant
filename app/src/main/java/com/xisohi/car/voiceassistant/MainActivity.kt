@@ -268,7 +268,7 @@ class MainActivity : AppCompatActivity() {
             override fun onStopTrackingTouch(seekBar: android.widget.SeekBar?) {}
         })
 
-        // asrGain 滑块：3.0 ~ 6.0，步长 0.1
+        // asrGain 滑块：3.0 ~ 8.0，步长 0.1
         binding.seekAsrGain.setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: android.widget.SeekBar?, progress: Int, fromUser: Boolean) {
                 val asrGain = 3.0f + progress * 0.1f
@@ -326,10 +326,10 @@ class MainActivity : AppCompatActivity() {
 
     /**
      * 更新识别增益（asrGain）滑块 UI
-     * asrGain: 3.0 ~ 6.0 -> progress 0 ~ 30
+     * asrGain: 3.0 ~ 8.0 -> progress 0 ~ 50
      */
     private fun updateAsrGainUI(asrGain: Float) {
-        val asrGainProgress = ((asrGain - 3.0f) / 0.1f).toInt().coerceIn(0, 30)
+        val asrGainProgress = ((asrGain - 3.0f) / 0.1f).toInt().coerceIn(0, 50)
         binding.seekAsrGain.progress = asrGainProgress
         binding.tvAsrGainValue.text = String.format("%.1fx", asrGain)
     }
