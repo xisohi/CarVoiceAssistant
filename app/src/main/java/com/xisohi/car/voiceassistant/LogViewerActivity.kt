@@ -189,6 +189,7 @@ class LogViewerActivity : AppCompatActivity() {
                     LogUtils.i("LogViewer", "  可写性测试失败: ${e.message}")
                     dir.canWrite()  // 退化为用 canWrite() 判断
                 }
+                if (!canWrite) {
                     LogUtils.i("LogViewer", "  跳过：不可写")
                     continue
                 }
