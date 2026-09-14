@@ -41,6 +41,7 @@ class MainActivity : AppCompatActivity() {
         private const val KEY_SENSITIVITY = "wake_sensitivity"
         private const val KEY_MANUAL_THRESHOLD = "wake_threshold_override"
         private const val KEY_MANUAL_GAIN = "wake_gain_override"
+        private const val KEY_MANUAL_ASR_GAIN = "asr_gain_override"
     }
 
     private lateinit var binding: ActivityMainBinding
@@ -228,6 +229,7 @@ class MainActivity : AppCompatActivity() {
         // 读取已保存的手动参数（如果有）
         val savedThreshold = prefs.getFloat(KEY_MANUAL_THRESHOLD, -1f)
         val savedGain = prefs.getFloat(KEY_MANUAL_GAIN, -1f)
+        val savedAsrGain = prefs.getFloat(KEY_MANUAL_ASR_GAIN, -1f)
 
         // 如果有保存的手动参数，应用它
         if (savedThreshold > 0 && savedGain > 0) {
@@ -238,6 +240,13 @@ class MainActivity : AppCompatActivity() {
             // 否则用当前引擎的值初始化 UI
             updateManualUI(WakeWordEngine.getDetectionThreshold(), WakeWordEngine.getAudioGain())
         }
+
+        // 加载识别增益（asrGain）
+        if (savedAsrGain >= 3.0f) {
+            WakeWordEngine.setAsrGain(savedAsrGain)
+            log("已加载识别增益：asrGain=${savedAsrGain}x")
+        }
+        updateAsrGainUI(WakeWordEngine.getAsrGain())
 
         // threshold 滑块：0.001 ~ 0.10，步长 0.001
         binding.seekThreshold.setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
@@ -259,20 +268,33 @@ class MainActivity : AppCompatActivity() {
             override fun onStopTrackingTouch(seekBar: android.widget.SeekBar?) {}
         })
 
+        // asrGain 滑块：3.0 ~ 6.0，步长 0.1
+        binding.seekAsrGain.setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: android.widget.SeekBar?, progress: Int, fromUser: Boolean) {
+                val asrGain = 3.0f + progress * 0.1f
+                binding.tvAsrGainValue.text = String.format("%.1fx", asrGain)
+            }
+            override fun onStartTrackingTouch(seekBar: android.widget.SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: android.widget.SeekBar?) {}
+        })
+
         // 应用手动参数
         binding.btnApplyManual.setOnClickListener {
             val threshold = (binding.seekThreshold.progress + 1) * 0.001f
             val gain = 1.0f + binding.seekGain.progress * 0.1f
+            val asrGain = 3.0f + binding.seekAsrGain.progress * 0.1f
             WakeWordEngine.setGainAndThreshold(gain, threshold)
+            WakeWordEngine.setAsrGain(asrGain)
             // 保存到 SharedPreferences
             prefs.edit()
                 .putFloat(KEY_MANUAL_THRESHOLD, threshold)
                 .putFloat(KEY_MANUAL_GAIN, gain)
+                .putFloat(KEY_MANUAL_ASR_GAIN, asrGain)
                 .apply()
             // 更新灵敏度描述
-            binding.tvSensitivityDesc.text = "当前：手动（增益${String.format("%.1f", gain)}x，阈值${String.format("%.3f", threshold)}）"
-            toast("已应用手动参数：threshold=$threshold, gain=${gain}x")
-            log("手动参数已应用：threshold=$threshold, gain=${gain}x")
+            binding.tvSensitivityDesc.text = "当前：手动（增益${String.format("%.1f", gain)}x，阈值${String.format("%.3f", threshold)}，识别增益${String.format("%.1f", asrGain)}x）"
+            toast("已应用：threshold=$threshold, gain=${gain}x, asrGain=${asrGain}x")
+            log("手动参数已应用：threshold=$threshold, gain=${gain}x, asrGain=${asrGain}x")
         }
 
         // 恢复默认（清除手动参数，用三档灵敏度）
@@ -280,7 +302,10 @@ class MainActivity : AppCompatActivity() {
             prefs.edit()
                 .remove(KEY_MANUAL_THRESHOLD)
                 .remove(KEY_MANUAL_GAIN)
+                .remove(KEY_MANUAL_ASR_GAIN)
                 .apply()
+            // 恢复识别增益默认值
+            WakeWordEngine.setAsrGain(5.0f)
             // 恢复到中档预设
             fillPresetToSliders(1)
             toast(getString(R.string.toast_sensitivity_reset))
@@ -297,6 +322,16 @@ class MainActivity : AppCompatActivity() {
         val gainProgress = ((gain - 1.0f) / 0.1f).toInt().coerceIn(0, 45)
         binding.seekGain.progress = gainProgress
         binding.tvGainValue.text = String.format("%.1fx", gain)
+    }
+
+    /**
+     * 更新识别增益（asrGain）滑块 UI
+     * asrGain: 3.0 ~ 6.0 -> progress 0 ~ 30
+     */
+    private fun updateAsrGainUI(asrGain: Float) {
+        val asrGainProgress = ((asrGain - 3.0f) / 0.1f).toInt().coerceIn(0, 30)
+        binding.seekAsrGain.progress = asrGainProgress
+        binding.tvAsrGainValue.text = String.format("%.1fx", asrGain)
     }
 
     /**
