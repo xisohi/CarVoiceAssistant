@@ -51,8 +51,8 @@ class VoiceAssistantService : Service() {
         // 不再使用固定阈值，改为启动时采样环境噪音动态计算
         // 公式：adaptiveThreshold = ambientRms * NOISE_MULTIPLIER，并限制在 [MIN, MAX] 区间
         private const val SILENCE_RMS_MIN = 500f      // 绝对下限（安静停车环境）
-        private const val SILENCE_RMS_MAX = 2000f     // 绝对上限（防止噪音过大导致阈值过高）
-        private const val NOISE_MULTIPLIER = 2.5f     // 环境噪音倍数
+        private const val SILENCE_RMS_MAX = 1200f     // 绝对上限（防止噪音过大导致阈值过高）
+        private const val NOISE_MULTIPLIER = 1.8f     // 环境噪音倍数
         private const val NOISE_WARMUP_MS = 100L      // 丢弃前 100ms（录音启动爆音）
         private const val NOISE_SAMPLE_MS = 300L      // 环境噪音采样时长
 
@@ -572,7 +572,7 @@ class VoiceAssistantService : Service() {
 // 关键：采样音频也走和循环相同的处理路径（降噪 + 增益）
 // 这样 ambientRms 和循环 rms 才在同一基准上，阈值才有意义
             if (noiseRead > 0) {
-                recNoiseReducer.process(noiseBuf, noiseRead, enableRnNoise = false)
+                recNoiseReducer.process(noiseBuf, noiseRead, enableRnNoise = true)
                 applyGain(noiseBuf, noiseRead)
             }
             val ambientRms = if (noiseRead > 0) {
@@ -601,10 +601,10 @@ class VoiceAssistantService : Service() {
                 loop@ while (true) {
                     val n = record.read(shortBuf, 0, shortBuf.size)
                     if (n <= 0) continue
-                    // 应用降噪处理（只保留高通滤波，禁用 RNNoise）
-                    // RNNoise 在 16kHz 音频上会破坏人声特征（即使优化了重采样也不行），导致识别不准
-                    // 唤醒词检测阶段仍保留 RNNoise，因为降噪有助于噪音环境唤醒
-                    recNoiseReducer.process(shortBuf, n, enableRnNoise = false)
+                    // 应用降噪处理（高通滤波 + RNNoise）
+                    // 注意：RNNoise 在 16kHz 音频上可能破坏人声特征，如识别率下降可改回 false
+                    // 唤醒词检测阶段也启用 RNNoise，降噪有助于噪音环境唤醒
+                    recNoiseReducer.process(shortBuf, n, enableRnNoise = true)
                     // 应用音频增益（识别阶段专用增益，与唤醒增益独立，避免过放大削顶）
                     applyGain(shortBuf, n)
 
