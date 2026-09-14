@@ -42,7 +42,7 @@ public class WakeWordEngine {
      * 唤醒是远场检测（用户可能离麦克风较远），需要较大增益；
      * 识别是指令阶段（用户通常已靠近或音量正常），过大会导致波形截断，反而降低 Vosk 识别率。
      */
-    private static float asrGain = 4.0f;
+    private static float asrGain = 5.0f;
 
     /** 唤醒检测阈值：sigmoid 概率超过此值即判定为唤醒。降低可提高灵敏度。 */
     private static float detectionThreshold = 0.008f;
@@ -212,11 +212,11 @@ public class WakeWordEngine {
 
     /**
      * 设置识别专用增益
-     * 建议范围 1.0~4.0：太小识别不清，太大削顶失真
-     * @param gain 增益值，会被限制在 [1.0, 5.0] 区间
+     * 建议范围 3.0~6.0：太小识别不清，太大削顶失真
+     * @param gain 增益值，会被限制在 [3.0, 6.0] 区间
      */
     public static void setAsrGain(float gain) {
-        asrGain = Math.max(1.0f, Math.min(5.0f, gain));
+        asrGain = Math.max(3.0f, Math.min(6.0f, gain));
         Log.i(TAG, "识别增益设置为: " + asrGain);
     }
 
