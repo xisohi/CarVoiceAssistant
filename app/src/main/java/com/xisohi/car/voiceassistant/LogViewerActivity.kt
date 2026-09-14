@@ -146,11 +146,8 @@ class LogViewerActivity : AppCompatActivity() {
         try {
             val storageManager = getSystemService(STORAGE_SERVICE) as android.os.storage.StorageManager
             val volumes = storageManager.storageVolumes
+            LogUtils.i("LogViewer", "StorageManager 共找到 ${volumes.size} 个存储卷")
             for (volume in volumes) {
-                // 跳过内置存储
-                if (volume.isPrimary) continue
-                // 只考虑可移除的存储（U盘/SD卡）
-                if (!volume.isRemovable) continue
                 // 获取挂载路径（用反射兼容 Android 10 及以下，getDirectory() 是 API 30 才有的）
                 val dirPath = try {
                     // 优先用反射调用 getPath()（所有版本都有）
@@ -163,25 +160,41 @@ class LogViewerActivity : AppCompatActivity() {
                     } catch (e2: Exception) {
                         null
                     }
-                } ?: continue
-                val dir = java.io.File(dirPath)
-                if (dir.exists() && dir.isDirectory) {
-                    // 尝试创建临时文件测试可写性
-                    val testFile = java.io.File(dir, ".test_write_${System.currentTimeMillis()}")
-                    val canWrite = try {
-                        testFile.createNewFile()
-                        testFile.delete()
-                        true
-                    } catch (_: Exception) {
-                        false
-                    }
-                    if (canWrite) {
-                        usbDir = dir
-                        usbName = volume.getDescription(this) ?: "U盘"
-                        LogUtils.i("LogViewer", "StorageManager找到U盘: $usbName, path=${dir.absolutePath}")
-                        break
-                    }
                 }
+                val volDesc = try { volume.getDescription(this) } catch (_: Exception) { "未知" }
+                LogUtils.i("LogViewer", "存储卷: desc=$volDesc, path=$dirPath, isPrimary=${volume.isPrimary}, isRemovable=${volume.isRemovable}")
+                
+                // 跳过内置存储（注意：车机上的U盘可能 isRemovable=false，所以不判断 isRemovable）
+                if (volume.isPrimary) {
+                    LogUtils.i("LogViewer", "  跳过：内置存储")
+                    continue
+                }
+                if (dirPath == null) {
+                    LogUtils.i("LogViewer", "  跳过：路径为空")
+                    continue
+                }
+                val dir = java.io.File(dirPath)
+                if (!dir.exists() || !dir.isDirectory) {
+                    LogUtils.i("LogViewer", "  跳过：路径不存在或不是目录")
+                    continue
+                }
+                // 尝试创建临时文件测试可写性
+                val testFile = java.io.File(dir, ".test_write_${System.currentTimeMillis()}")
+                val canWrite = try {
+                    testFile.createNewFile()
+                    testFile.delete()
+                    true
+                } catch (_: Exception) {
+                    false
+                }
+                if (!canWrite) {
+                    LogUtils.i("LogViewer", "  跳过：不可写")
+                    continue
+                }
+                usbDir = dir
+                usbName = volDesc
+                LogUtils.i("LogViewer", "✅ StorageManager找到U盘: $usbName, path=${dir.absolutePath}")
+                break
             }
         } catch (e: Exception) {
             LogUtils.w("LogViewer", "StorageManager获取存储卷失败: ${e.message}")

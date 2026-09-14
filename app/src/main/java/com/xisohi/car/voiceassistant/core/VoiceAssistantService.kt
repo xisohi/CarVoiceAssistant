@@ -315,7 +315,7 @@ class VoiceAssistantService : Service() {
             }
 
             val record = AudioRecord(
-                MediaRecorder.AudioSource.MIC,
+                MediaRecorder.AudioSource.VOICE_RECOGNITION,
                 sampleRate,
                 channelConfig,
                 audioFormat,
@@ -537,7 +537,7 @@ class VoiceAssistantService : Service() {
                 return@launch
             }
             val record = AudioRecord(
-                MediaRecorder.AudioSource.MIC,
+                MediaRecorder.AudioSource.VOICE_RECOGNITION,
                 SpeechRecognizer.SAMPLE_RATE.toInt(),
                 AudioFormat.CHANNEL_IN_MONO,
                 AudioFormat.ENCODING_PCM_16BIT,
