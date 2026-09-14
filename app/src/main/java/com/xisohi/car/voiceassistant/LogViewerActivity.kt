@@ -123,8 +123,8 @@ class LogViewerActivity : AppCompatActivity() {
 
     /**
      * 导出日志到U盘
-     * 自动扫描常见的U盘挂载路径，找到后复制日志文件
-     * 如果找不到U盘，用系统文件选择器让用户选择保存位置
+     * 优先使用 StorageManager 获取存储卷（Android 7.0+），
+     * 其次扫描常见的U盘挂载路径，最后用系统文件选择器
      */
     private fun exportToUsb() {
         val logFile = if (currentDate == null) {
@@ -139,33 +139,79 @@ class LogViewerActivity : AppCompatActivity() {
             return
         }
 
-        // 扫描常见的U盘挂载路径
-        val usbPaths = listOf(
-            "/storage/usb0",
-            "/storage/usb1",
-            "/storage/usbdisk",
-            "/storage/UDisk",
-            "/storage/udisk",
-            "/mnt/usb",
-            "/mnt/usb0",
-            "/mnt/usb1",
-            "/mnt/udisk",
-            "/mnt/usbdisk",
-            "/storage/external_storage",
-            "/storage/extSdCard"
-        )
-
         var usbDir: java.io.File? = null
-        for (path in usbPaths) {
-            val dir = java.io.File(path)
-            if (dir.exists() && dir.isDirectory && dir.canWrite()) {
-                // 确认是U盘（不是内置存储）
-                val canonicalPath = dir.canonicalPath
-                if (!canonicalPath.contains("/sdcard") &&
-                    !canonicalPath.contains("/emulated") &&
-                    !canonicalPath.contains("/self")) {
-                    usbDir = dir
-                    break
+        var usbName = ""
+
+        // 方法1：使用 StorageManager 获取存储卷（Android 7.0+，最可靠）
+        try {
+            val storageManager = getSystemService(STORAGE_SERVICE) as android.os.storage.StorageManager
+            val volumes = storageManager.storageVolumes
+            for (volume in volumes) {
+                // 跳过内置存储
+                if (volume.isPrimary) continue
+                // 只考虑可移除的存储（U盘/SD卡）
+                if (!volume.isRemovable) continue
+                // 获取挂载路径
+                val dir = volume.directory ?: continue
+                if (dir.exists() && dir.isDirectory) {
+                    // 尝试创建临时文件测试可写性
+                    val testFile = java.io.File(dir, ".test_write_${System.currentTimeMillis()}")
+                    val canWrite = try {
+                        testFile.createNewFile()
+                        testFile.delete()
+                        true
+                    } catch (_: Exception) {
+                        false
+                    }
+                    if (canWrite) {
+                        usbDir = dir
+                        usbName = volume.getDescription(this) ?: "U盘"
+                        LogUtils.i("LogViewer", "StorageManager找到U盘: $usbName, path=${dir.absolutePath}")
+                        break
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            LogUtils.w("LogViewer", "StorageManager获取存储卷失败: ${e.message}")
+        }
+
+        // 方法2：扫描常见的U盘挂载路径（车机可能用自定义路径）
+        if (usbDir == null) {
+            val usbPaths = listOf(
+                "/storage/usb0", "/storage/usb1", "/storage/usb2",
+                "/storage/usbdisk", "/storage/UDisk", "/storage/udisk",
+                "/storage/usb_storage", "/storage/usbhost",
+                "/mnt/usb", "/mnt/usb0", "/mnt/usb1", "/mnt/udisk", "/mnt/usbdisk",
+                "/mnt/usb_storage", "/mnt/usbhost",
+                "/storage/external_storage", "/storage/extSdCard",
+                "/storage/sdcard1", "/storage/sdcard2",
+                "/mnt/external_sd", "/mnt/ext_sd"
+            )
+            for (path in usbPaths) {
+                val dir = java.io.File(path)
+                if (dir.exists() && dir.isDirectory) {
+                    // 确认不是内置存储
+                    val canonicalPath = try { dir.canonicalPath } catch (_: Exception) { path }
+                    if (canonicalPath.contains("/sdcard") ||
+                        canonicalPath.contains("/emulated") ||
+                        canonicalPath.contains("/self")) {
+                        continue
+                    }
+                    // 测试可写性
+                    val testFile = java.io.File(dir, ".test_write_${System.currentTimeMillis()}")
+                    val canWrite = try {
+                        testFile.createNewFile()
+                        testFile.delete()
+                        true
+                    } catch (_: Exception) {
+                        false
+                    }
+                    if (canWrite) {
+                        usbDir = dir
+                        usbName = "U盘($path)"
+                        LogUtils.i("LogViewer", "路径扫描找到U盘: $path")
+                        break
+                    }
                 }
             }
         }
@@ -175,7 +221,7 @@ class LogViewerActivity : AppCompatActivity() {
             try {
                 val destFile = java.io.File(usbDir, "CarVoiceAssistant_${logFile.name}")
                 logFile.copyTo(destFile, overwrite = true)
-                Toast.makeText(this, "已导出到U盘: ${destFile.absolutePath}", Toast.LENGTH_LONG).show()
+                Toast.makeText(this, "已导出到$usbName: ${destFile.name}", Toast.LENGTH_LONG).show()
                 LogUtils.i("LogViewer", "日志已导出到U盘: ${destFile.absolutePath}")
             } catch (e: Exception) {
                 Toast.makeText(this, "导出失败: ${e.message}", Toast.LENGTH_SHORT).show()

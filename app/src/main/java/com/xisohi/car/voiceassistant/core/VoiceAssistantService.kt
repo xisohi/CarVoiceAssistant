@@ -551,6 +551,7 @@ class VoiceAssistantService : Service() {
             lastPartialText = ""
             record.startRecording()
             android.util.Log.d("VoiceService", "开始录音识别")
+            sendRecognitionLog("🎙️ 开始录音识别")
 
             // ===== 环境噪音采样，动态设定静音阈值 =====
             // 先丢弃前 100ms（录音刚启动时可能有爆音）
@@ -586,6 +587,7 @@ class VoiceAssistantService : Service() {
                 .coerceIn(SILENCE_RMS_MIN, SILENCE_RMS_MAX)
             android.util.Log.d("VoiceService",
                 "环境噪音 RMS=${ambientRms.toInt()}（含增益）, 自适应静音阈值=${adaptiveSilenceThreshold.toInt()}")
+                sendRecognitionLog("📊 环境噪音RMS=${ambientRms.toInt()}, 阈值=${adaptiveSilenceThreshold.toInt()}")
             // =========================================
 
             val shortBuf = ShortArray(512)
@@ -628,6 +630,7 @@ class VoiceAssistantService : Service() {
                                 hasSpeechStarted = true
                                 hasSpeechStartedThisSession = true
                                 android.util.Log.d("VoiceService", "检测到用户开口 (连续${speechFrameCount}帧非静音, RMS=${rms.toInt()})")
+                                sendRecognitionLog("🗣️ 检测到开口 (连续${speechFrameCount}帧, RMS=${rms.toInt()})")
                             }
                         } else {
                             speechFrameCount = 0  // 静音，重置计数
@@ -657,6 +660,7 @@ class VoiceAssistantService : Service() {
                         if (silenceDuration >= MAX_SILENCE_MS && recordDuration >= MIN_RECORD_MS) {
                             android.util.Log.d("VoiceService",
                                 "连续静音${silenceDuration}ms，确认用户说完了，结束录音 (RMS=${rms.toInt()}, 阈值=${adaptiveSilenceThreshold.toInt()})")
+                                sendRecognitionLog("⏹️ 结束录音 (静音${silenceDuration}ms, RMS=${rms.toInt()})")
                             break@loop
                         }
                     } else if (!isSilence) {
@@ -956,10 +960,14 @@ class VoiceAssistantService : Service() {
     }
 
     /**
-     * 发送识别日志广播，通知 MainActivity 显示到设置页的运行日志中
-     * 只发送有效的、有内容的识别结果
+     * 发送识别日志，同时写入文件和发送广播
+     * - 写入 LogUtils 文件：LogViewerActivity（查看日志页面）可以查看和导出
+     * - 发送广播：MainActivity 实时显示到设置页的运行日志
      */
     private fun sendRecognitionLog(message: String) {
+        // 写入文件日志（查看日志页面可以查看和导出到U盘）
+        LogUtils.i("Recognition", message)
+        // 发送广播（设置页实时显示）
         try {
             val intent = Intent(ACTION_RECOGNITION_LOG).apply {
                 setPackage(packageName)
