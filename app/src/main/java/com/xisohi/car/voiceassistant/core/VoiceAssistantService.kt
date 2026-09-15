@@ -44,7 +44,7 @@ class VoiceAssistantService : Service() {
         private const val NOTIF_ID = 1
         private const val MAX_RECORD_MS = 20_000L  // 最长录音 20 秒（给用户足够时间说话）
         private const val MIN_RECORD_MS = 2_000L    // 最短录音 2 秒（避免短暂停顿被误判为端点）
-        private const val MAX_SILENCE_MS = 1500L     // 连续静音超过 1500ms 才认为用户说完了（避免说话中间间隙误判）
+        private const val MAX_SILENCE_MS = 2000L     // 连续静音超过 2000ms 才认为用户说完了（避免说话中间间隙误判）
         private const val WAIT_SPEECH_TIMEOUT_MS = 8_000L  // 用户开口前的等待上限（8秒没有效声音就自动退出，避免无限循环"没有听清"）
 
         // ===== 自适应静音阈值参数 =====

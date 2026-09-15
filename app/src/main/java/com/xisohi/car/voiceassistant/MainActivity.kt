@@ -380,13 +380,120 @@ class MainActivity : AppCompatActivity() {
         // 从文件导入百度配置（支持U盘、车机内部存储等任意位置）
         binding.btnImportBaiduConfig.setOnClickListener {
             try {
-                // 启动系统文件选择器，用户可以选择任意位置的 .json 文件
+                // 先尝试系统文件选择器
                 filePickerLauncher.launch(arrayOf("application/json", "*/*"))
                 log("打开文件选择器，选择百度配置文件")
             } catch (e: Exception) {
-                toast("打开文件选择器失败：${e.message}")
-                log("打开文件选择器失败：${e.message}")
+                log("系统文件选择器不可用：${e.message}，尝试扫描U盘")
+                // 系统没有文件选择器（如精简版车机系统），自动扫描U盘
+                scanUsbAndImport()
             }
+        }
+    }
+
+    /**
+     * 扫描U盘并导入配置文件（系统没有文件选择器时的 fallback）
+     * 自动扫描常见U盘路径下的 .json 文件
+     */
+    private fun scanUsbAndImport() {
+        // 常见的U盘挂载路径
+        val usbPaths = listOf(
+            "/storage/usb1",
+            "/storage/usb0",
+            "/mnt/usb",
+            "/mnt/usb_storage",
+            "/storage/udisk",
+            "/mnt/udisk"
+        )
+
+        val jsonFiles = mutableListOf<java.io.File>()
+
+        // 扫描每个路径下的 .json 文件
+        for (path in usbPaths) {
+            val dir = java.io.File(path)
+            if (dir.exists() && dir.isDirectory) {
+                log("扫描U盘路径: $path")
+                try {
+                    dir.listFiles { file ->
+                        file.isFile && file.name.lowercase().endsWith(".json")
+                    }?.let { files ->
+                        jsonFiles.addAll(files)
+                        log("  找到 ${files.size} 个 .json 文件")
+                    }
+                } catch (e: Exception) {
+                    log("  扫描失败: ${e.message}")
+                }
+            }
+        }
+
+        when {
+            jsonFiles.isEmpty() -> {
+                toast("未在U盘找到 .json 配置文件
+请将配置文件放到U盘根目录")
+                log("U盘扫描完成：未找到 .json 文件")
+            }
+            jsonFiles.size == 1 -> {
+                // 只有一个文件，直接导入
+                log("U盘只找到一个配置文件，直接导入: ${jsonFiles[0].name}")
+                importBaiduConfigFromFile(jsonFiles[0])
+            }
+            else -> {
+                // 多个文件，弹出选择对话框
+                log("U盘找到 ${jsonFiles.size} 个配置文件，弹出选择对话框")
+                showFileSelectDialog(jsonFiles)
+            }
+        }
+    }
+
+    /**
+     * 弹出文件选择对话框（多个配置文件时让用户选择）
+     */
+    private fun showFileSelectDialog(files: List<java.io.File>) {
+        val fileNames = files.map { it.name }.toTypedArray()
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("选择配置文件")
+            .setItems(fileNames) { _, which ->
+                importBaiduConfigFromFile(files[which])
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    /**
+     * 从本地文件导入百度语音配置
+     */
+    private fun importBaiduConfigFromFile(file: java.io.File) {
+        try {
+            val content = file.readText(Charsets.UTF_8)
+            log("导入配置：读取文件成功，内容长度=${content.length}")
+
+            // 解析 JSON
+            val json = org.json.JSONObject(content)
+            val appId = json.optString("app_id", "").trim()
+            val apiKey = json.optString("api_key", "").trim()
+            val secretKey = json.optString("secret_key", "").trim()
+
+            if (appId.isEmpty() || apiKey.isEmpty() || secretKey.isEmpty()) {
+                toast("配置文件格式错误，请检查 app_id/api_key/secret_key 是否完整")
+                log("导入配置失败：配置不完整")
+                return
+            }
+
+            // 填充到输入框
+            binding.etBaiduAppId.setText(appId)
+            binding.etBaiduApiKey.setText(apiKey)
+            binding.etBaiduSecretKey.setText(secretKey)
+
+            // 自动保存配置
+            baiduAsrManager.saveConfig(appId, apiKey, secretKey)
+            updateBaiduStatus()
+
+            toast("配置导入成功！已自动保存")
+            log("导入配置成功：appId=$appId, 来源=${file.name}")
+
+        } catch (e: Exception) {
+            toast("导入失败：${e.message}")
+            log("导入配置异常：${e.message}")
         }
     }
 
@@ -864,12 +971,19 @@ class MainActivity : AppCompatActivity() {
         val needed = mutableListOf(Manifest.permission.RECORD_AUDIO)
         if (Build.VERSION.SDK_INT >= 33) needed.add(Manifest.permission.POST_NOTIFICATIONS)
         if (Build.VERSION.SDK_INT >= 31) needed.add(Manifest.permission.BLUETOOTH_CONNECT)
-        // 存储权限（保存测试日志）
-        if (Build.VERSION.SDK_INT <= 28) needed.add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
-        if (Build.VERSION.SDK_INT <= 32) needed.add(Manifest.permission.READ_EXTERNAL_STORAGE)
+        // 存储权限（保存日志、导出U盘、导入配置）
+        // 注意：不能加版本限制，Android 10 通过 requestLegacyExternalStorage 仍需要此权限
+        needed.add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+        needed.add(Manifest.permission.READ_EXTERNAL_STORAGE)
         val missing = needed.filter { !hasPermission(it) }
         if (missing.isNotEmpty()) {
             permissionLauncher.launch(missing.toTypedArray())
+        }
+        // Android 11+ 引导用户开启所有文件访问权限（用于U盘读写）
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            if (!android.os.Environment.isExternalStorageManager()) {
+                log("提示：Android 11+ 需要开启所有文件访问权限才能读写U盘")
+            }
         }
     }
 
