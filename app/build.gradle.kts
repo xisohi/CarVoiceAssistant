@@ -122,6 +122,9 @@ android {
 }
 
 dependencies {
+    // 百度语音识别 SDK（直接引用 AAR，Gradle 自动提取 so/合并 Manifest/处理资源）
+    implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.aar", "*.jar"))))
+
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("com.google.android.material:material:1.12.0")

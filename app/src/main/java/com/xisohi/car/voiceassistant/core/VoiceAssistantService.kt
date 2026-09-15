@@ -126,6 +126,7 @@ class VoiceAssistantService : Service() {
     private lateinit var skillExecutor: SkillExecutor
     private lateinit var ttsEngine: TtsEngine
     private lateinit var placeMatcher: PlaceMatcher  // 地名模糊匹配器（导航同音字纠正）
+    private lateinit var baiduAsrManager: BaiduAsrManager  // 百度语音识别（在线，识别率更高）
 
     private var recognitionJob: Job? = null
     // 小模型加载快（<1秒），不需要预加载，每次识别时直接创建即可
@@ -156,6 +157,14 @@ class VoiceAssistantService : Service() {
         val savedAsrGain = prefs.getFloat("asr_gain_override", 8.0f)
         WakeWordEngine.setAsrGain(savedAsrGain)
         android.util.Log.i("VoiceService", "识别增益: ${WakeWordEngine.getAsrGain()}")
+
+        // 初始化百度语音识别管理器（有网络且配置了 Key 时优先使用百度，识别率更高）
+        baiduAsrManager = BaiduAsrManager(this)
+        if (baiduAsrManager.isConfigured()) {
+            android.util.Log.i("VoiceService", "百度语音已配置，有网络时优先使用百度识别")
+        } else {
+            android.util.Log.i("VoiceService", "百度语音未配置，使用离线 Vosk 识别")
+        }
 
         // 预加载 Vosk 语音识别模型（后台线程，不阻塞服务启动）
         // 这样第一次唤醒识别时不需要等 2-3 秒模型加载，车机上从唤醒到录音可从 5 秒降到 1 秒内
@@ -599,6 +608,8 @@ class VoiceAssistantService : Service() {
             var speechFrameCount = 0  // 连续非静音帧数（连续3帧非静音才算开口，避免噪音波动误触发）
 
             var finalText = ""
+            // 音频数据缓冲区：保存应用增益后的 PCM 数据，用于百度语音识别（infile 模式）
+            val audioBuffer = java.io.ByteArrayOutputStream()
             try {
                 loop@ while (true) {
                     val n = record.read(shortBuf, 0, shortBuf.size)
@@ -607,7 +618,15 @@ class VoiceAssistantService : Service() {
                     // 注意：RNNoise 在 16kHz 音频上可能破坏人声特征，如识别率下降可改回 false
                     // 唤醒词检测阶段也启用 RNNoise，降噪有助于噪音环境唤醒
                     recNoiseReducer.process(shortBuf, n, enableRnNoise = false)
-                    // 应用音频增益（识别阶段专用增益，与唤醒增益独立，避免过放大削顶）
+
+                    // 先保存增益前的原始音频到缓冲区（用于百度语音识别）
+                    // 原因：百度云端会自己做增益和降噪，本地提前放大可能导致削顶，反而降低识别率
+                    // 给百度原始音频，让云端自己决定怎么处理，识别率更高
+                    val tmpBytes = ByteArray(n * 2)
+                    shortsToBytes(shortBuf, n, tmpBytes)
+                    audioBuffer.write(tmpBytes)
+
+                    // 再应用音频增益给 Vosk（Vosk 离线识别需要放大音频提高信噪比）
                     applyGain(shortBuf, n)
 
                     // 计算 RMS 能量，判断是否静音（不依赖 Vosk 内置端点检测，太敏感）
@@ -680,6 +699,48 @@ class VoiceAssistantService : Service() {
                     }
                 }
                 finalText = recognizer.finish()
+                android.util.Log.d("VoiceService", "Vosk 识别文本: '$finalText'")
+
+                // 优先使用百度语音识别（有网络且配置了 Key 时），识别率更高
+                // 百度识别用 infile 模式：我们自己录音，保存为临时 PCM 文件，传给百度识别
+                if (baiduAsrManager.isConfigured() && isNetworkAvailable()) {
+                    android.util.Log.i("VoiceService", "百度语音已配置且有网络，优先使用百度识别")
+                    sendRecognitionLog("🌐 使用百度在线识别")
+                    try {
+                        // 保存音频数据为临时 PCM 文件
+                        val tempFile = java.io.File(cacheDir, "baidu_asr_${System.currentTimeMillis()}.pcm")
+                        tempFile.writeBytes(audioBuffer.toByteArray())
+                        android.util.Log.d("VoiceService", "临时音频文件: ${tempFile.name}, 大小: ${tempFile.length()} bytes")
+
+                        // 用 suspendCoroutine 把百度异步回调转成同步调用
+                        val baiduResult = kotlinx.coroutines.suspendCancellableCoroutine<String?> { cont ->
+                            baiduAsrManager.recognizeFile(tempFile) { result ->
+                                // 删除临时文件
+                                try { tempFile.delete() } catch (_: Exception) {}
+                                cont.resumeWith(Result.success(result))
+                            }
+                        }
+
+                        if (!baiduResult.isNullOrEmpty()) {
+                            finalText = baiduResult
+                            android.util.Log.i("VoiceService", "百度识别成功: '$finalText'")
+                            sendRecognitionLog("✅ 百度识别: $finalText")
+                        } else {
+                            android.util.Log.w("VoiceService", "百度识别失败或结果为空，回退到 Vosk 结果")
+                            sendRecognitionLog("⚠️ 百度识别失败，使用离线 Vosk 结果")
+                        }
+                    } catch (e: Exception) {
+                        android.util.Log.e("VoiceService", "百度识别异常: ${e.message}，回退到 Vosk", e)
+                        sendRecognitionLog("⚠️ 百度识别异常，使用离线 Vosk 结果")
+                    }
+                } else {
+                    if (!baiduAsrManager.isConfigured()) {
+                        android.util.Log.d("VoiceService", "百度语音未配置，使用离线 Vosk 识别")
+                    } else {
+                        android.util.Log.d("VoiceService", "无网络，使用离线 Vosk 识别")
+                    }
+                }
+
                 android.util.Log.d("VoiceService", "最终识别文本: '$finalText'")
             } finally {
                 try { record.stop() } catch (_: Exception) {}
@@ -708,6 +769,30 @@ class VoiceAssistantService : Service() {
                 amplified < Short.MIN_VALUE -> Short.MIN_VALUE
                 else -> amplified.toInt().toShort()
             }
+        }
+    }
+
+    /**
+     * 检查网络是否可用
+     * 用于判断是否可以使用百度在线语音识别
+     */
+    private fun isNetworkAvailable(): Boolean {
+        return try {
+            val cm = getSystemService(CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+            val network = cm.activeNetwork
+            if (network != null) {
+                val capabilities = cm.getNetworkCapabilities(network)
+                capabilities != null && (
+                    capabilities.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) ||
+                    capabilities.hasTransport(android.net.NetworkCapabilities.TRANSPORT_CELLULAR) ||
+                    capabilities.hasTransport(android.net.NetworkCapabilities.TRANSPORT_ETHERNET)
+                )
+            } else {
+                false
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("VoiceService", "检查网络状态失败: ${e.message}")
+            false
         }
     }
 

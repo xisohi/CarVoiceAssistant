@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/scrollView"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:fillViewport="true">
@@ -604,6 +605,157 @@
                     android:textSize="9sp"
                     android:textColor="#2E7D32"
                     android:layout_marginTop="3dp" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- ============ 百度语音识别配置卡 ============ -->
+        <com.google.android.material.card.MaterialCardView
+            android:id="@+id/cardBaiduConfig"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            app:cardCornerRadius="6dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="6dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="百度语音识别（在线，识别率更高）"
+                    android:textSize="10sp"
+                    android:textColor="#6B7280" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="请使用您自己的百度账号在百度智能云创建应用并获取以下参数（免费额度5万次/天）"
+                    android:textSize="8sp"
+                    android:textColor="#FF9800"
+                    android:layout_marginTop="2dp" />
+
+                <TextView
+                    android:id="@+id/tvBaiduGuide"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="获取方式：百度智能云 → 语音技术 → 创建应用 → 复制 App ID/API Key/Secret Key"
+                    android:textSize="8sp"
+                    android:textColor="#9E9E9E"
+                    android:layout_marginTop="1dp"
+                    android:autoLink="none" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="⚠️ 创建应用时，语音包名必须填：com.xisohi.car.voiceassistant"
+                    android:textSize="8sp"
+                    android:textColor="#F44336"
+                    android:layout_marginTop="1dp" />
+
+                <com.google.android.material.textfield.TextInputLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:hint="App ID"
+                    app:boxBackgroundMode="outline"
+                    app:boxStrokeWidth="1dp"
+                    app:boxStrokeWidthFocused="1dp">
+
+                    <com.google.android.material.textfield.TextInputEditText
+                        android:id="@+id/etBaiduAppId"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:inputType="number"
+                        android:textSize="11sp"
+                        android:paddingVertical="6dp" />
+                </com.google.android.material.textfield.TextInputLayout>
+
+                <com.google.android.material.textfield.TextInputLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:hint="API Key"
+                    app:boxBackgroundMode="outline"
+                    app:boxStrokeWidth="1dp"
+                    app:boxStrokeWidthFocused="1dp">
+
+                    <com.google.android.material.textfield.TextInputEditText
+                        android:id="@+id/etBaiduApiKey"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:inputType="text"
+                        android:textSize="11sp"
+                        android:paddingVertical="6dp" />
+                </com.google.android.material.textfield.TextInputLayout>
+
+                <com.google.android.material.textfield.TextInputLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:hint="Secret Key"
+                    app:boxBackgroundMode="outline"
+                    app:boxStrokeWidth="1dp"
+                    app:boxStrokeWidthFocused="1dp">
+
+                    <com.google.android.material.textfield.TextInputEditText
+                        android:id="@+id/etBaiduSecretKey"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:inputType="textPassword"
+                        android:textSize="11sp"
+                        android:paddingVertical="6dp" />
+                </com.google.android.material.textfield.TextInputLayout>
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginTop="4dp">
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnSaveBaiduConfig"
+                        android:layout_width="0dp"
+                        android:layout_height="30dp"
+                        android:layout_weight="1"
+                        android:text="保存配置"
+                        android:textSize="11sp"
+                        android:layout_marginEnd="3dp"
+                        android:minWidth="0dp"
+                        android:minHeight="0dp"
+                        android:paddingVertical="0dp" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnTestBaiduConfig"
+                        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                        android:layout_width="0dp"
+                        android:layout_height="30dp"
+                        android:layout_weight="1"
+                        android:text="测试连接"
+                        android:textSize="11sp"
+                        android:minWidth="0dp"
+                        android:minHeight="0dp"
+                        android:paddingVertical="0dp" />
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/tvBaiduStatus"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="未配置"
+                    android:textSize="9sp"
+                    android:textColor="#9E9E9E"
+                    android:layout_marginTop="3dp" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="有网络时优先使用百度识别，无网络时自动回退到离线 Vosk"
+                    android:textSize="8sp"
+                    android:textColor="#9E9E9E"
+                    android:layout_marginTop="2dp" />
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 

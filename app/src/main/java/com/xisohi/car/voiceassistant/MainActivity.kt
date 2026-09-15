@@ -17,6 +17,7 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import com.xisohi.car.voiceassistant.core.BaiduAsrManager
 import com.xisohi.car.voiceassistant.core.LogUtils
 import com.xisohi.car.voiceassistant.core.VoiceAssistantService
 import com.xisohi.car.voiceassistant.core.wakeword.WakeWordEngine
@@ -45,6 +46,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private lateinit var binding: ActivityMainBinding
+    private lateinit var baiduAsrManager: BaiduAsrManager
 
     // 识别结果广播接收器：接收 VoiceAssistantService 发送的识别结果，显示到运行日志
     private val recognitionLogReceiver = object : BroadcastReceiver() {
@@ -311,6 +313,107 @@ class MainActivity : AppCompatActivity() {
             toast(getString(R.string.toast_sensitivity_reset))
             log("已恢复默认灵敏度（中）")
         }
+
+        // 初始化百度语音识别配置
+        baiduAsrManager = BaiduAsrManager(this)
+        binding.etBaiduAppId.setText(baiduAsrManager.getAppId())
+        binding.etBaiduApiKey.setText(baiduAsrManager.getApiKey())
+        binding.etBaiduSecretKey.setText(baiduAsrManager.getSecretKey())
+        updateBaiduStatus()
+
+        // 首次启动检测：如果未配置百度语音识别，弹出引导对话框
+        if (!baiduAsrManager.isConfigured()) {
+            showBaiduConfigGuide()
+        }
+
+        // 保存百度配置
+        binding.btnSaveBaiduConfig.setOnClickListener {
+            val appId = binding.etBaiduAppId.text.toString().trim()
+            val apiKey = binding.etBaiduApiKey.text.toString().trim()
+            val secretKey = binding.etBaiduSecretKey.text.toString().trim()
+            if (appId.isEmpty() || apiKey.isEmpty() || secretKey.isEmpty()) {
+                toast("App ID、API Key 和 Secret Key 都不能为空")
+                return@setOnClickListener
+            }
+            baiduAsrManager.saveConfig(appId, apiKey, secretKey)
+            toast("百度语音配置已保存")
+            log("百度语音配置已保存")
+            updateBaiduStatus()
+        }
+
+        // 测试百度配置（初始化 SDK 测试）
+        binding.btnTestBaiduConfig.setOnClickListener {
+            val appId = binding.etBaiduAppId.text.toString().trim()
+            val apiKey = binding.etBaiduApiKey.text.toString().trim()
+            val secretKey = binding.etBaiduSecretKey.text.toString().trim()
+            if (appId.isEmpty() || apiKey.isEmpty() || secretKey.isEmpty()) {
+                toast("请先填写 App ID、API Key 和 Secret Key")
+                return@setOnClickListener
+            }
+            // 先保存配置
+            baiduAsrManager.saveConfig(appId, apiKey, secretKey)
+            binding.tvBaiduStatus.text = "正在初始化..."
+            binding.tvBaiduStatus.setTextColor(0xFFFF9800.toInt())
+            // 初始化 SDK 测试
+            val success = baiduAsrManager.init()
+            if (success) {
+                binding.tvBaiduStatus.text = "初始化成功"
+                binding.tvBaiduStatus.setTextColor(0xFF4CAF50.toInt())
+                toast("百度语音 SDK 初始化成功")
+                log("百度语音 SDK 初始化成功")
+            } else {
+                binding.tvBaiduStatus.text = "初始化失败，请检查配置"
+                binding.tvBaiduStatus.setTextColor(0xFFF44336.toInt())
+                toast("百度语音 SDK 初始化失败，请检查配置")
+                log("百度语音 SDK 初始化失败")
+            }
+        }
+    }
+
+    /**
+     * 更新百度语音配置状态显示
+     */
+    private fun updateBaiduStatus() {
+        if (baiduAsrManager.isConfigured()) {
+            binding.tvBaiduStatus.text = "已配置"
+            binding.tvBaiduStatus.setTextColor(0xFF4CAF50.toInt())
+        } else {
+            binding.tvBaiduStatus.text = "未配置"
+            binding.tvBaiduStatus.setTextColor(0xFF9E9E9E.toInt())
+        }
+    }
+
+    /**
+     * 显示百度语音识别配置引导对话框
+     * 首次启动且未配置时弹出，引导用户去百度智能云创建应用并配置参数
+     */
+    private fun showBaiduConfigGuide() {
+        val dialog = android.app.AlertDialog.Builder(this)
+            .setTitle("配置百度语音识别")
+            .setMessage(
+                "百度语音识别（在线）识别率更高，需要您使用自己的百度账号进行配置：\n\n" +
+                "1. 打开百度智能云官网（console.bce.baidu.com）\n" +
+                "2. 进入「语音技术」→「应用管理」→「创建应用」\n" +
+                "3. 开通「短语音识别」服务（免费额度5万次/天）\n" +
+                "4. 复制 App ID、API Key、Secret Key 填入下方设置页\n\n" +
+                "未配置时将使用离线 Vosk 识别（准确率较低）。\n\n" +
+                "是否现在配置？"
+            )
+            .setPositiveButton("立即配置") { _, _ ->
+                // 滚动到百度配置区域
+                binding.scrollView.post {
+                    binding.scrollView.smoothScrollTo(0, binding.cardBaiduConfig.top)
+                }
+                // 聚焦到 App ID 输入框
+                binding.etBaiduAppId.requestFocus()
+                toast("请在下方填写您的百度语音识别配置")
+            }
+            .setNegativeButton("稍后再说") { dialog, _ ->
+                dialog.dismiss()
+            }
+            .setCancelable(false)
+            .create()
+        dialog.show()
     }
 
     private fun updateManualUI(threshold: Float, gain: Float) {

@@ -39,10 +39,15 @@
     <application
         android:name=".VoiceAssistantApp"
         android:allowBackup="true"
+        android:extractNativeLibs="true"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.CarVoiceAssistant">
+
+        <!-- 百度语音 SDK 鉴权信息：不内置任何 Key -->
+        <!-- 用户必须在设置页填写自己的 App ID/API Key/Secret Key -->
+        <!-- AipeEventManagerFactory 会动态传入用户填的 Key，不需要 meta-data -->
 
         <activity
             android:name=".MainActivity"
