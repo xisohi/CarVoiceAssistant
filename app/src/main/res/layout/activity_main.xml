@@ -632,7 +632,7 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="请使用您自己的百度账号在百度智能云创建应用并获取以下参数（免费额度5万次/天）"
+                    android:text="请使用您自己的百度账号在百度智能云创建应用并获取以下参数（个人认证免费15万次）"
                     android:textSize="8sp"
                     android:textColor="#FF9800"
                     android:layout_marginTop="2dp" />
