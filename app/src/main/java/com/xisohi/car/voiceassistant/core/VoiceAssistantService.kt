@@ -47,6 +47,19 @@ class VoiceAssistantService : Service() {
         private const val MAX_SILENCE_MS = 2000L     // 连续静音超过 2000ms 才认为用户说完了（避免说话中间间隙误判）
         private const val WAIT_SPEECH_TIMEOUT_MS = 8_000L  // 用户开口前的等待上限（8秒没有效声音就自动退出，避免无限循环"没有听清"）
 
+        // ============================================================
+        // 【百度语音识别增益调整位置】
+        // 百度语音识别没有 AGC 自动增益和降噪功能（经官方文档确认），
+        // 音量过小会导致 ERROR_SPEECH_QUALITY 错误或识别率下降，需要本地放大。
+        //
+        // 调整建议：
+        //   2.0f = 保守，几乎不会削顶，识别率略有提升
+        //   2.5f = 推荐，信噪比明显提升，大部分场景不会削顶（当前值）
+        //   3.0f = 较激进，大声说话可能轻微削顶，识别率更好
+        //   4.0f+ = 不建议，容易削顶失真
+        // ============================================================
+        private const val BAIDU_GAIN = 2.5f          // 百度在线识别用的轻量增益（修改这里调整百度识别音量）
+
         // ===== 自适应静音阈值参数 =====
         // 不再使用固定阈值，改为启动时采样环境噪音动态计算
         // 公式：adaptiveThreshold = ambientRms * NOISE_MULTIPLIER，并限制在 [MIN, MAX] 区间
@@ -619,14 +632,18 @@ class VoiceAssistantService : Service() {
                     // 唤醒词检测阶段也启用 RNNoise，降噪有助于噪音环境唤醒
                     recNoiseReducer.process(shortBuf, n, enableRnNoise = false)
 
-                    // 先保存增益前的原始音频到缓冲区（用于百度语音识别）
-                    // 原因：百度云端会自己做增益和降噪，本地提前放大可能导致削顶，反而降低识别率
-                    // 给百度原始音频，让云端自己决定怎么处理，识别率更高
+                    // 给百度在线识别的音频：应用轻量增益（2.5x）
+                    // 注意：经官方文档确认，百度语音识别没有AGC自动增益和降噪功能，
+                    // 音量过小会导致 ERROR_SPEECH_QUALITY 错误或识别率下降，需要本地放大。
+                    // 2.5x 是较保守的增益，大部分场景不会削顶，同时能明显提高信噪比。
+                    val baiduBuf = shortBuf.copyOf(n)  // 复制一份，避免影响 Vosk 的增益
+                    applyGainWithValue(baiduBuf, n, BAIDU_GAIN)
                     val tmpBytes = ByteArray(n * 2)
-                    shortsToBytes(shortBuf, n, tmpBytes)
+                    shortsToBytes(baiduBuf, n, tmpBytes)
                     audioBuffer.write(tmpBytes)
 
-                    // 再应用音频增益给 Vosk（Vosk 离线识别需要放大音频提高信噪比）
+                    // 给 Vosk 离线识别的音频：应用 asrGain（用户设置，当前默认 8.0x）
+                    // Vosk 离线识别需要更大的增益来提高信噪比
                     applyGain(shortBuf, n)
 
                     // 计算 RMS 能量，判断是否静音（不依赖 Vosk 内置端点检测，太敏感）
@@ -760,6 +777,23 @@ class VoiceAssistantService : Service() {
      */
     private fun applyGain(buffer: ShortArray, length: Int) {
         val gain = WakeWordEngine.getAsrGain()
+        if (gain <= 1.0f) return  // 增益为 1.0 时不需要处理
+        for (i in 0 until length) {
+            val amplified = buffer[i] * gain
+            // 防止溢出，截断到 short 范围
+            buffer[i] = when {
+                amplified > Short.MAX_VALUE -> Short.MAX_VALUE
+                amplified < Short.MIN_VALUE -> Short.MIN_VALUE
+                else -> amplified.toInt().toShort()
+            }
+        }
+    }
+
+    /**
+     * 对 PCM 音频数据应用指定增益值（用于百度在线识别）
+     * @param gain 增益倍数，如 2.5f 表示放大 2.5 倍
+     */
+    private fun applyGainWithValue(buffer: ShortArray, length: Int, gain: Float) {
         if (gain <= 1.0f) return  // 增益为 1.0 时不需要处理
         for (i in 0 until length) {
             val amplified = buffer[i] * gain

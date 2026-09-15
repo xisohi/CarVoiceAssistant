@@ -428,8 +428,7 @@ class MainActivity : AppCompatActivity() {
 
         when {
             jsonFiles.isEmpty() -> {
-                toast("未在U盘找到 .json 配置文件
-请将配置文件放到U盘根目录")
+                toast("未在U盘找到 .json 配置文件请将配置文件放到U盘根目录")
                 log("U盘扫描完成：未找到 .json 文件")
             }
             jsonFiles.size == 1 -> {
