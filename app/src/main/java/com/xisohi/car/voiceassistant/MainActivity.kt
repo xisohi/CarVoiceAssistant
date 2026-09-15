@@ -524,7 +524,7 @@ class MainActivity : AppCompatActivity() {
     /**
      * 更新三档预设按钮的选中高亮状态
      * 选中的按钮：填充背景（主题色）+ 白色文字
-     * 未选中的按钮：透明背景 + 主题色文字（描边效果）
+     * 未选中的按钮：透明背景 + 灰色文字（无描边，不高亮）
      */
     private fun updatePresetButtonState(selectedLevel: Int) {
         val buttons = listOf(
@@ -534,6 +534,7 @@ class MainActivity : AppCompatActivity() {
         )
         val accentColor = getColor(R.color.brand_blue)
         val whiteColor = getColor(android.R.color.white)
+        val grayColor = getColor(android.R.color.darker_gray)
         for ((btn, level) in buttons) {
             val selected = (level == selectedLevel)
             btn.isSelected = selected
@@ -544,10 +545,10 @@ class MainActivity : AppCompatActivity() {
                 btn.setTextColor(whiteColor)
                 btn.strokeWidth = 0
             } else {
-                // 未选中：透明背景 + 描边
+                // 未选中：透明背景 + 灰色文字（无描边，不高亮）
                 btn.setBackgroundColor(android.graphics.Color.TRANSPARENT)
-                btn.setTextColor(accentColor)
-                btn.strokeWidth = (2 * resources.displayMetrics.density).toInt()
+                btn.setTextColor(grayColor)
+                btn.strokeWidth = 0
             }
         }
     }
