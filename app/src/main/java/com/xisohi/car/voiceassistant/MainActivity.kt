@@ -371,6 +371,70 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
+     * 从U盘导入百度语音配置
+     * 配置文件路径：/storage/usb1/baidu_config.json
+     * 配置文件格式：{"app_id":"xxx","api_key":"xxx","secret_key":"xxx"}
+     */
+    private fun importBaiduConfigFromUsb() {
+        try {
+            // 车机U盘挂载路径（鼎微/全志方案通常是 /storage/usb1）
+            val usbPaths = arrayOf(
+                "/storage/usb1/baidu_config.json",
+                "/storage/usb0/baidu_config.json",
+                "/mnt/usb/baidu_config.json",
+                "/mnt/usb_storage/baidu_config.json"
+            )
+
+            var configFile: java.io.File? = null
+            for (path in usbPaths) {
+                val file = java.io.File(path)
+                if (file.exists()) {
+                    configFile = file
+                    break
+                }
+            }
+
+            if (configFile == null) {
+                toast("未找到配置文件，请将 baidu_config.json 放到U盘根目录")
+                log("U盘导入配置失败：未找到 baidu_config.json")
+                return
+            }
+
+            // 读取配置文件内容
+            val content = configFile.readText(Charsets.UTF_8)
+            log("U盘导入配置：读取文件成功，内容长度=${content.length}")
+
+            // 解析 JSON
+            val json = org.json.JSONObject(content)
+            val appId = json.optString("app_id", "").trim()
+            val apiKey = json.optString("api_key", "").trim()
+            val secretKey = json.optString("secret_key", "").trim()
+
+            if (appId.isEmpty() || apiKey.isEmpty() || secretKey.isEmpty()) {
+                toast("配置文件格式错误，请检查 app_id/api_key/secret_key 是否完整")
+                log("U盘导入配置失败：配置不完整")
+                return
+            }
+
+            // 填充到输入框
+            binding.etBaiduAppId.setText(appId)
+            binding.etBaiduApiKey.setText(apiKey)
+            binding.etBaiduSecretKey.setText(secretKey)
+
+            // 自动保存配置
+            baiduAsrManager.saveConfig(appId, apiKey, secretKey)
+            updateBaiduStatus()
+
+            toast("配置导入成功！已自动保存")
+            log("U盘导入配置成功：appId=$appId")
+
+        } catch (e: Exception) {
+            toast("导入失败：${e.message}")
+            log("U盘导入配置异常：${e.message}")
+        }
+    }
+
+    /**
      * 更新百度语音配置状态显示
      */
     private fun updateBaiduStatus() {

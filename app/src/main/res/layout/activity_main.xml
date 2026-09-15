@@ -740,6 +740,18 @@
                         android:paddingVertical="0dp" />
                 </LinearLayout>
 
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnImportBaiduConfig"
+                    style="@style/Widget.MaterialComponents.Button.TextButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="28dp"
+                    android:text="📂 从U盘导入配置（baidu_config.json）"
+                    android:textSize="10sp"
+                    android:layout_marginTop="2dp"
+                    android:minWidth="0dp"
+                    android:minHeight="0dp"
+                    android:paddingVertical="0dp" />
+
                 <TextView
                     android:id="@+id/tvBaiduStatus"
                     android:layout_width="wrap_content"
