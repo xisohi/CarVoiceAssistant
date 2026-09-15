@@ -77,6 +77,14 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+    // 文件选择器：用于从任意位置（U盘、车机内部存储等）选择百度配置文件
+    private val filePickerLauncher =
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            if (uri != null) {
+                importBaiduConfigFromUri(uri)
+            }
+        }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
@@ -315,7 +323,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         // 初始化百度语音识别配置
-        baiduAsrManager = BaiduAsrManager(this)
+        baiduAsrManager = BaiduAsrManager.getInstance(this)
         binding.etBaiduAppId.setText(baiduAsrManager.getAppId())
         binding.etBaiduApiKey.setText(baiduAsrManager.getApiKey())
         binding.etBaiduSecretKey.setText(baiduAsrManager.getSecretKey())
@@ -368,41 +376,38 @@ class MainActivity : AppCompatActivity() {
                 log("百度语音 SDK 初始化失败")
             }
         }
+
+        // 从文件导入百度配置（支持U盘、车机内部存储等任意位置）
+        binding.btnImportBaiduConfig.setOnClickListener {
+            try {
+                // 启动系统文件选择器，用户可以选择任意位置的 .json 文件
+                filePickerLauncher.launch(arrayOf("application/json", "*/*"))
+                log("打开文件选择器，选择百度配置文件")
+            } catch (e: Exception) {
+                toast("打开文件选择器失败：${e.message}")
+                log("打开文件选择器失败：${e.message}")
+            }
+        }
     }
 
     /**
-     * 从U盘导入百度语音配置
-     * 配置文件路径：/storage/usb1/baidu_config.json
+     * 从用户选择的文件导入百度语音配置
+     * 支持从任意位置（U盘、车机内部存储等）选择文件
      * 配置文件格式：{"app_id":"xxx","api_key":"xxx","secret_key":"xxx"}
      */
-    private fun importBaiduConfigFromUsb() {
+    private fun importBaiduConfigFromUri(uri: android.net.Uri) {
         try {
-            // 车机U盘挂载路径（鼎微/全志方案通常是 /storage/usb1）
-            val usbPaths = arrayOf(
-                "/storage/usb1/baidu_config.json",
-                "/storage/usb0/baidu_config.json",
-                "/mnt/usb/baidu_config.json",
-                "/mnt/usb_storage/baidu_config.json"
-            )
-
-            var configFile: java.io.File? = null
-            for (path in usbPaths) {
-                val file = java.io.File(path)
-                if (file.exists()) {
-                    configFile = file
-                    break
-                }
-            }
-
-            if (configFile == null) {
-                toast("未找到配置文件，请将 baidu_config.json 放到U盘根目录")
-                log("U盘导入配置失败：未找到 baidu_config.json")
+            // 通过 ContentResolver 读取文件内容
+            val inputStream = contentResolver.openInputStream(uri)
+            if (inputStream == null) {
+                toast("无法读取文件")
+                log("导入配置失败：无法打开文件输入流")
                 return
             }
 
-            // 读取配置文件内容
-            val content = configFile.readText(Charsets.UTF_8)
-            log("U盘导入配置：读取文件成功，内容长度=${content.length}")
+            val content = inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+            inputStream.close()
+            log("导入配置：读取文件成功，内容长度=${content.length}")
 
             // 解析 JSON
             val json = org.json.JSONObject(content)
@@ -412,7 +417,7 @@ class MainActivity : AppCompatActivity() {
 
             if (appId.isEmpty() || apiKey.isEmpty() || secretKey.isEmpty()) {
                 toast("配置文件格式错误，请检查 app_id/api_key/secret_key 是否完整")
-                log("U盘导入配置失败：配置不完整")
+                log("导入配置失败：配置不完整")
                 return
             }
 
@@ -426,11 +431,11 @@ class MainActivity : AppCompatActivity() {
             updateBaiduStatus()
 
             toast("配置导入成功！已自动保存")
-            log("U盘导入配置成功：appId=$appId")
+            log("导入配置成功：appId=$appId")
 
         } catch (e: Exception) {
             toast("导入失败：${e.message}")
-            log("U盘导入配置异常：${e.message}")
+            log("导入配置异常：${e.message}")
         }
     }
 

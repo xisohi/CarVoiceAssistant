@@ -159,7 +159,7 @@ class VoiceAssistantService : Service() {
         android.util.Log.i("VoiceService", "识别增益: ${WakeWordEngine.getAsrGain()}")
 
         // 初始化百度语音识别管理器（有网络且配置了 Key 时优先使用百度，识别率更高）
-        baiduAsrManager = BaiduAsrManager(this)
+        baiduAsrManager = BaiduAsrManager.getInstance(this)
         if (baiduAsrManager.isConfigured()) {
             android.util.Log.i("VoiceService", "百度语音已配置，有网络时优先使用百度识别")
         } else {

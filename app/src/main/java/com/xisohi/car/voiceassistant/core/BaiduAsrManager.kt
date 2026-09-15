@@ -32,7 +32,7 @@ import java.io.File
  * 注意：3.5.0+ 版本 SDK 必须使用 language 参数代替 pid 参数，
  *       否则会报 -3004 "App name unknown" 错误。
  */
-class BaiduAsrManager(private val context: Context) {
+class BaiduAsrManager private constructor(private val context: Context) {
 
     companion object {
         private const val TAG = "BaiduAsrManager"
@@ -41,6 +41,19 @@ class BaiduAsrManager(private val context: Context) {
         private const val KEY_API_KEY = "api_key"
         private const val KEY_SECRET_KEY = "secret_key"
         private const val RECOGNIZE_TIMEOUT_MS = 20000L  // 识别超时 20 秒
+
+        @Volatile
+        private var instance: BaiduAsrManager? = null
+
+        /**
+         * 获取单例实例（线程安全）
+         * 使用 applicationContext 避免内存泄漏
+         */
+        fun getInstance(context: Context): BaiduAsrManager {
+            return instance ?: synchronized(this) {
+                instance ?: BaiduAsrManager(context.applicationContext).also { instance = it }
+            }
+        }
     }
 
     private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
