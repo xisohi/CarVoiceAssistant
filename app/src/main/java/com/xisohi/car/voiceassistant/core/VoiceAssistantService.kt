@@ -182,6 +182,17 @@ class VoiceAssistantService : Service() {
     // 网络变化防抖：5秒内的连续回调只处理一次（避免WiFi/4G切换时频繁清空缓存）
     private var lastNetworkChangeTime = 0L
     private val NETWORK_CHANGE_DEBOUNCE_MS = 5000L
+
+    // ---------- 导航选择模式（多结果语音选择） ----------
+    // 用户说"导航到大徐村" → 搜索 → 拿到结果列表 → TTS播报选项 → 用户说"选1" → 用经纬度拉起导航
+    /** 是否在导航选择模式（等待用户说"选几"） */
+    private var isNavSelectMode = false
+    /** 待选择的搜索结果列表 */
+    private var pendingNavResults: List<AmapSearcher.PoiResult> = emptyList()
+    /** 选择模式超时定时器（10秒没选择自动退出） */
+    private var navSelectTimeoutRunnable: Runnable? = null
+    /** 选择模式超时时间（毫秒）- 15秒（TTS 3秒 + 录音 8秒 + 余量） */
+    private val NAV_SELECT_TIMEOUT_MS = 15_000L
     private lateinit var skillExecutor: SkillExecutor
     private lateinit var ttsEngine: TtsEngine
     private lateinit var placeMatcher: PlaceMatcher  // 地名模糊匹配器（导航同音字纠正）
@@ -1177,6 +1188,17 @@ class VoiceAssistantService : Service() {
 
     private fun handleText(text: String) {
         currentState = State.PROCESSING
+
+        // ★ 导航选择模式：如果正在等待用户选择导航结果，先处理选择指令
+        if (isNavSelectMode) {
+            val handled = handleNavSelection(text)
+            if (handled) {
+                return  // 选择指令处理成功，直接返回
+            }
+            // 不是选择指令（比如用户说"取消"或其他指令），退出选择模式，继续正常处理
+            cancelNavSelectMode()
+        }
+
         // 记录用户说的话到文件日志（方便用户在日志查看页面查看识别是否完整）
         LogUtils.i("VoiceService", "识别文本: '$text'")
         // 同音字/常见错误纠正：把识别错的词自动纠正
@@ -1401,6 +1423,16 @@ class VoiceAssistantService : Service() {
             return
         }
 
+        // ★ 导航意图：先搜索 POI，进入选择模式，让用户说"选几"
+        // 而不是直接拉起导航（直接导航可能选到错误的地点）
+        if (intent.action == "nav.to") {
+            val dest = intent.params["dest"] ?: ""
+            if (dest.isNotBlank()) {
+                startNavSearch(dest)
+                return
+            }
+        }
+
         val result = skillExecutor.execute(intent)
         LogUtils.i("VoiceService", "执行结果: handled=${result.handled}, spoken='${result.spoken}'")
         lastIntentResult = if (result.handled) getString(R.string.result_executed, result.spoken) else getString(R.string.result_unmatched, result.spoken)
@@ -1417,6 +1449,252 @@ class VoiceAssistantService : Service() {
             currentState = State.IDLE
             resumeWake()
         }
+    }
+
+    // ---------- 导航选择模式（多结果语音选择） ----------
+
+    /**
+     * 开始导航搜索：调用高德 API 搜索 POI，进入选择模式
+     *
+     * 流程：
+     *   1. 后台线程调用高德搜索 API
+     *   2. 搜索到结果 → TTS 播报选项 → 进入选择模式，等待用户说"选几"
+     *   3. 搜索不到结果 → 回退到原有的直接拉起导航方式
+     */
+    private fun startNavSearch(dest: String) {
+        LogUtils.i("VoiceService", "开始导航搜索: $dest")
+        FloatViewService.updateSubtitle("🔍 正在搜索${dest}...")
+
+        // 检查是否配置了高德 Key
+        if (!AmapSearcher.isKeyConfigured()) {
+            LogUtils.w("VoiceService", "高德 Web 服务 Key 未配置，回退到直接拉起导航")
+            // 回退：直接用原有的导航方式
+            val fallbackIntent = VoiceIntent("nav.to", "nav.to", mapOf("dest" to dest))
+            val result = skillExecutor.execute(fallbackIntent)
+            FloatViewService.updateSubtitle("✅ ${result.spoken}")
+            ttsEngine.speak(result.spoken)
+            if (!ttsEngine.isReady) {
+                currentState = State.IDLE
+                resumeWake()
+            }
+            return
+        }
+
+        // 后台线程搜索
+        Thread {
+            try {
+                val results = AmapSearcher.search(dest)
+                mainHandler.post {
+                    if (results.isEmpty()) {
+                        // 搜索不到结果，回退到直接拉起导航
+                        LogUtils.w("VoiceService", "搜索不到结果，回退到直接拉起导航")
+                        val fallbackIntent = VoiceIntent("nav.to", "nav.to", mapOf("dest" to dest))
+                        val result = skillExecutor.execute(fallbackIntent)
+                        FloatViewService.updateSubtitle("✅ ${result.spoken}")
+                        ttsEngine.speak(result.spoken)
+                        if (!ttsEngine.isReady) {
+                            currentState = State.IDLE
+                            resumeWake()
+                        }
+                    } else if (results.size == 1) {
+                        // 只有一个结果，直接导航，不用选择
+                        val poi = results[0]
+                        LogUtils.i("VoiceService", "只有一个搜索结果，直接导航: ${poi.name}")
+                        navigateToPoi(poi)
+                    } else {
+                        // 多个结果，进入选择模式
+                        LogUtils.i("VoiceService", "搜索到 ${results.size} 个结果，进入选择模式")
+                        pendingNavResults = results
+                        isNavSelectMode = true
+
+                        // 构建播报文本："找到N个结果，请选择第几个：1. xxx，2. xxx..."
+                        val sb = StringBuilder()
+                        sb.append("找到${results.size}个结果，请选择第几个：")
+                        for (i in results.indices) {
+                            val poi = results[i]
+                            sb.append("${i + 1}. ${poi.name}")
+                            if (poi.address.isNotBlank()) {
+                                sb.append("（${poi.address}）")
+                            }
+                            if (i < results.size - 1) {
+                                sb.append("，")
+                            }
+                        }
+                        val speakText = sb.toString()
+                        LogUtils.d("VoiceService", "选择模式播报: $speakText")
+                        FloatViewService.updateSubtitle("📍 $speakText")
+                        ttsEngine.speak(speakText)
+
+                        // TTS 说完后进入聆听状态，等待用户说"选几"
+                        isRetryListening = true
+                        if (!ttsEngine.isReady) {
+                            isRetryListening = false
+                            mainHandler.postDelayed({ startRecognition() }, 300)
+                        }
+
+                        // 启动选择超时定时器：10秒没选择自动退出
+                        navSelectTimeoutRunnable = Runnable {
+                            if (isNavSelectMode) {
+                                LogUtils.w("VoiceService", "导航选择超时，自动退出选择模式")
+                                cancelNavSelectMode()
+                                ttsEngine.speak("选择超时，已取消导航")
+                                currentState = State.IDLE
+                                resumeWake()
+                            }
+                        }
+                        mainHandler.postDelayed(navSelectTimeoutRunnable!!, NAV_SELECT_TIMEOUT_MS)
+                    }
+                }
+            } catch (e: Exception) {
+                LogUtils.e("VoiceService", "导航搜索异常: ${e.message}", e)
+                mainHandler.post {
+                    // 搜索异常，回退到直接拉起导航
+                    val fallbackIntent = VoiceIntent("nav.to", "nav.to", mapOf("dest" to dest))
+                    val result = skillExecutor.execute(fallbackIntent)
+                    FloatViewService.updateSubtitle("✅ ${result.spoken}")
+                    ttsEngine.speak(result.spoken)
+                    if (!ttsEngine.isReady) {
+                        currentState = State.IDLE
+                        resumeWake()
+                    }
+                }
+            }
+        }.start()
+    }
+
+    /**
+     * 处理导航选择指令（用户说"选1"、"第一个"等）
+     *
+     * @return true=处理成功（已执行导航），false=不是选择指令（继续正常处理）
+     */
+    private fun handleNavSelection(text: String): Boolean {
+        val index = parseSelectionIndex(text)
+        if (index == null) {
+            // 不是选择指令，检查是不是"取消"
+            if (text.contains("取消") || text.contains("算了") || text.contains("不要")) {
+                LogUtils.i("VoiceService", "用户取消导航选择")
+                cancelNavSelectMode()
+                ttsEngine.speak("已取消导航")
+                currentState = State.IDLE
+                resumeWake()
+                return true
+            }
+            // 不是选择指令也不是取消，返回 false，继续正常处理
+            return false
+        }
+
+        // 是选择指令，检查索引是否有效
+        if (index < 0 || index >= pendingNavResults.size) {
+            LogUtils.w("VoiceService", "选择索引无效: $index, 总数: ${pendingNavResults.size}")
+            ttsEngine.speak("没有这个选项，请重新选择")
+            // 重新进入聆听状态
+            isRetryListening = true
+            if (!ttsEngine.isReady) {
+                isRetryListening = false
+                mainHandler.postDelayed({ startRecognition() }, 300)
+            }
+            return true
+        }
+
+        // 选择有效，执行导航
+        val poi = pendingNavResults[index]
+        LogUtils.i("VoiceService", "用户选择第${index + 1}个: ${poi.name}")
+        cancelNavSelectMode()
+        navigateToPoi(poi)
+        return true
+    }
+
+    /**
+     * 解析选择指令，返回选中的索引（从0开始）
+     *
+     * 支持的说法：
+     * - "选1"、"选2"、"选10"（支持多位数）
+     * - "第一个"、"第二个"、"第十个"
+     * - "1"、"2"、"10"（纯数字）
+     * - "就第一个"、"要第二个"
+     */
+    private fun parseSelectionIndex(text: String): Int? {
+        val trimmed = text.trim()
+
+        // 匹配"选X"模式（支持多位数和中文数字）
+        val selectPattern = Regex("选[第]?([一二三四五六七八九十]+|\\d+)")
+        selectPattern.find(trimmed)?.let { match ->
+            val numStr = match.groupValues[1]
+            parseNumber(numStr)?.let { return it - 1 }
+        }
+
+        // 匹配"第X个"模式（支持多位数和中文数字）
+        val firstPattern = Regex("第([一二三四五六七八九十]+|\\d+)个")
+        firstPattern.find(trimmed)?.let { match ->
+            val numStr = match.groupValues[1]
+            parseNumber(numStr)?.let { return it - 1 }
+        }
+
+        // 纯数字（1-99）
+        if (trimmed.length <= 3 && trimmed.matches(Regex("\\d+"))) {
+            trimmed.toIntOrNull()?.let { return it - 1 }
+        }
+
+        return null
+    }
+
+    /**
+     * 解析数字字符串（支持中文和阿拉伯数字）
+     */
+    private fun parseNumber(str: String): Int? {
+        // 阿拉伯数字
+        str.toIntOrNull()?.let { return it }
+
+        // 中文数字（1-10）
+        val cnMap = mapOf(
+            "一" to 1, "二" to 2, "三" to 3, "四" to 4, "五" to 5,
+            "六" to 6, "七" to 7, "八" to 8, "九" to 9, "十" to 10
+        )
+        return cnMap[str]
+    }
+
+    /**
+     * 用 POI 的经纬度拉起高德导航
+     */
+    private fun navigateToPoi(poi: AmapSearcher.PoiResult) {
+        // ★ 清 isRetryListening，避免 TTS 播完后再次启动录音
+        isRetryListening = false
+        LogUtils.i("VoiceService", "开始导航到: ${poi.name} (${poi.latitude}, ${poi.longitude})")
+        FloatViewService.updateSubtitle("🧭 正在导航到${poi.name}")
+
+        // 用经纬度拉起高德车机版导航
+        val success = skillExecutor.navigateByLatLng(poi.latitude, poi.longitude, poi.name)
+        if (success) {
+            ttsEngine.speak("正在为您导航到${poi.name}")
+        } else {
+            ttsEngine.speak("导航启动失败，请手动操作")
+        }
+
+        // ★ 不在这里 resumeWake()，让 onSpeakDone() 回调处理
+        // 因为 ttsEngine.speak() 是异步的，TTS 还在播报时立即恢复唤醒监听会录到 TTS 自己的声音
+        // onSpeakDone() 里 isRetryListening = false, isWakePromptSpeaking = false
+        // 会走"正常回复播报完成"分支：currentState = IDLE; resumeWake()
+        if (!ttsEngine.isReady) {
+            // TTS 不可用时，直接恢复
+            currentState = State.IDLE
+            resumeWake()
+        }
+    }
+
+    /**
+     * 取消导航选择模式
+     */
+    private fun cancelNavSelectMode() {
+        isNavSelectMode = false
+        pendingNavResults = emptyList()
+        // ★ 清 isRetryListening，避免 TTS 播完后再次启动录音
+        isRetryListening = false
+        // 取消超时定时器
+        navSelectTimeoutRunnable?.let {
+            mainHandler.removeCallbacks(it)
+        }
+        navSelectTimeoutRunnable = null
+        LogUtils.d("VoiceService", "已取消导航选择模式")
     }
 
     /**

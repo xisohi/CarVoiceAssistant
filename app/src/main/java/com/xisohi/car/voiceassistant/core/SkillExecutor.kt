@@ -434,6 +434,89 @@ class SkillExecutor(private val context: Context) {
         return ExecutionResult(false, "未找到可用的导航应用")
     }
 
+    /**
+     * 用经纬度拉起导航（语音选择模式用）
+     *
+     * @param latitude 纬度
+     * @param longitude 经度
+     * @param name 地点名称（用于显示）
+     * @return true=成功拉起导航，false=失败
+     */
+    fun navigateByLatLng(latitude: Double, longitude: Double, name: String): Boolean {
+        android.util.Log.d("SkillExecutor", "用经纬度拉起导航: $name ($latitude, $longitude)")
+        val encodedName = URLEncoder.encode(name, "UTF-8")
+
+        // 1. 高德车机版（优先）
+        if (isAppInstalled("com.autonavi.amapauto")) {
+            // 用经纬度拉起导航
+            val naviIntent = Intent(Intent.ACTION_VIEW).apply {
+                data = Uri.parse(
+                    "androidauto://navi?" +
+                            "sourceApplication=${context.packageName}" +
+                            "&lat=$latitude" +
+                            "&lng=$longitude" +
+                            "&poiname=$encodedName" +
+                            "&style=2"
+                )
+                setPackage("com.autonavi.amapauto")
+                addCategory("android.intent.category.DEFAULT")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            if (tryStartActivity(naviIntent)) {
+                android.util.Log.d("SkillExecutor", "高德车机版导航启动成功")
+                return true
+            }
+
+            // 如果经纬度导航失败，尝试用 keywordNavi 兜底
+            val keywordIntent = Intent(Intent.ACTION_VIEW).apply {
+                data = Uri.parse(
+                    "androidauto://keywordNavi?" +
+                            "sourceApplication=${context.packageName}" +
+                            "&keywords=$encodedName" +
+                            "&style=2"
+                )
+                setPackage("com.autonavi.amapauto")
+                addCategory("android.intent.category.DEFAULT")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            if (tryStartActivity(keywordIntent)) {
+                android.util.Log.d("SkillExecutor", "高德车机版 keywordNavi 启动成功（兜底）")
+                return true
+            }
+        }
+
+        // 2. 高德手机版
+        val amapMobile = Intent(Intent.ACTION_VIEW).apply {
+            data = Uri.parse(
+                "androidamap://navi?" +
+                        "sourceApplication=voiceassistant" +
+                        "&lat=$latitude" +
+                        "&lon=$longitude" +
+                        "&dev=0" +
+                        "&style=2"
+            )
+            setPackage("com.autonavi.minimap")
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        if (tryStartActivity(amapMobile)) {
+            android.util.Log.d("SkillExecutor", "高德手机版导航启动成功")
+            return true
+        }
+
+        // 3. 通用 geo: Intent
+        val geoIntent = Intent(Intent.ACTION_VIEW).apply {
+            data = Uri.parse("google.navigation:q=$latitude,$longitude")
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        if (tryStartActivity(geoIntent)) {
+            android.util.Log.d("SkillExecutor", "通用导航启动成功")
+            return true
+        }
+
+        android.util.Log.w("SkillExecutor", "所有导航方式都失败")
+        return false
+    }
+
     /** 尝试启动 Activity，成功返回 true；没有能处理的应用时返回 false */
     private fun tryStartActivity(intent: Intent): Boolean {
         return try {
