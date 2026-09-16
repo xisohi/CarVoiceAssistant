@@ -394,51 +394,182 @@ class MainActivity : AppCompatActivity() {
 
     /**
      * 扫描U盘并导入配置文件（系统没有文件选择器时的 fallback）
-     * 自动扫描常见U盘路径下的 .json 文件
+     *
+     * 核心方案（参考 MusicFree）：
+     * 1. StorageManager + 反射 getDirectory() —— 最可靠，Android 10+ 都能用
+     *    getDirectory() 返回的 File 对象在 Android 10 上有读写权限（Google 兼容性后门）
+     *    注意：不能用 getPath()，它返回字符串路径，Android 10 上无权限
+     *    注意：不能用 volume.directory，这是 API 30+ 才有的公开属性，Android 10 上是 null
+     * 2. 扫描 /storage 下的可读子目录（排除 emulated、self）
+     * 3. 扫描 /mnt 下的 usb 挂载点
+     * 4. 逐个扫描路径找 .json 文件
      */
     private fun scanUsbAndImport() {
-        // 常见的U盘挂载路径
-        val usbPaths = listOf(
-            "/storage/usb1",
-            "/storage/usb0",
-            "/mnt/usb",
-            "/mnt/usb_storage",
-            "/storage/udisk",
-            "/mnt/udisk"
-        )
+        log("========== 开始 U 盘扫描（MusicFree 方案） ==========")
+
+        val candidatePaths = mutableListOf<String>()
+
+        // ========== 第 1 层：StorageManager + 反射 getDirectory()（最可靠） ==========
+        try {
+            val sm = getSystemService(STORAGE_SERVICE) as android.os.storage.StorageManager
+            val volumes = sm.storageVolumes
+            log("StorageManager 共找到 ${volumes.size} 个存储卷")
+
+            for (volume in volumes) {
+                val desc = try { volume.getDescription(this) } catch (_: Exception) { "未知" }
+                val isPrimary = volume.isPrimary
+                val isRemovable = volume.isRemovable
+
+                // ★ 关键：反射调用 getDirectory()
+                // 返回的 File 对象在 Android 10 上有读写权限
+                val dir = try {
+                    val m = volume.javaClass.getMethod("getDirectory")
+                    m.invoke(volume) as? java.io.File
+                } catch (e: Exception) {
+                    // 反射失败，尝试公开 API（API 30+）
+                    try { volume.directory } catch (_: Exception) { null }
+                }
+
+                val path = dir?.absolutePath
+                val canRead = dir?.canRead() ?: false
+                val canWrite = dir?.canWrite() ?: false
+
+                log("  存储卷: desc=$desc, path=$path, isPrimary=$isPrimary, isRemovable=$isRemovable, canRead=$canRead, canWrite=$canWrite")
+
+                if (isPrimary) {
+                    log("    → 跳过：内置存储")
+                    continue
+                }
+                if (dir == null) {
+                    log("    → 跳过：getDirectory() 返回 null")
+                    continue
+                }
+                if (!canRead) {
+                    log("    → 跳过：无读权限 (Permission denied)")
+                    continue
+                }
+
+                if (!candidatePaths.contains(dir.absolutePath)) {
+                    candidatePaths.add(dir.absolutePath)
+                    log("    ✅ 加入扫描列表: ${dir.absolutePath}")
+                }
+            }
+        } catch (e: Exception) {
+            log("StorageManager 枚举存储卷失败: ${e.message}")
+        }
+
+        // ========== 第 2 层：扫描 /storage 下的可读子目录 ==========
+        try {
+            val storageDir = java.io.File("/storage")
+            if (storageDir.exists() && storageDir.isDirectory) {
+                log("扫描 /storage 目录下的子目录...")
+                storageDir.listFiles()?.forEach { dir ->
+                    val name = dir.name
+                    if (dir.isDirectory && dir.canRead() &&
+                        name != "emulated" && name != "self" &&
+                        !candidatePaths.contains(dir.absolutePath)) {
+                        candidatePaths.add(dir.absolutePath)
+                        log("  ✅ /storage 子目录: ${dir.absolutePath}")
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            log("扫描 /storage 失败: ${e.message}")
+        }
+
+        // ========== 第 3 层：扫描 /mnt 下的 usb 挂载点 ==========
+        try {
+            val mntDir = java.io.File("/mnt")
+            if (mntDir.exists() && mntDir.isDirectory) {
+                log("扫描 /mnt 目录下的 usb 挂载点...")
+                mntDir.listFiles()?.forEach { dir ->
+                    val name = dir.name.lowercase()
+                    if (dir.isDirectory && dir.canRead() &&
+                        (name.contains("usb") || name.contains("udisk") || name.contains("sd")) &&
+                        !candidatePaths.contains(dir.absolutePath)) {
+                        candidatePaths.add(dir.absolutePath)
+                        log("  ✅ /mnt 子目录: ${dir.absolutePath}")
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            log("扫描 /mnt 失败: ${e.message}")
+        }
+
+        // ========== 第 4 层：逐个扫描路径找 .json 文件 ==========
+        log("========== 开始扫描配置文件 ==========")
+        log("候选路径共 ${candidatePaths.size} 个:")
+        candidatePaths.forEachIndexed { index, path ->
+            log("  [$index] $path")
+        }
 
         val jsonFiles = mutableListOf<java.io.File>()
 
-        // 扫描每个路径下的 .json 文件
-        for (path in usbPaths) {
+        for (path in candidatePaths) {
             val dir = java.io.File(path)
-            if (dir.exists() && dir.isDirectory) {
-                log("扫描U盘路径: $path")
-                try {
-                    dir.listFiles { file ->
-                        file.isFile && file.name.lowercase().endsWith(".json")
-                    }?.let { files ->
-                        jsonFiles.addAll(files)
-                        log("  找到 ${files.size} 个 .json 文件")
-                    }
-                } catch (e: Exception) {
-                    log("  扫描失败: ${e.message}")
-                }
+            if (!dir.exists() || !dir.isDirectory || !dir.canRead()) {
+                log("  跳过（不可读）: $path")
+                continue
             }
+
+            log("----------")
+            log("扫描目录: $path")
+
+            try {
+                val allFiles = dir.listFiles()
+                if (allFiles == null) {
+                    log("  listFiles() 返回 null")
+                    continue
+                }
+
+                log("  目录下共 ${allFiles.size} 个条目:")
+                allFiles.forEach { f ->
+                    val type = if (f.isDirectory) "[DIR]" else "[FILE]"
+                    log("    $type ${f.name} (size=${f.length()}, canRead=${f.canRead()})")
+                }
+
+                val jsonOnly = allFiles.filter { f ->
+                    f.isFile && f.name.lowercase().endsWith(".json") && f.canRead()
+                }
+
+                if (jsonOnly.isNotEmpty()) {
+                    log("  找到 ${jsonOnly.size} 个 .json 文件:")
+                    jsonOnly.forEach { f ->
+                        log("    ✅ ${f.name} (${f.length()} bytes)")
+                        jsonFiles.add(f)
+                    }
+                } else {
+                    log("  没有找到 .json 文件")
+                }
+            } catch (e: Exception) {
+                log("  扫描异常: ${e.javaClass.simpleName}: ${e.message}")
+            }
+        }
+
+        // ========== 结果处理 ==========
+        log("========== U 盘扫描结果汇总 ==========")
+        log("共找到 ${jsonFiles.size} 个 .json 配置文件")
+        jsonFiles.forEach { f ->
+            log("  ✅ ${f.absolutePath}")
         }
 
         when {
             jsonFiles.isEmpty() -> {
-                toast("未在U盘找到 .json 配置文件请将配置文件放到U盘根目录")
+                val msg = buildString {
+                    append("未在U盘找到 .json 配置文件\n")
+                    append("已扫描 ${candidatePaths.size} 个路径\n")
+                    candidatePaths.take(5).forEach { append("  $it\n") }
+                    if (candidatePaths.size > 5) append("  ...(共${candidatePaths.size}个)\n")
+                    append("请确认: 1.文件在U盘根目录 2.扩展名为.json 3.应用有U盘访问权限")
+                }
+                toast(msg)
                 log("U盘扫描完成：未找到 .json 文件")
             }
             jsonFiles.size == 1 -> {
-                // 只有一个文件，直接导入
                 log("U盘只找到一个配置文件，直接导入: ${jsonFiles[0].name}")
                 importBaiduConfigFromFile(jsonFiles[0])
             }
             else -> {
-                // 多个文件，弹出选择对话框
                 log("U盘找到 ${jsonFiles.size} 个配置文件，弹出选择对话框")
                 showFileSelectDialog(jsonFiles)
             }
@@ -971,15 +1102,61 @@ class MainActivity : AppCompatActivity() {
         val needed = mutableListOf(Manifest.permission.RECORD_AUDIO)
         if (Build.VERSION.SDK_INT >= 33) needed.add(Manifest.permission.POST_NOTIFICATIONS)
         if (Build.VERSION.SDK_INT >= 31) needed.add(Manifest.permission.BLUETOOTH_CONNECT)
-        // 注意：不再申请 WRITE_EXTERNAL_STORAGE / READ_EXTERNAL_STORAGE！
-        // 原因：
-        // 1. 日志、录音、配置都保存在 getExternalFilesDir() 应用私有目录，不需要存储权限
-        // 2. U 盘读写通过 StorageManager 获取真实路径（/storage/usb1 等），直接用 File API 访问，不需要存储权限
-        // 3. Android 10+ requestLegacyExternalStorage 已被 Google Play 标记为废弃，上架时会被审核卡住
-        // 4. Android 11+ 分区存储（Scoped Storage）是标准做法，应用私有目录访问不需要任何权限
+
+        // 存储权限：车机（Android 10，鼎微/全志方案）访问 U 盘需要存储权限
+        // 之前错误地认为"直接用 File API 访问 U 盘不需要权限"，实际测试会 Permission denied
+        if (Build.VERSION.SDK_INT <= 29) {
+            // Android 10 及以下：申请 READ/WRITE_EXTERNAL_STORAGE
+            needed.add(Manifest.permission.READ_EXTERNAL_STORAGE)
+            needed.add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+        }
+        // Android 11+：需要 MANAGE_EXTERNAL_STORAGE（在 checkAndRequestManageExternalStorage 里单独处理）
+
         val missing = needed.filter { !hasPermission(it) }
         if (missing.isNotEmpty()) {
             permissionLauncher.launch(missing.toTypedArray())
+        }
+
+        // Android 11+ 检查"所有文件访问权限"，没有则引导用户开启
+        if (Build.VERSION.SDK_INT >= 30) {
+            checkAndRequestManageExternalStorage()
+        }
+    }
+
+    /**
+     * Android 11+ 检查并请求"所有文件访问权限"（MANAGE_EXTERNAL_STORAGE）
+     * 这个权限不能用 requestPermissions 申请，必须引导用户去设置页面手动开启
+     */
+    private fun checkAndRequestManageExternalStorage() {
+        if (Build.VERSION.SDK_INT < 30) return
+        try {
+            if (!android.os.Environment.isExternalStorageManager()) {
+                log("未获得「所有文件访问权限」，U 盘读写可能失败，引导用户开启")
+                androidx.appcompat.app.AlertDialog.Builder(this)
+                    .setTitle("需要存储权限")
+                    .setMessage("为了能够从 U 盘导入配置文件和导出日志，需要授予「所有文件访问权限」。\n\n点击「去设置」→ 找到本应用 → 开启「允许访问所有文件」")
+                    .setPositiveButton("去设置") { _, _ ->
+                        try {
+                            val intent = android.content.Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
+                            intent.data = android.net.Uri.parse("package:$packageName")
+                            startActivity(intent)
+                        } catch (e: Exception) {
+                            // 某些车机系统可能不支持这个 Intent，回退到通用设置页
+                            try {
+                                val intent = android.content.Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
+                                startActivity(intent)
+                            } catch (e2: Exception) {
+                                toast("无法打开设置页，请手动在系统设置中开启存储权限")
+                            }
+                        }
+                    }
+                    .setNegativeButton("稍后再说", null)
+                    .show()
+            } else {
+                log("已获得「所有文件访问权限」")
+            }
+        } catch (e: Exception) {
+            log("检查所有文件访问权限失败: ${e.message}")
         }
     }
 

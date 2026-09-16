@@ -148,34 +148,41 @@ class LogViewerActivity : AppCompatActivity() {
             val volumes = storageManager.storageVolumes
             LogUtils.i("LogViewer", "StorageManager 共找到 ${volumes.size} 个存储卷")
             for (volume in volumes) {
-                // 获取挂载路径（用反射兼容 Android 10 及以下，getDirectory() 是 API 30 才有的）
-                val dirPath = try {
-                    // 优先用反射调用 getPath()（所有版本都有）
-                    val getPathMethod = volume.javaClass.getMethod("getPath")
-                    getPathMethod.invoke(volume) as? String
+                // ★ 关键：优先用反射调用 getDirectory()（MusicFree 方案）
+                // getDirectory() 返回的 File 对象在 Android 10 上有读写权限（Google 兼容性后门）
+                // 而 getPath() 返回的字符串路径在 Android 10 上对普通 App 没有权限
+                // volume.directory 是 API 30+ 才有的公开属性，Android 10 上是 null
+                val dir = try {
+                    val getDirectoryMethod = volume.javaClass.getMethod("getDirectory")
+                    getDirectoryMethod.invoke(volume) as? java.io.File
                 } catch (e: Exception) {
-                    // 反射失败，尝试用 getDirectory()（API 30+）
+                    // 反射 getDirectory() 失败，尝试用公开 API（API 30+）
                     try {
-                        volume.directory?.absolutePath
+                        volume.directory
                     } catch (e2: Exception) {
                         null
                     }
                 }
                 val volDesc = try { volume.getDescription(this) } catch (_: Exception) { "未知" }
-                LogUtils.i("LogViewer", "存储卷: desc=$volDesc, path=$dirPath, isPrimary=${volume.isPrimary}, isRemovable=${volume.isRemovable}")
-                
-                // 跳过内置存储（注意：车机上的U盘可能 isRemovable=false，所以不判断 isRemovable）
+                val canRead = dir?.canRead() ?: false
+                val initialCanWrite = dir?.canWrite() ?: false
+                LogUtils.i("LogViewer", "存储卷: desc=$volDesc, path=${dir?.absolutePath}, isPrimary=${volume.isPrimary}, isRemovable=${volume.isRemovable}, canRead=$canRead, canWrite=$initialCanWrite")
+
+                // 跳过内置存储
                 if (volume.isPrimary) {
                     LogUtils.i("LogViewer", "  跳过：内置存储")
                     continue
                 }
-                if (dirPath == null) {
-                    LogUtils.i("LogViewer", "  跳过：路径为空")
+                if (dir == null) {
+                    LogUtils.i("LogViewer", "  跳过：getDirectory() 返回 null")
                     continue
                 }
-                val dir = java.io.File(dirPath)
                 if (!dir.exists() || !dir.isDirectory) {
                     LogUtils.i("LogViewer", "  跳过：路径不存在或不是目录")
+                    continue
+                }
+                if (!dir.canRead()) {
+                    LogUtils.i("LogViewer", "  跳过：无读权限 (Permission denied)")
                     continue
                 }
                 // 测试可写性（创建普通文件，不创建隐藏文件，某些文件系统不支持隐藏文件）

@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
 
     <!-- 语音采集 -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
@@ -31,18 +31,16 @@
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
     <!-- 存储权限说明：
-         1. 日志、录音、配置都保存在 getExternalFilesDir() 应用私有目录，不需要存储权限
-         2. U盘通过 StorageManager 获取真实路径（/storage/usb1 等），直接用 File API 访问
-         3. Android 10+ 分区存储（Scoped Storage）是标准做法，应用私有目录访问不需要任何权限
-         4. WRITE_EXTERNAL_STORAGE / READ_EXTERNAL_STORAGE 仅 Android 9 及以下需要，高版本已废弃
-         5. MANAGE_EXTERNAL_STORAGE 仅 Android 11+ 需要（用于所有文件访问），Android 10 忽略
-         6. requestLegacyExternalStorage="true" 仅 Android 10 生效，车机 U盘访问兼容需要 -->
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
-        android:maxSdkVersion="28" />
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
-        android:maxSdkVersion="28" />
-    <!-- Android 11+ 所有文件访问权限（用于U盘读写，Android 10 忽略此权限） -->
-    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+         1. 日志、录音、配置默认保存在 getExternalFilesDir() 应用私有目录，不需要存储权限
+         2. 但车机（鼎微/全志方案，Android 10）访问 U 盘根目录需要存储权限，否则 Permission denied
+         3. Android 10：requestLegacyExternalStorage="true" + READ/WRITE_EXTERNAL_STORAGE 权限
+         4. Android 11+：需要 MANAGE_EXTERNAL_STORAGE 权限（用户手动在设置页开启"所有文件访问"）
+         5. 车机是 Android 10，所以主要靠 READ/WRITE_EXTERNAL_STORAGE + requestLegacyExternalStorage -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+    <!-- Android 11+ 所有文件访问权限（用于U盘读写） -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+        tools:ignore="ScopedStorage" />
 
     <application
         android:name=".VoiceAssistantApp"
