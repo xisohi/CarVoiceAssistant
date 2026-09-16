@@ -662,7 +662,7 @@ class VoiceAssistantService : Service() {
                 SpeechRecognizer.SAMPLE_RATE.toInt(),
                 AudioFormat.CHANNEL_IN_MONO,
                 AudioFormat.ENCODING_PCM_16BIT,
-                maxOf(minBuf * 2, 16_000)
+                maxOf(minBuf * 8, 64_000)  // minBuf*8，最小64KB（约2秒缓冲），避免ring buffer溢出导致音频被覆盖
             )
 
             // 初始化音频降噪（系统降噪 + 高通滤波器）
@@ -759,8 +759,11 @@ class VoiceAssistantService : Service() {
             }
             try {
                 loop@ while (true) {
-                    val n = record.read(shortBuf, 0, shortBuf.size)
-                    if (n <= 0) continue
+                    val n = record.read(shortBuf, 0, shortBuf.size, AudioRecord.READ_BLOCKING)
+                    if (n <= 0) {
+                        Thread.sleep(10)
+                        continue
+                    }
 
                     // 百度检测到说话结束 → 继续喂 400ms 尾部音频后再退出循环（主判据）
                     // 百度内置 DNN VAD 比我们自己的 RMS VAD 更准确，能避免：
