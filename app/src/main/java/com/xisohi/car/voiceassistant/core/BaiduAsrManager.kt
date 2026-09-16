@@ -231,35 +231,37 @@ class BaiduAsrManager private constructor(private val context: Context) {
      * @return true=网络通，false=网络不通
      */
     fun isNetworkReachable(): Boolean {
-        // ★ 用中性探测目标，避免用无效凭证触发限流/连接重置
-        // 多个 URL 依次尝试，只要有一个能通就说明网络通
-        val probeUrls = listOf(
-            "https://www.baidu.com",        // 百度主站
-            "https://aip.baidubce.com",     // 百度 AI 主站（不带参数）
-            "https://www.qq.com"             // 备用
-        )
-        for (url in probeUrls) {
-            try {
-                val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
-                conn.requestMethod = "HEAD"  // HEAD 比 GET 更轻量，只拿响应头
-                conn.connectTimeout = 3000
-                conn.readTimeout = 3000
-                conn.instanceFollowRedirects = false  // 不跟随重定向，3xx 也算通
-                val code = conn.responseCode
-                conn.disconnect()
-                // 2xx/3xx/4xx 都说明网络通（4xx 是业务错误，不是网络问题）
-                // 只有 5xx 或连不上才说明网络有问题
-                if (code in 200..499) {
-                    Log.d(TAG, "网络连通性检测: $url → HTTP $code（网络通）")
-                    return true
-                }
-            } catch (e: Exception) {
-                Log.d(TAG, "网络探测 $url 失败: ${e.javaClass.simpleName} - ${e.message}")
+        // ★ 只探测一个 URL，超时 2 秒（最坏 2 秒，而不是 3 个 URL 依次探测的 9 秒）
+        // 车机场景下，如果第一个 URL 不通，其他大概率也不通，没必要依次试
+        // 用百度 AI 主站（不带参数），中性探测，不会触发限流
+        val probeUrl = "https://aip.baidubce.com"
+        var conn: java.net.HttpURLConnection? = null
+        return try {
+            conn = java.net.URL(probeUrl).openConnection() as java.net.HttpURLConnection
+            conn.requestMethod = "HEAD"  // HEAD 比 GET 更轻量，只拿响应头
+            conn.connectTimeout = 2000   // 连接超时 2 秒
+            conn.readTimeout = 2000      // 读取超时 2 秒
+            conn.instanceFollowRedirects = false  // 不跟随重定向，3xx 也算通
+            val code = conn.responseCode
+            // 2xx/3xx/4xx 都说明网络通（4xx 是业务错误，不是网络问题）
+            // 只有 5xx 或连不上才说明网络有问题
+            if (code in 200..499) {
+                Log.d(TAG, "网络连通性检测: $probeUrl → HTTP $code（网络通）")
+                true
+            } else {
+                Log.w(TAG, "网络连通性检测: $probeUrl → HTTP $code（网络异常）")
+                false
             }
+        } catch (e: Exception) {
+            Log.w(TAG, "网络连通性检测失败: ${e.javaClass.simpleName} - ${e.message}")
+            false
+        } finally {
+            // ★ 用 try-finally 确保 disconnect() 一定会执行，避免连接泄漏
+            // 之前 responseCode 可能抛异常（网络中断），此时 disconnect() 不会执行
+            try {
+                conn?.disconnect()
+            } catch (_: Exception) {}
         }
-        // 所有 URL 都探测失败，说明网络不通
-        Log.w(TAG, "网络连通性检测: 所有探测 URL 均失败（网络不通）")
-        return false
     }
 
     fun clearConfig() {
@@ -342,6 +344,17 @@ class BaiduAsrManager private constructor(private val context: Context) {
     fun releaseEngine() {
         try {
             handler.removeCallbacks(timeoutRunnable)
+            // ★ 先发送 asr.exit，让百度SDK正常退出，释放麦克风资源
+            // 如果不发 asr.exit 直接置 null，百度SDK内部线程/录音资源可能没释放，
+            // 导致后续 AudioRecord.start() 返回 -38（麦克风被占用）
+            if (isRecognizing) {
+                try {
+                    asrManager?.send("asr.exit", null, null, 0, 0)
+                    Log.d(TAG, "已发送 asr.exit，通知百度SDK退出")
+                } catch (e: Exception) {
+                    Log.w(TAG, "发送 asr.exit 失败（忽略）: ${e.message}")
+                }
+            }
             asrManager?.unregisterListener(eventListener)
             asrManager = null
             factory = null  // 释放 factory 引用（注意：不要调用 factory.close()，百度SDK没有这个方法）
@@ -536,30 +549,10 @@ class BaiduAsrManager private constructor(private val context: Context) {
      * @param offset 起始偏移（默认 0）
      * @param length 有效数据长度（默认 data.size）
      */
-    fun sendAudioData(data: ByteArray, offset: Int = 0, length: Int = data.size) {
-        if (!isRecognizing) return
-        try {
-            asrManager?.send("asr.audio", null, data, offset, length)
-        } catch (e: Exception) {
-            Log.e(TAG, "发送音频数据失败: ${e.message}", e)
-        }
-    }
-
-    /**
-     * 通知百度 SDK 音频输入结束（录音结束时调用）
-     *
-     * 发送 asr.stop 事件，百度 SDK 收到后会停止接收音频，开始返回最终识别结果。
-     * 注意：这不会取消识别，只是告诉百度 SDK "没有更多音频了"。
-     */
-    fun stopRecognition() {
-        if (!isRecognizing) return
-        try {
-            asrManager?.send("asr.stop", null, null, 0, 0)
-            Log.i(TAG, "已发送 asr.stop，通知百度 SDK 音频输入结束")
-        } catch (e: Exception) {
-            Log.e(TAG, "发送 asr.stop 失败: ${e.message}", e)
-        }
-    }
+    // ★ 注意：sendAudioData() 和 stopRecognition() 已删除
+    // 之前的方案是"我们录音 + 喂音频给百度"，但百度SDK无论如何都会自己开麦，导致麦克风冲突。
+    // 现在的方案是"唤醒阶段我们占麦，识别阶段释放麦克风让百度自己录"，所以不需要喂音频了。
+    // 如果以后需要外部喂音频，再加回来。
 
     fun cancel() {
         if (!isRecognizing) return

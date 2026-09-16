@@ -175,6 +175,9 @@ class VoiceAssistantService : Service() {
     @Volatile
     private var networkCacheValid = false
     // 网络变化回调（开/关热点、进/出隧道时触发，清空缓存）
+    // ★ 标记是否正在异步检测网络中（避免重复启动检测线程）
+    // 用 AtomicBoolean 保证线程安全的 CAS 操作
+    private val networkCheckInProgress = java.util.concurrent.atomic.AtomicBoolean(false)
     private var networkCallback: android.net.ConnectivityManager.NetworkCallback? = null
     // 网络变化防抖：5秒内的连续回调只处理一次（避免WiFi/4G切换时频繁清空缓存）
     private var lastNetworkChangeTime = 0L
@@ -202,21 +205,30 @@ class VoiceAssistantService : Service() {
             // 用局部变量避免可变属性智能转换问题
             val callback = object : android.net.ConnectivityManager.NetworkCallback() {
                 override fun onAvailable(network: android.net.Network) {
-                    // 防抖：5秒内的连续回调只处理一次（避免WiFi/4G切换时频繁清空缓存）
+                    // 防抖：5秒内的连续回调只处理一次（避免WiFi/4G切换时频繁检测）
                     val now = System.currentTimeMillis()
                     if (now - lastNetworkChangeTime < NETWORK_CHANGE_DEBOUNCE_MS) return
                     lastNetworkChangeTime = now
-                    android.util.Log.d("VoiceService", "网络已连接，清空网络连通性缓存（下次唤醒重新检测）")
+                    android.util.Log.d("VoiceService", "网络已连接，延迟1秒后检测（等网络完全就绪）")
+                    // ★ 延迟1秒再检测，避免网络刚连上还没就绪时误判为不通
+                    // 网络刚连上时，DHCP可能还没拿到IP、DNS还没配置好，此时检测会失败
+                    // 车机WiFi重连很频繁（停车、启动、信号弱时），这个问题会经常出现
                     networkCacheValid = false
+                    mainHandler.postDelayed({
+                        checkNetworkReachableAsync()
+                    }, 1000)
                 }
                 override fun onLost(network: android.net.Network) {
-                    // 防抖：5秒内的连续回调只处理一次
-                    val now = System.currentTimeMillis()
-                    if (now - lastNetworkChangeTime < NETWORK_CHANGE_DEBOUNCE_MS) return
-                    lastNetworkChangeTime = now
-                    android.util.Log.d("VoiceService", "网络已断开，清空网络连通性缓存（下次唤醒重新检测）")
+                    // ★ onLost 不用防抖（它只是清缓存，很轻量）
+                    // 原因：onLost 只清缓存，不做耗时操作，频繁触发也没关系
+                    // 如果和 onAvailable 共享防抖，可能导致 onLost 被拦住，缓存没清
+                    android.util.Log.d("VoiceService", "网络已断开，清空缓存（下次唤醒重新判断）")
+                    // 只清缓存，不主动检测
+                    // 原因：onLost 触发时，系统可能还在切换网络（WiFi→4G），
+                    // 此时 activeNetwork 可能为 null 或旧网络，检测结果不可靠
+                    // 让下次唤醒时重新判断：isNetworkAvailable() 会正确处理网络切换
                     networkCacheValid = false
-                    networkReachable = false
+                    // 不设 networkReachable，让下次唤醒的乐观假设逻辑处理
                 }
             }
             networkCallback = callback
@@ -417,7 +429,7 @@ class VoiceAssistantService : Service() {
                 sampleRate,
                 channelConfig,
                 audioFormat,
-                maxOf(minBufSize * 2, sampleRate)
+                maxOf(minBufSize * 8, 64_000)  // minBuf*8，最小64KB（约2秒缓冲），避免ring buffer溢出
             )
             if (record.state != AudioRecord.STATE_INITIALIZED) {
                 android.util.Log.e("WakeAudioThread", "AudioRecord 初始化失败")
@@ -639,22 +651,24 @@ class VoiceAssistantService : Service() {
     private fun startRecognition() {
         // 正常启动识别时，重置"在线失败回退离线"标志位
         isFallbackFromOnline = false
-        // ★ 网络连通性检测：缓存有效时直接用（无延迟），缓存无效时同步检测（首次唤醒等1~3秒，可接受）
+        // ★ 网络连通性检测：缓存有效时直接用（无延迟），缓存无效时不阻塞（假设网络通，后台异步检测）
         // 缓存失效时机：首次启动、网络变化（开/关热点、进/出隧道）
-        // 同步检测的好处：首次唤醒就能正确判断，不会"盲走在线"
+        // 为什么不阻塞？因为阻塞主线程会导致ANR（输入事件5秒无响应即ANR）
+        // 首次唤醒假设网络通，走在线识别；如果实际网络不通，在线失败后自动回退离线（已有机制）
+        // 后台异步检测（单URL，2秒超时）完成后更新缓存，后续唤醒用正确的网络状态
         val hasNetwork = isNetworkAvailable()
         val canReachInternet = if (networkCacheValid) {
-            networkReachable
+            networkReachable  // 缓存有效，直接用（无延迟）
         } else {
-            // 没缓存 → 同步检测（首次唤醒会等1~3秒，可接受）
+            // 缓存无效 → 不阻塞，假设网络通，同时后台异步检测更新缓存
             if (hasNetwork) {
-                checkNetworkReachable()
+                checkNetworkReachableAsync()  // 后台异步检测，不阻塞主线程
             } else {
                 // 没连网直接标记为不通
                 networkReachable = false
                 networkCacheValid = true
-                false
             }
+            true  // 假设网络通（走在线识别，失败自动回退离线）
         }
         // 连续在线失败超过阈值时，暂时降级为离线（避免每次都要等在线超时/失败）
         // 适用于：Key错误、网络不通（WiFi已连接但无外网）等场景
@@ -775,18 +789,12 @@ class VoiceAssistantService : Service() {
         android.util.Log.w("VoiceService", "连续在线失败次数: $consecutiveOnlineFailures / $MAX_CONSECUTIVE_ONLINE_FAILURES")
         // ★ 标记：本次是在线失败回退离线，防止离线失败后又重试在线导致无限循环
         isFallbackFromOnline = true
-        // TTS 提示用户（仅在前2次失败时提示，避免每次都提示打扰用户）
-        val willSpeak = consecutiveOnlineFailures < MAX_CONSECUTIVE_ONLINE_FAILURES && ttsEngine.isReady
-        if (willSpeak) {
-            try {
-                ttsEngine.speak("在线识别失败，正在使用离线识别")
-            } catch (_: Exception) {}
-        }
-        // ★ 关键：动态延迟
-        // - TTS 播报时：延迟 2500ms（TTS 约2秒 + 余量，避免离线录音录进 TTS 声音）
-        // - 不播报时：延迟 800ms（只给百度 SDK 释放麦克风的时间）
-        val delayMs = if (willSpeak) 2500L else 800L
-        android.util.Log.d("VoiceService", "延迟 ${delayMs}ms 后启动离线识别（TTS播报=$willSpeak）")
+        // ★ 不播报"在线识别失败"，静默降级
+        // 用户体验：用户唤醒后说指令，系统应该直接执行，而不是告诉用户"识别失败"
+        // 直接走离线识别，用户感知是"多等了几秒"，而不是"被系统告知失败"
+        // 延迟800ms，给百度SDK释放麦克风的时间
+        val delayMs = 800L
+        android.util.Log.d("VoiceService", "延迟 ${delayMs}ms 后启动离线识别（静默降级）")
         mainHandler.postDelayed({
             startRecognitionOffline()
         }, delayMs)
@@ -1087,34 +1095,48 @@ class VoiceAssistantService : Service() {
      *
      * @return true=能访问外网，false=不能访问外网
      */
-    private fun checkNetworkReachable(): Boolean {
-        android.util.Log.d("VoiceService", "开始同步检测网络连通性...")
-        // ★ 网络请求不能在主线程执行（会抛 NetworkOnMainThreadException）
-        // 用后台线程执行网络检测，主线程用 join() 等待结果（保持同步语义）
-        var reachable = false
-        val thread = Thread {
+    /**
+     * 后台异步检测网络连通性（不阻塞主线程，检测完成后更新缓存）
+     *
+     * 为什么用异步而不是同步？
+     * - 如果同步等待，会阻塞主线程，导致ANR（输入事件5秒无响应即ANR）
+     * - 首次唤醒假设网络通，走在线识别；如果实际网络不通，在线失败后自动回退离线
+     * - 检测完成后更新缓存，后续唤醒用正确的网络状态
+     *
+     * 为什么用协程而不是裸 Thread？
+     * - 协程在 onDestroy 时会自动 cancel()，清理未完成的检测
+     * - 用 AtomicBoolean CAS 防重复启动，避免频繁唤醒时创建多个线程
+     */
+    private fun checkNetworkReachableAsync() {
+        // CAS：如果已经在检测中，直接返回，避免重复启动
+        if (!networkCheckInProgress.compareAndSet(false, true)) {
+            android.util.Log.d("VoiceService", "网络检测已在进行中，跳过")
+            return
+        }
+        scope.launch(Dispatchers.IO) {
             try {
-                reachable = baiduAsrManager.isNetworkReachable()
+                android.util.Log.d("VoiceService", "开始异步检测网络连通性...")
+                val reachable = baiduAsrManager.isNetworkReachable()
+                if (reachable) {
+                    // ★ 只有检测到"通"时才写缓存
+                    // "不通"可能是网络还没就绪（DHCP/DNS没配置好），写缓存会导致误判
+                    // 车机WiFi重连频繁，"刚就绪"的场景更多，不写缓存更安全
+                    networkReachable = true
+                    networkCacheValid = true
+                    android.util.Log.i("VoiceService", "网络连通性检测: 正常（能访问外网，下次唤醒走在线）")
+                } else {
+                    // 检测到不通，不写缓存，让下次唤醒重新检测
+                    // 因为可能是网络刚连上还没就绪，或者是临时抖动
+                    // consecutiveOnlineFailures 会兜底：连续3次在线失败后强制走离线
+                    android.util.Log.w("VoiceService", "网络连通性检测: 不通（不写缓存，下次唤醒重新检测）")
+                }
             } catch (e: Exception) {
-                android.util.Log.w("VoiceService", "网络检测线程异常: ${e.message}")
-                reachable = false
+                android.util.Log.w("VoiceService", "网络连通性检测异常: ${e.message}（不写缓存）")
+                // 异常也不写缓存，让下次唤醒重新检测
+            } finally {
+                networkCheckInProgress.set(false)
             }
         }
-        thread.start()
-        try {
-            thread.join(10000)  // 最多等10秒，避免 ANR
-        } catch (e: InterruptedException) {
-            android.util.Log.w("VoiceService", "网络检测线程被中断")
-        }
-        // 更新缓存
-        networkReachable = reachable
-        networkCacheValid = true
-        if (reachable) {
-            android.util.Log.i("VoiceService", "网络连通性检测: 正常（能访问外网）")
-        } else {
-            android.util.Log.w("VoiceService", "网络连通性检测: 异常（无法访问外网，将使用离线识别）")
-        }
-        return reachable
     }
 
     // ---------- 文本处理 ----------
@@ -1218,6 +1240,17 @@ class VoiceAssistantService : Service() {
                 mainHandler.postDelayed({
                     startRecognition()
                 }, 300)
+            } else {
+                // ★ 超时兜底：TTS播报后5秒内如果没收到 onSpeakDone 回调，自动恢复唤醒监听
+                // 防止TTS引擎内部错误导致 onSpeakDone 不回调，服务卡在 PROCESSING 状态
+                mainHandler.postDelayed({
+                    if (isRetryListening) {
+                        android.util.Log.w("VoiceService", "TTS播报超时（5秒未收到onSpeakDone），自动恢复唤醒监听")
+                        isRetryListening = false
+                        currentState = State.IDLE
+                        resumeWake()
+                    }
+                }, 5000)
             }
             return
         }
