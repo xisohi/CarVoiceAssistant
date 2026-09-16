@@ -70,6 +70,19 @@ class BaiduAsrManager private constructor(private val context: Context) {
     private var lastFinalResult: String? = null  // 保存 asr.partial 中的最终结果
     private val handler = Handler(Looper.getMainLooper())
 
+    // 百度检测到说话结束的回调（asr.end 事件）
+    // 用于流式识别：百度自己判 VAD 结束，通知上层停止录音
+    private var onSpeechEndListener: (() -> Unit)? = null
+
+    /**
+     * 设置说话结束监听器（百度检测到 asr.end 时调用）
+     * 流式识别模式下，百度内置 DNN VAD 会自动检测说话结束，
+     * 上层收到此回调后应停止录音，等待最终识别结果。
+     */
+    fun setOnSpeechEndListener(listener: (() -> Unit)?) {
+        onSpeechEndListener = listener
+    }
+
     // 超时机制
     private val timeoutRunnable = Runnable {
         if (isRecognizing) {
@@ -283,6 +296,125 @@ class BaiduAsrManager private constructor(private val context: Context) {
         }
     }
 
+    /**
+     * 启动流式语音识别（边录边识别 + 百度内置 DNN VAD）
+     *
+     * 和 recognizeFile() 的区别：
+     * - recognizeFile()：先录完整段音频保存为文件，再一次性上传识别
+     * - startStreamingRecognition()：边录边传，百度 SDK 实时识别，内置 DNN VAD 自动检测说话开始/结束
+     *
+     * 使用流程：
+     * 1. 调用本方法启动识别（内部会重置 BaiduAudioStream）
+     * 2. 录音线程调用 BaiduAudioStream.getInstance().write() 实时写入音频
+     * 3. 录音结束调用 BaiduAudioStream.getInstance().closeStream() 通知百度 SDK
+     * 4. 百度 SDK 识别完成后通过 callback 返回结果
+     *
+     * @param callback 识别结果回调（识别完成时调用，参数为识别文本，失败为 null）
+     */
+    fun startStreamingRecognition(callback: (String?) -> Unit) {
+        if (!isInitialized) {
+            if (!init()) {
+                callback(null)
+                return
+            }
+        }
+        if (isRecognizing) {
+            Log.w(TAG, "正在识别中，忽略重复调用")
+            return
+        }
+
+        recognitionCallback = callback
+        isRecognizing = true
+
+        try {
+            val appId = getAppId()
+            val apiKey = getApiKey()
+            val secretKey = getSecretKey()
+
+            // 识别参数
+            val params = JSONObject().apply {
+                // 鉴权信息（动态覆盖 meta-data）
+                put("appid", appId)
+                put("appkey", apiKey)
+                put("secretkey", secretKey)
+
+                // 基础参数
+                // 注意：accept-audio-data = true 表示百度不自己录音，由外部通过 asr.audio 事件喂音频
+                // 这是流式识别的关键参数！必须设为 true，否则百度会自己开麦克风录音，忽略我们喂的音频
+                put("accept-audio-data", true)
+                put("accept-audio-volume", false)
+                put("disable-punctuation", false)
+
+                // 识别模型：3.5.0+ SDK 使用 language 代替 pid
+                put("language", "cmn-Hans-CN")  // 中文普通话
+
+                // 音频格式
+                put("format", "pcm")
+                put("rate", 16000)
+                put("channel", 1)
+
+                // 注意：流式识别不写 infile 参数！
+                // infile 只接受本地文件路径，用于文件识别模式。
+                // 流式识别通过 accept-audio-data = true + asr.audio 事件实时喂音频。
+
+                // VAD 设置：使用百度内置 DNN VAD，自动检测说话开始/结束
+                put("vad", "dnn")
+            }
+
+            Log.i(TAG, "流式识别参数: ${params.toString()}")
+
+            // 重置最终结果
+            lastFinalResult = null
+            asrManager?.send("asr.start", params.toString(), null, 0, 0)
+            Log.i(TAG, "百度流式语音识别已启动（边录边识别 + DNN VAD）")
+
+            // 启动超时机制
+            handler.removeCallbacks(timeoutRunnable)
+            handler.postDelayed(timeoutRunnable, RECOGNIZE_TIMEOUT_MS)
+        } catch (e: Exception) {
+            Log.e(TAG, "启动百度流式语音识别失败: ${e.message}", e)
+            isRecognizing = false
+            recognitionCallback = null
+            callback(null)
+        }
+    }
+
+    /**
+     * 发送音频数据给百度 SDK（录音线程每读一块音频调用一次）
+     *
+     * 这是流式识别的核心：实时把音频数据通过 asr.audio 事件发给百度 SDK。
+     * 注意：必须在 startStreamingRecognition() 之后调用，且音频格式必须是
+     * 16kHz、单声道、16bit 小端序 PCM。
+     *
+     * @param data 音频数据（PCM16 小端序）
+     * @param offset 起始偏移（默认 0）
+     * @param length 有效数据长度（默认 data.size）
+     */
+    fun sendAudioData(data: ByteArray, offset: Int = 0, length: Int = data.size) {
+        if (!isRecognizing) return
+        try {
+            asrManager?.send("asr.audio", null, data, offset, length)
+        } catch (e: Exception) {
+            Log.e(TAG, "发送音频数据失败: ${e.message}", e)
+        }
+    }
+
+    /**
+     * 通知百度 SDK 音频输入结束（录音结束时调用）
+     *
+     * 发送 asr.stop 事件，百度 SDK 收到后会停止接收音频，开始返回最终识别结果。
+     * 注意：这不会取消识别，只是告诉百度 SDK "没有更多音频了"。
+     */
+    fun stopRecognition() {
+        if (!isRecognizing) return
+        try {
+            asrManager?.send("asr.stop", null, null, 0, 0)
+            Log.i(TAG, "已发送 asr.stop，通知百度 SDK 音频输入结束")
+        } catch (e: Exception) {
+            Log.e(TAG, "发送 asr.stop 失败: ${e.message}", e)
+        }
+    }
+
     fun cancel() {
         if (!isRecognizing) return
         handler.removeCallbacks(timeoutRunnable)
@@ -313,7 +445,9 @@ class BaiduAsrManager private constructor(private val context: Context) {
                     Log.i(TAG, "检测到说话开始")
                 }
                 "asr.end" -> {
-                    Log.i(TAG, "检测到说话结束")
+                    Log.i(TAG, "百度检测到说话结束（DNN VAD）")
+                    // 通知上层：百度已经判句结束，可以停止录音了
+                    onSpeechEndListener?.invoke()
                 }
                 "asr.partial" -> {
                     // 临时识别结果

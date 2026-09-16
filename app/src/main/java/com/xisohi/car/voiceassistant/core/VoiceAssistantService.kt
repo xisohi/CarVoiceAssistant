@@ -26,6 +26,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import android.media.ToneGenerator
 import android.media.AudioManager
 
@@ -120,6 +121,23 @@ class VoiceAssistantService : Service() {
     private lateinit var wakeWordEngine: WakeWordEngine
     private lateinit var intentParser: IntentParser
     private var toneGenerator: ToneGenerator? = null
+
+    // ---------- 百度流式识别相关（线程安全） ----------
+    /**
+     * 百度检测到说话结束的标志（asr.end 事件触发）
+     * 必须用 AtomicBoolean，不能用普通局部变量！
+     * 原因：百度回调线程写，IO 录音线程读，普通变量没有 happens-before 保证，
+     * JIT 可能把变量缓存在寄存器里，导致录音循环永远看不到 true，直到 20 秒超时。
+     */
+    private val shouldStopRecording = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /**
+     * 百度 asr.end 触发的时间（用于继续喂 400ms 尾部音频）
+     * asr.end 之后，百度还需要 ~200ms 才会吐 final_result，
+     * 这期间应该继续喂音频，否则最后一个字的尾音可能丢失。
+     */
+    @Volatile
+    private var speechEndedAt: Long = 0L
     /** 标记是否正在播放唤醒提示音（TTS说"在呢，您请说"），用于 onSpeakDone 中区分 */
     private var isWakePromptSpeaking = false
 
@@ -540,6 +558,10 @@ class VoiceAssistantService : Service() {
         hasSpeechStartedThisSession = false
         // 重置本次录音的 RMS 峰值（设置页显示峰值，下次录音开始时重置）
         peakRms = 0
+        // ★★★ 必须重置百度流式识别相关标志！否则上次的 true 会残留，
+        // 导致第二轮识别一启动就立即 break，什么都录不到。
+        shouldStopRecording.set(false)
+        speechEndedAt = 0L
         val modelDir = ModelManager.findAsrModelDir(this)
         if (modelDir == null) {
             ttsEngine.speak(getString(R.string.tts_model_unavailable))
@@ -561,6 +583,10 @@ class VoiceAssistantService : Service() {
                 withContext(Dispatchers.Main) { resumeWake() }
                 return@launch
             }
+            // 注意：使用 VOICE_RECOGNITION 而不是 MIC！
+            // VOICE_RECOGNITION 会触发系统级 AGC/降噪/回声消除，车机上系统降噪能有效降低底噪
+            // MIC 源在车机上可能不经过系统 AEC/NS，音频更"原始"，但同时底噪也更大
+            // 和唤醒线程保持一致，都用 VOICE_RECOGNITION
             val record = AudioRecord(
                 MediaRecorder.AudioSource.VOICE_RECOGNITION,
                 SpeechRecognizer.SAMPLE_RATE.toInt(),
@@ -624,29 +650,89 @@ class VoiceAssistantService : Service() {
             var speechFrameCount = 0  // 连续非静音帧数（连续3帧非静音才算开口，避免噪音波动误触发）
 
             var finalText = ""
-            // 音频数据缓冲区：保存应用增益后的 PCM 数据，用于百度语音识别（infile 模式）
+            // 音频数据缓冲区：保存应用增益后的 PCM 数据，用于保存 WAV 文件和百度识别
             val audioBuffer = java.io.ByteArrayOutputStream()
+
+            // 启动百度流式识别（边录边识别 + 百度内置 DNN VAD）
+            // 和百度官方 demo 保持一致：实时音频流 + 百度内置 VAD
+            var baiduStreamingStarted = false
+            var baiduResultDeferred: kotlinx.coroutines.CompletableDeferred<String?>? = null
+            // 百度检测到说话结束的标志 shouldStopRecording 是类成员变量（AtomicBoolean），保证线程可见性
+            // speechEndedAt 记录 asr.end 触发时间，用于继续喂 400ms 尾部音频
+            if (baiduAsrManager.isConfigured() && isNetworkAvailable()) {
+                try {
+                    android.util.Log.i("VoiceService", "启动百度流式识别（边录边识别 + DNN VAD）")
+                    sendRecognitionLog("🌐 百度流式识别启动")
+                    val deferred = kotlinx.coroutines.CompletableDeferred<String?>()
+                    baiduAsrManager.startStreamingRecognition { result ->
+                        // 流式识别结果回调（在识别完成时调用）
+                        android.util.Log.i("VoiceService", "百度流式识别结果: $result")
+                        if (deferred.isActive) {
+                            deferred.complete(result)
+                        }
+                    }
+                    // 设置百度说话结束监听器：百度内置 DNN VAD 检测到说话结束时，通知我们停止录音
+                    baiduAsrManager.setOnSpeechEndListener {
+                        // 只记录第一次 asr.end（百度可能发多次，只取第一次）
+                        if (speechEndedAt == 0L) {
+                            speechEndedAt = SystemClock.elapsedRealtime()
+                            shouldStopRecording.set(true)
+                            android.util.Log.i("VoiceService", "百度检测到说话结束（asr.end），继续喂 400ms 尾部音频")
+                        }
+                    }
+                    baiduResultDeferred = deferred
+                    baiduStreamingStarted = true
+                } catch (e: Exception) {
+                    android.util.Log.w("VoiceService", "启动百度流式识别失败: ${e.message}，将使用 Vosk 结果")
+                    baiduStreamingStarted = false
+                }
+            }
             try {
                 loop@ while (true) {
                     val n = record.read(shortBuf, 0, shortBuf.size)
                     if (n <= 0) continue
+
+                    // 百度检测到说话结束 → 继续喂 400ms 尾部音频后再退出循环（主判据）
+                    // 百度内置 DNN VAD 比我们自己的 RMS VAD 更准确，能避免：
+                    // 1. 用户说话中间停 2 秒就被截断，后面的话全丢
+                    // 2. 强行 asr.stop，百度只能拿到半截音频
+                    // 注意：asr.end 之后不能立即 break！百度还需要 ~200ms 处理最后一段音频，
+                    // 立即停止会导致最后一个字的尾音丢失。继续喂 400ms 保证完整。
+                    if (shouldStopRecording.get()) {
+                        val elapsedSinceEnd = SystemClock.elapsedRealtime() - speechEndedAt
+                        if (elapsedSinceEnd >= 400L) {
+                            android.util.Log.i("VoiceService", "百度判句结束 + 尾部${elapsedSinceEnd}ms 音频喂完，停止录音")
+                            sendRecognitionLog("⏹️ 百度判句结束")
+                            break@loop
+                        }
+                        // 否则继续循环，继续喂音频
+                    }
+
                     // 应用降噪处理（高通滤波 + RNNoise）
                     // 注意：RNNoise 在 16kHz 音频上可能破坏人声特征，如识别率下降可改回 false
                     // 唤醒词检测阶段也启用 RNNoise，降噪有助于噪音环境唤醒
                     recNoiseReducer.process(shortBuf, n, enableRnNoise = false)
 
-                    // 给百度在线识别的音频：应用轻量增益（2.5x）
-                    // 注意：经官方文档确认，百度语音识别没有AGC自动增益和降噪功能，
-                    // 音量过小会导致 ERROR_SPEECH_QUALITY 错误或识别率下降，需要本地放大。
-                    // 2.5x 是较保守的增益，大部分场景不会削顶，同时能明显提高信噪比。
-                    val baiduBuf = shortBuf.copyOf(n)  // 复制一份，避免影响 Vosk 的增益
-                    applyGainWithValue(baiduBuf, n, BAIDU_GAIN)
-                    val tmpBytes = ByteArray(n * 2)
-                    shortsToBytes(baiduBuf, n, tmpBytes)
-                    audioBuffer.write(tmpBytes)
+                    // 给百度的音频：原始音频，不做任何增益（和百度官方 demo 一致）
+                    // 百度 SDK 内部有自己的音频处理，外部加增益反而可能导致：
+                    // 1. 用户声音大时削顶（波形变平头）
+                    // 2. 百度内部处理叠加后反而更糟
+                    val baiduBytes = ByteArray(n * 2)
+                    shortsToBytes(shortBuf, n, baiduBytes)
+                    audioBuffer.write(baiduBytes)  // 保存原始音频用于诊断（不加增益）
+                    // 如果启动了流式识别，实时发送原始音频数据给百度 SDK
+                    // 注意：这是流式识别的核心！每读一块音频就通过 asr.audio 事件发给百度
+                    if (baiduStreamingStarted) {
+                        try {
+                            baiduAsrManager.sendAudioData(baiduBytes)
+                        } catch (e: Exception) {
+                            android.util.Log.w("VoiceService", "发送百度音频数据失败: ${e.message}")
+                        }
+                    }
 
                     // 给 Vosk 离线识别的音频：应用 asrGain（用户设置，当前默认 8.0x）
                     // Vosk 离线识别需要更大的增益来提高信噪比
+                    // 注意：applyGain 会原地修改 shortBuf，所以必须在给百度发完音频之后才能调用
                     applyGain(shortBuf, n)
 
                     // 计算 RMS 能量，判断是否静音（不依赖 Vosk 内置端点检测，太敏感）
@@ -696,9 +782,11 @@ class VoiceAssistantService : Service() {
                         // 累加静音时长（这一帧的时长 = 样本数 / 采样率 * 1000ms）
                         silenceDuration += (n * 1000L / SpeechRecognizer.SAMPLE_RATE.toInt())
                         // 只有连续静音超过阈值，且录音时间超过最短时间，才认为用户说完了
-                        // 动态静音判定：已识别到内容说明用户在说话，中间可能停顿，用3000ms多等一会儿；
+                        // 动态静音判定：已识别到内容说明用户在说话，中间可能停顿，用2500ms多等一会儿；
                         // 没识别到内容说明用户可能没说话，用1500ms快速结束
-                        val dynamicSilenceMs = if (lastPartial.isNotEmpty()) MAX_SILENCE_MS * 2 else MAX_SILENCE_MS
+                        // 注意：这是兜底判据！主判据是百度 asr.end（shouldStopRecording）
+                        // 百度判不准时说明音频有问题，多等也没用，2.5秒给足"说话中间自然停顿"空间
+                        val dynamicSilenceMs = if (lastPartial.isNotEmpty()) 2500L else 1500L
                         if (silenceDuration >= dynamicSilenceMs && recordDuration >= MIN_RECORD_MS) {
                             android.util.Log.d("VoiceService",
                                 "连续静音${silenceDuration}ms，确认用户说完了，结束录音 (RMS=${rms.toInt()}, 阈值=${adaptiveSilenceThreshold.toInt()})")
@@ -721,8 +809,11 @@ class VoiceAssistantService : Service() {
                 finalText = recognizer.finish()
                 android.util.Log.d("VoiceService", "Vosk 识别文本: '$finalText'")
 
+                // 清理百度说话结束监听器
+                baiduAsrManager.setOnSpeechEndListener(null)
+
                 // 保存本次录音为 WAV 文件（最近10条，方便回听判断录音质量）
-                // 保存的是给百度用的音频（2.5x增益），更接近真实人声
+                // 保存的是原始音频（不加增益），方便诊断"是录音本身音量小，还是增益放大后的问题"
                 try {
                     val saveLabel = finalText.ifEmpty { "未识别" }
                     AudioSaver.saveRecording(audioBuffer.toByteArray(), saveLabel)
@@ -730,51 +821,37 @@ class VoiceAssistantService : Service() {
                     android.util.Log.w("VoiceService", "保存录音失败: ${e.message}")
                 }
 
-                // 优先使用百度语音识别（有网络且配置了 Key 时），识别率更高
-                // 百度识别用 infile 模式：我们自己录音，保存为临时 PCM 文件，传给百度识别
-                if (baiduAsrManager.isConfigured() && isNetworkAvailable()) {
-                    android.util.Log.i("VoiceService", "百度语音已配置且有网络，优先使用百度识别")
-                    sendRecognitionLog("🌐 使用百度在线识别")
+                // 如果启动了百度流式识别，直接等待百度识别结果
+                // 注意：正常流程不发 asr.stop！百度内置 DNN VAD 已经检测到说话结束（asr.end），
+                // 会自动返回最终识别结果（asr.finish）。只有超时或用户取消时才发 asr.stop/asr.cancel
+                if (baiduStreamingStarted && baiduResultDeferred != null) {
                     try {
-                        // 保存音频数据为临时 PCM 文件
-                        val tempFile = java.io.File(cacheDir, "baidu_asr_${System.currentTimeMillis()}.pcm")
-                        tempFile.writeBytes(audioBuffer.toByteArray())
-                        android.util.Log.d("VoiceService", "临时音频文件: ${tempFile.name}, 大小: ${tempFile.length()} bytes")
+                        android.util.Log.d("VoiceService", "等待百度识别结果（百度已判 asr.end，自动返回 final_result）...")
 
-                        // 用 suspendCoroutine 把百度异步回调转成同步调用
-                        val baiduResult = kotlinx.coroutines.suspendCancellableCoroutine<String?> { cont ->
-                            baiduAsrManager.recognizeFile(tempFile) { result ->
-                                // 先删除临时文件（不管协程是否被取消，都要清理）
-                                try { tempFile.delete() } catch (_: Exception) {}
-                                // 注意：必须判断 cont.isActive！
-                                // 如果 recognitionJob 被 onDestroy 取消，cont 已经被取消，
-                                // 但百度 SDK 的回调还会跑，此时再 cont.resumeWith(...)
-                                // 会抛 IllegalStateException: Already resumed 或 CancellationException。
-                                if (cont.isActive) {
-                                    cont.resumeWith(Result.success(result))
-                                } else {
-                                    android.util.Log.w("VoiceService", "百度识别回调时协程已取消，忽略结果: $result")
-                                }
-                            }
+                        // 等待百度流式识别结果（带超时保护）
+                        val baiduResult = withTimeoutOrNull(10000L) {
+                            baiduResultDeferred.await()
                         }
 
                         if (!baiduResult.isNullOrEmpty()) {
                             finalText = baiduResult
-                            android.util.Log.i("VoiceService", "百度识别成功: '$finalText'")
+                            android.util.Log.i("VoiceService", "百度流式识别成功: '$finalText'")
                             sendRecognitionLog("✅ 百度识别: $finalText")
                         } else {
-                            android.util.Log.w("VoiceService", "百度识别失败或结果为空，回退到 Vosk 结果")
+                            android.util.Log.w("VoiceService", "百度流式识别失败或结果为空或超时，回退到 Vosk 结果")
                             sendRecognitionLog("⚠️ 百度识别失败，使用离线 Vosk 结果")
                         }
                     } catch (e: Exception) {
-                        android.util.Log.e("VoiceService", "百度识别异常: ${e.message}，回退到 Vosk", e)
+                        android.util.Log.e("VoiceService", "百度流式识别异常: ${e.message}，回退到 Vosk", e)
                         sendRecognitionLog("⚠️ 百度识别异常，使用离线 Vosk 结果")
                     }
                 } else {
                     if (!baiduAsrManager.isConfigured()) {
                         android.util.Log.d("VoiceService", "百度语音未配置，使用离线 Vosk 识别")
-                    } else {
+                    } else if (!isNetworkAvailable()) {
                         android.util.Log.d("VoiceService", "无网络，使用离线 Vosk 识别")
+                    } else {
+                        android.util.Log.d("VoiceService", "百度流式识别未启动，使用离线 Vosk 识别")
                     }
                 }
 
