@@ -553,7 +553,75 @@ class VoiceAssistantService : Service() {
     // ---------- 语音识别 ----------
 
 
+    /**
+     * 识别入口：根据网络状态自动选择识别路径
+     * - 有网络且百度已配置 → 百度在线识别（百度自己开麦录音，避免麦克风冲突）
+     * 无网络或百度未配置 → Vosk 离线识别（我们自己录音 + Vosk 识别）
+     */
     private fun startRecognition() {
+        if (baiduAsrManager.isConfigured() && isNetworkAvailable()) {
+            startRecognitionOnline()
+        } else {
+            if (!baiduAsrManager.isConfigured()) {
+                android.util.Log.d("VoiceService", "百度语音未配置，使用 Vosk 离线识别")
+            } else {
+                android.util.Log.d("VoiceService", "无网络，使用 Vosk 离线识别")
+            }
+            startRecognitionOffline()
+        }
+    }
+
+    /**
+     * 百度在线识别（让百度自己开麦录音）
+     *
+     * 为什么要让百度自己录？
+     * 车机只有一个麦克风，任何时刻只能被一个 AudioRecord 占用。
+     * 如果我们自己开 AudioRecord 录音，同时百度 SDK 也想开麦，就会冲突：
+     *   AudioRecord: start() status -38
+     *   ASREngine: errorCode : 3001 desc : Recorder open failed
+     *
+     * 正确流程：
+     *   唤醒阶段：我们的 AudioRecord 占麦（用于唤醒词检测）
+     *       ↓ 检测到唤醒词
+     *   识别阶段：先 stopWakeListening() 释放麦克风
+     *       ↓
+     *   百度 SDK 开麦、自己录、自己 VAD、自己识别
+     *       ↓ 百度 asr.finish → 拿到结果
+     *   handleText(result)
+     *       ↓ 处理完成
+     *   resumeWake()，重新开唤醒线程
+     *
+     * 和百度官方 Demo 完全一致。
+     */
+    private fun startRecognitionOnline() {
+        // 停止唤醒监听，释放麦克风给百度 SDK
+        stopWakeListening()
+        currentState = State.LISTENING
+        android.util.Log.i("VoiceService", "启动百度在线识别（百度自录）")
+        sendRecognitionLog("🌐 百度在线识别启动（百度自录）")
+
+        // 百度自己开麦、自己 VAD、自己识别
+        baiduAsrManager.startStreamingRecognition { result ->
+            mainHandler.post {
+                if (!result.isNullOrEmpty()) {
+                    android.util.Log.i("VoiceService", "百度在线识别成功: '$result'")
+                    sendRecognitionLog("✅ 百度识别: $result")
+                    handleText(result)
+                } else {
+                    android.util.Log.w("VoiceService", "百度在线识别失败或结果为空")
+                    sendRecognitionLog("⚠️ 百度识别失败")
+                    currentState = State.IDLE
+                    resumeWake()
+                }
+            }
+        }
+    }
+
+    /**
+     * Vosk 离线识别（我们自己录音 + Vosk 识别）
+     * 用于无网络或百度未配置时的降级方案。
+     */
+    private fun startRecognitionOffline() {
         // 重置本次识别的开口标志
         hasSpeechStartedThisSession = false
         // 重置本次录音的 RMS 峰值（设置页显示峰值，下次录音开始时重置）

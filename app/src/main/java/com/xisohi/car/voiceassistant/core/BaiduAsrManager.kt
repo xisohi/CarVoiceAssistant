@@ -341,7 +341,10 @@ class BaiduAsrManager private constructor(private val context: Context) {
                 // 基础参数
                 // 注意：accept-audio-data = true 表示百度不自己录音，由外部通过 asr.audio 事件喂音频
                 // 这是流式识别的关键参数！必须设为 true，否则百度会自己开麦克风录音，忽略我们喂的音频
-                put("accept-audio-data", true)
+                // accept-audio-data = false：百度自己开麦录音（和官方 Demo 一致）
+                // 注意：无论 true 还是 false，百度都会自己开麦！true 只是额外接受外部 asr.audio 数据。
+                // 我们的方案是：唤醒阶段我们占麦，识别阶段释放麦克风让百度自己录，避免麦克风冲突。
+                put("accept-audio-data", false)
                 put("accept-audio-volume", false)
                 put("disable-punctuation", false)
 
