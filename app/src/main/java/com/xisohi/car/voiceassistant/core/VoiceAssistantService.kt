@@ -171,6 +171,9 @@ class VoiceAssistantService : Service() {
         WakeWordEngine.setAsrGain(savedAsrGain)
         android.util.Log.i("VoiceService", "识别增益: ${WakeWordEngine.getAsrGain()}")
 
+        // 初始化录音保存工具（保存最近10条录音，方便回听判断录音质量）
+        AudioSaver.init(this)
+
         // 初始化百度语音识别管理器（有网络且配置了 Key 时优先使用百度，识别率更高）
         baiduAsrManager = BaiduAsrManager.getInstance(this)
         if (baiduAsrManager.isConfigured()) {
@@ -717,6 +720,15 @@ class VoiceAssistantService : Service() {
                 }
                 finalText = recognizer.finish()
                 android.util.Log.d("VoiceService", "Vosk 识别文本: '$finalText'")
+
+                // 保存本次录音为 WAV 文件（最近10条，方便回听判断录音质量）
+                // 保存的是给百度用的音频（2.5x增益），更接近真实人声
+                try {
+                    val saveLabel = finalText.ifEmpty { "未识别" }
+                    AudioSaver.saveRecording(audioBuffer.toByteArray(), saveLabel)
+                } catch (e: Exception) {
+                    android.util.Log.w("VoiceService", "保存录音失败: ${e.message}")
+                }
 
                 // 优先使用百度语音识别（有网络且配置了 Key 时），识别率更高
                 // 百度识别用 infile 模式：我们自己录音，保存为临时 PCM 文件，传给百度识别
