@@ -12,6 +12,16 @@ import org.json.JSONObject
 import java.io.File
 
 /**
+ * 配置验证结果（三态：成功/鉴权错误/网络错误）
+ * 网络错误不应该被标记为"配置错误"，因为用户的 Key 可能是对的，只是当前网络不通
+ */
+sealed class VerifyResult {
+    object Success : VerifyResult()
+    data class AuthError(val message: String) : VerifyResult()   // Key 错误
+    data class NetworkError(val message: String) : VerifyResult() // 网络问题
+}
+
+/**
  * 百度语音识别 SDK 封装
  *
  * 使用 AipeEventManagerFactory + 动态鉴权方式，
@@ -40,6 +50,11 @@ class BaiduAsrManager private constructor(private val context: Context) {
         private const val KEY_APP_ID = "app_id"
         private const val KEY_API_KEY = "api_key"
         private const val KEY_SECRET_KEY = "secret_key"
+        private const val KEY_CONFIG_STATUS = "config_status"  // 配置验证状态：ok/error/untested
+        // 配置验证状态三态
+        const val CONFIG_STATUS_OK = "ok"          // 测试连接通过，配置正确
+        const val CONFIG_STATUS_ERROR = "error"    // 测试连接失败，配置错误
+        const val CONFIG_STATUS_UNTESTED = "untested"  // 未测试或修改了配置，需要重新测试
         private const val RECOGNIZE_TIMEOUT_MS = 20000L  // 识别超时 20 秒
 
         @Volatile
@@ -106,9 +121,25 @@ class BaiduAsrManager private constructor(private val context: Context) {
             .putString(KEY_APP_ID, appId.trim())
             .putString(KEY_API_KEY, apiKey.trim())
             .putString(KEY_SECRET_KEY, secretKey.trim())
+            .putString(KEY_CONFIG_STATUS, CONFIG_STATUS_UNTESTED)  // 配置修改后重置为"未测试"，需要重新测试连接
             .apply()
-        Log.i(TAG, "百度语音配置已保存")
-        release()
+        Log.i(TAG, "百度语音配置已保存（验证状态重置为未测试，需重新测试连接）")
+        // 释放旧引擎，强制下次使用时重新 init() 读取新配置
+        releaseEngine()
+        // 配置完整时立即用新配置初始化，确保修改后立即生效
+        // （避免用户改了配置但没重启应用，导致还是用旧配置）
+        if (appId.isNotEmpty() && apiKey.isNotEmpty() && secretKey.isNotEmpty()) {
+            try {
+                val success = init()
+                if (success) {
+                    Log.i(TAG, "百度语音配置已保存并立即初始化成功（新配置生效）")
+                } else {
+                    Log.w(TAG, "百度语音配置已保存，但立即初始化失败（下次使用时会重试）")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "百度语音配置已保存，但立即初始化异常: ${e.message}（下次使用时会重试）")
+            }
+        }
     }
 
     fun getAppId(): String = prefs.getString(KEY_APP_ID, "") ?: ""
@@ -117,6 +148,118 @@ class BaiduAsrManager private constructor(private val context: Context) {
 
     fun isConfigured(): Boolean {
         return getAppId().isNotEmpty() && getApiKey().isNotEmpty() && getSecretKey().isNotEmpty()
+    }
+
+    /**
+     * 设置配置验证状态（测试连接后调用）
+     * @param status CONFIG_STATUS_OK / CONFIG_STATUS_ERROR / CONFIG_STATUS_UNTESTED
+     */
+    fun setConfigStatus(status: String) {
+        prefs.edit().putString(KEY_CONFIG_STATUS, status).apply()
+        Log.i(TAG, "配置验证状态已设置为: $status")
+    }
+
+    /**
+     * 获取配置验证状态
+     * @return CONFIG_STATUS_OK / CONFIG_STATUS_ERROR / CONFIG_STATUS_UNTESTED
+     */
+    fun getConfigStatus(): String {
+        return prefs.getString(KEY_CONFIG_STATUS, CONFIG_STATUS_UNTESTED) ?: CONFIG_STATUS_UNTESTED
+    }
+
+    /**
+     * 配置是否验证通过（兼容旧代码，等价于 getConfigStatus() == CONFIG_STATUS_OK）
+     */
+    fun isConfigVerified(): Boolean {
+        return getConfigStatus() == CONFIG_STATUS_OK
+    }
+
+    /**
+     * 验证百度语音配置是否正确（调用 token 接口）
+     *
+     * 原理：调用百度 OAuth token 接口，如果返回 access_token 说明 Key 正确；
+     * 如果返回 error 说明 Key 错误；如果超时说明网络不通。
+     *
+     * @param apiKey API Key
+     * @param secretKey Secret Key
+     * @return VerifyResult 三态：Success / AuthError（Key错） / NetworkError（网络问题）
+     */
+    fun verifyConfig(apiKey: String, secretKey: String): VerifyResult {
+        return try {
+            val url = "https://aip.baidubce.com/oauth/2.0/token?grant_type=client_credentials" +
+                    "&client_id=$apiKey&client_secret=$secretKey"
+            val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+            conn.requestMethod = "GET"
+            conn.connectTimeout = 5000
+            conn.readTimeout = 5000
+            val responseCode = conn.responseCode
+            if (responseCode == 200) {
+                val response = conn.inputStream.bufferedReader().use { it.readText() }
+                val json = org.json.JSONObject(response)
+                if (json.has("access_token")) {
+                    val token = json.getString("access_token")
+                    Log.i(TAG, "配置验证成功，token=${token.take(10)}...")
+                    VerifyResult.Success
+                } else {
+                    val error = json.optString("error", "未知错误")
+                    val errorDesc = json.optString("error_description", "")
+                    Log.w(TAG, "配置验证失败（鉴权错误）: $error - $errorDesc")
+                    VerifyResult.AuthError("验证失败: $error - $errorDesc")
+                }
+            } else {
+                Log.w(TAG, "配置验证 HTTP 错误: $responseCode")
+                VerifyResult.AuthError("HTTP 错误: $responseCode")
+            }
+        } catch (e: java.net.SocketTimeoutException) {
+            Log.w(TAG, "配置验证超时（网络不通）")
+            VerifyResult.NetworkError("网络超时，请检查网络连接")
+        } catch (e: java.net.UnknownHostException) {
+            Log.w(TAG, "配置验证失败: 无法解析主机名（网络不通）")
+            VerifyResult.NetworkError("无法连接服务器，请检查网络")
+        } catch (e: Exception) {
+            Log.w(TAG, "配置验证异常: ${e.message}")
+            VerifyResult.NetworkError("网络错误: ${e.message}")
+        }
+    }
+
+    /**
+     * 检测网络是否真的通（调用百度 token 接口，只检测连通性，不验证 Key）
+     *
+     * 车机场景：WiFi 已连接但可能无外网（如手机热点没开流量、路由器断网）。
+     * isNetworkAvailable() 只能检测网络是否连接，不能检测是否能访问外网。
+     *
+     * @return true=网络通，false=网络不通
+     */
+    fun isNetworkReachable(): Boolean {
+        // ★ 用中性探测目标，避免用无效凭证触发限流/连接重置
+        // 多个 URL 依次尝试，只要有一个能通就说明网络通
+        val probeUrls = listOf(
+            "https://www.baidu.com",        // 百度主站
+            "https://aip.baidubce.com",     // 百度 AI 主站（不带参数）
+            "https://www.qq.com"             // 备用
+        )
+        for (url in probeUrls) {
+            try {
+                val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+                conn.requestMethod = "HEAD"  // HEAD 比 GET 更轻量，只拿响应头
+                conn.connectTimeout = 3000
+                conn.readTimeout = 3000
+                conn.instanceFollowRedirects = false  // 不跟随重定向，3xx 也算通
+                val code = conn.responseCode
+                conn.disconnect()
+                // 2xx/3xx/4xx 都说明网络通（4xx 是业务错误，不是网络问题）
+                // 只有 5xx 或连不上才说明网络有问题
+                if (code in 200..499) {
+                    Log.d(TAG, "网络连通性检测: $url → HTTP $code（网络通）")
+                    return true
+                }
+            } catch (e: Exception) {
+                Log.d(TAG, "网络探测 $url 失败: ${e.javaClass.simpleName} - ${e.message}")
+            }
+        }
+        // 所有 URL 都探测失败，说明网络不通
+        Log.w(TAG, "网络连通性检测: 所有探测 URL 均失败（网络不通）")
+        return false
     }
 
     fun clearConfig() {

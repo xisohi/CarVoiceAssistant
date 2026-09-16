@@ -19,6 +19,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import com.xisohi.car.voiceassistant.core.BaiduAsrManager
 import com.xisohi.car.voiceassistant.core.LogUtils
+import com.xisohi.car.voiceassistant.core.VerifyResult
 import com.xisohi.car.voiceassistant.core.VoiceAssistantService
 import com.xisohi.car.voiceassistant.core.wakeword.WakeWordEngine
 import com.xisohi.car.voiceassistant.databinding.ActivityMainBinding
@@ -344,13 +345,26 @@ class MainActivity : AppCompatActivity() {
                 toast("App ID、API Key 和 Secret Key 都不能为空")
                 return@setOnClickListener
             }
+            log("保存百度配置：appId=$appId, apiKey=${apiKey.take(4)}...${apiKey.takeLast(4)}, secretKey=${secretKey.take(4)}...${secretKey.takeLast(4)}")
             baiduAsrManager.saveConfig(appId, apiKey, secretKey)
-            toast("百度语音配置已保存")
-            log("百度语音配置已保存")
+            // saveConfig() 内部已经调用了 init()，这里再调用一次确保初始化成功，并把结果显示给用户
+            val success = baiduAsrManager.init()
+            if (success) {
+                toast("百度语音配置已保存，请点测试连接验证")
+                log("✅ 百度语音配置已保存并初始化成功（未验证，请点测试连接）")
+                // ★ 配置已保存但未验证，提示用户点测试连接（不要误导用户以为配置一定正确）
+                binding.tvBaiduStatus.text = "已配置（未验证，请点测试连接）"
+                binding.tvBaiduStatus.setTextColor(0xFFFF9800.toInt())
+            } else {
+                toast("百度语音配置已保存，但初始化失败")
+                log("⚠️ 百度语音配置已保存，但初始化失败（请检查 Key 是否正确，下次使用时会重试）")
+                binding.tvBaiduStatus.text = "配置已保存，初始化失败"
+                binding.tvBaiduStatus.setTextColor(0xFFFF9800.toInt())
+            }
             updateBaiduStatus()
         }
 
-        // 测试百度配置（初始化 SDK 测试）
+        // 测试百度配置（调用 token 接口验证 Key 是否正确）
         binding.btnTestBaiduConfig.setOnClickListener {
             val appId = binding.etBaiduAppId.text.toString().trim()
             val apiKey = binding.etBaiduApiKey.text.toString().trim()
@@ -361,21 +375,49 @@ class MainActivity : AppCompatActivity() {
             }
             // 先保存配置
             baiduAsrManager.saveConfig(appId, apiKey, secretKey)
-            binding.tvBaiduStatus.text = "正在初始化..."
+            binding.tvBaiduStatus.text = "正在验证配置..."
             binding.tvBaiduStatus.setTextColor(0xFFFF9800.toInt())
-            // 初始化 SDK 测试
-            val success = baiduAsrManager.init()
-            if (success) {
-                binding.tvBaiduStatus.text = "初始化成功"
-                binding.tvBaiduStatus.setTextColor(0xFF4CAF50.toInt())
-                toast("百度语音 SDK 初始化成功")
-                log("百度语音 SDK 初始化成功")
-            } else {
-                binding.tvBaiduStatus.text = "初始化失败，请检查配置"
-                binding.tvBaiduStatus.setTextColor(0xFFF44336.toInt())
-                toast("百度语音 SDK 初始化失败，请检查配置")
-                log("百度语音 SDK 初始化失败")
-            }
+            log("开始验证百度配置: appId=$appId")
+            // 在后台线程调用 token 接口验证 Key（网络请求不能在主线程）
+            Thread {
+                val result = baiduAsrManager.verifyConfig(apiKey, secretKey)
+                runOnUiThread {
+                    when (result) {
+                        is VerifyResult.Success -> {
+                            // ★ 鉴权通过 → 状态=ok，识别时走在线
+                            baiduAsrManager.setConfigStatus(BaiduAsrManager.CONFIG_STATUS_OK)
+                            binding.tvBaiduStatus.text = "✅ 配置正确"
+                            binding.tvBaiduStatus.setTextColor(0xFF4CAF50.toInt())
+                            toast("百度语音配置验证成功")
+                            log("✅ 百度配置验证成功（状态=ok，识别时走在线）")
+                        }
+                        is VerifyResult.AuthError -> {
+                            // ★ 鉴权错误（Key错）→ 状态=error，识别时直接走离线（不浪费时间）
+                            baiduAsrManager.setConfigStatus(BaiduAsrManager.CONFIG_STATUS_ERROR)
+                            binding.tvBaiduStatus.text = "❌ ${result.message}"
+                            binding.tvBaiduStatus.setTextColor(0xFFF44336.toInt())
+                            toast("百度语音配置验证失败: ${result.message}")
+                            log("❌ 百度配置验证失败（鉴权错误）: ${result.message}（状态=error，识别时直接走离线）")
+                        }
+                        is VerifyResult.NetworkError -> {
+                            // ★ 网络问题（不是Key错）→ 状态保持 untested，不要误判为配置错误
+                            // 用户的 Key 可能是对的，只是当前网络不通，等网络通了再测试
+                            baiduAsrManager.setConfigStatus(BaiduAsrManager.CONFIG_STATUS_UNTESTED)
+                            binding.tvBaiduStatus.text = "⚠️ ${result.message}"
+                            binding.tvBaiduStatus.setTextColor(0xFFFF9800.toInt())
+                            toast("网络问题，无法验证配置: ${result.message}")
+                            log("⚠️ 百度配置验证失败（网络问题）: ${result.message}（状态保持未测试，等网络通了再试）")
+                        }
+                        else -> {
+                            // 理论上不会走到这里（密封类只有三个子类），但编译器要求穷举
+                            baiduAsrManager.setConfigStatus(BaiduAsrManager.CONFIG_STATUS_UNTESTED)
+                            binding.tvBaiduStatus.text = "未知验证结果"
+                            binding.tvBaiduStatus.setTextColor(0xFFFF9800.toInt())
+                            log("⚠️ 百度配置验证返回未知结果")
+                        }
+                    }
+                }
+            }.start()
         }
 
         // 从文件导入百度配置（支持U盘、车机内部存储等任意位置）
@@ -619,7 +661,8 @@ class MainActivity : AppCompatActivity() {
             baiduAsrManager.saveConfig(appId, apiKey, secretKey)
             updateBaiduStatus()
 
-            toast("配置导入成功！已自动保存")
+            toast("配置导入成功！请点测试连接验证配置")
+            log("配置导入成功（状态=未验证，请点测试连接）")
             log("导入配置成功：appId=$appId, 来源=${file.name}")
 
         } catch (e: Exception) {
@@ -668,7 +711,8 @@ class MainActivity : AppCompatActivity() {
             baiduAsrManager.saveConfig(appId, apiKey, secretKey)
             updateBaiduStatus()
 
-            toast("配置导入成功！已自动保存")
+            toast("配置导入成功！请点测试连接验证配置")
+            log("配置导入成功（状态=未验证，请点测试连接）")
             log("导入配置成功：appId=$appId")
 
         } catch (e: Exception) {
@@ -681,12 +725,26 @@ class MainActivity : AppCompatActivity() {
      * 更新百度语音配置状态显示
      */
     private fun updateBaiduStatus() {
-        if (baiduAsrManager.isConfigured()) {
-            binding.tvBaiduStatus.text = "已配置"
-            binding.tvBaiduStatus.setTextColor(0xFF4CAF50.toInt())
-        } else {
+        if (!baiduAsrManager.isConfigured()) {
             binding.tvBaiduStatus.text = "未配置"
             binding.tvBaiduStatus.setTextColor(0xFF9E9E9E.toInt())
+        } else {
+            // ★ 根据配置验证状态三态显示
+            when (baiduAsrManager.getConfigStatus()) {
+                BaiduAsrManager.CONFIG_STATUS_OK -> {
+                    binding.tvBaiduStatus.text = "✅ 已配置（已验证）"
+                    binding.tvBaiduStatus.setTextColor(0xFF4CAF50.toInt())
+                }
+                BaiduAsrManager.CONFIG_STATUS_ERROR -> {
+                    binding.tvBaiduStatus.text = "❌ 已配置（验证失败）"
+                    binding.tvBaiduStatus.setTextColor(0xFFF44336.toInt())
+                }
+                else -> {
+                    // untested：未测试或修改了配置
+                    binding.tvBaiduStatus.text = "⚠️ 已配置（未验证，请点测试连接）"
+                    binding.tvBaiduStatus.setTextColor(0xFFFF9800.toInt())
+                }
+            }
         }
     }
 

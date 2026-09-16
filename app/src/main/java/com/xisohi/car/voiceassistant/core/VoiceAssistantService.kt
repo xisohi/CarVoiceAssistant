@@ -156,6 +156,29 @@ class VoiceAssistantService : Service() {
     // 连续没说话的重试次数（唤醒后长时间不说话，连续2次就自动退出，避免无限循环"没有听清"）
     private var noSpeechRetryCount = 0
     private val MAX_NO_SPEECH_RETRY = 2  // 最多重试2次，第3次就自动退出
+    // 标记本次识别是否是"在线识别失败后回退到离线"的场景
+    // 用于防止无限循环：在线失败→回退离线→离线失败→又调用startRecognition()→又选在线→又失败...
+    private var isFallbackFromOnline = false
+    // 连续在线识别失败次数（用于网络不通或Key错误时自动降级为离线，避免每次都要等在线超时）
+    private var consecutiveOnlineFailures = 0
+    private val MAX_CONSECUTIVE_ONLINE_FAILURES = 3  // 连续失败3次后暂时降级为离线
+    private val ONLINE_RECOGNITION_TIMEOUT_MS = 15_000L  // 在线识别超时15秒（网络不通时百度可能一直不返回）
+    // 在线识别超时定时器（用于取消超时回调）
+    private var onlineTimeoutRunnable: Runnable? = null
+    // 标记在线识别是否已经收到结果（避免超时和回调同时触发）
+    private var onlineResultReceived = false
+    // 网络连通性缓存（首次唤醒检测，后续唤醒直接用缓存；网络变化时清空缓存，下次唤醒重新检测）
+    // true=能访问外网，false=不能访问外网（WiFi已连接但无外网）
+    @Volatile
+    private var networkReachable = true
+    // 网络连通性缓存是否有效（true=直接用缓存，false=需要重新检测）
+    @Volatile
+    private var networkCacheValid = false
+    // 网络变化回调（开/关热点、进/出隧道时触发，清空缓存）
+    private var networkCallback: android.net.ConnectivityManager.NetworkCallback? = null
+    // 网络变化防抖：5秒内的连续回调只处理一次（避免WiFi/4G切换时频繁清空缓存）
+    private var lastNetworkChangeTime = 0L
+    private val NETWORK_CHANGE_DEBOUNCE_MS = 5000L
     private lateinit var skillExecutor: SkillExecutor
     private lateinit var ttsEngine: TtsEngine
     private lateinit var placeMatcher: PlaceMatcher  // 地名模糊匹配器（导航同音字纠正）
@@ -172,6 +195,36 @@ class VoiceAssistantService : Service() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        // 注册网络变化监听：开/关热点、进/出隧道时触发，清空网络缓存
+        // 下次唤醒时重新检测网络连通性
+        try {
+            val cm = getSystemService(CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+            // 用局部变量避免可变属性智能转换问题
+            val callback = object : android.net.ConnectivityManager.NetworkCallback() {
+                override fun onAvailable(network: android.net.Network) {
+                    // 防抖：5秒内的连续回调只处理一次（避免WiFi/4G切换时频繁清空缓存）
+                    val now = System.currentTimeMillis()
+                    if (now - lastNetworkChangeTime < NETWORK_CHANGE_DEBOUNCE_MS) return
+                    lastNetworkChangeTime = now
+                    android.util.Log.d("VoiceService", "网络已连接，清空网络连通性缓存（下次唤醒重新检测）")
+                    networkCacheValid = false
+                }
+                override fun onLost(network: android.net.Network) {
+                    // 防抖：5秒内的连续回调只处理一次
+                    val now = System.currentTimeMillis()
+                    if (now - lastNetworkChangeTime < NETWORK_CHANGE_DEBOUNCE_MS) return
+                    lastNetworkChangeTime = now
+                    android.util.Log.d("VoiceService", "网络已断开，清空网络连通性缓存（下次唤醒重新检测）")
+                    networkCacheValid = false
+                    networkReachable = false
+                }
+            }
+            networkCallback = callback
+            cm.registerDefaultNetworkCallback(callback)
+            android.util.Log.i("VoiceService", "网络变化监听已注册")
+        } catch (e: Exception) {
+            android.util.Log.w("VoiceService", "注册网络变化监听失败: ${e.message}")
+        }
         currentState = State.IDLE
         createChannel()
 
@@ -383,7 +436,30 @@ class VoiceAssistantService : Service() {
             }
 
             val audioBuffer = ShortArray(frameSize)
-            record.startRecording()
+            // ★ 关键：startRecording() 可能因为麦克风被占用而失败，需要重试
+            // 场景：百度 SDK 刚释放麦克风，立即启动唤醒监听会失败，重试几次等待麦克风完全释放
+            var startSuccess = false
+            for (retry in 1..3) {
+                try {
+                    record.startRecording()
+                    // 用 recordingState 判断是否启动成功（startRecording() 返回 Unit，不能直接比较返回值）
+                    if (record.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
+                        startSuccess = true
+                        break
+                    } else {
+                        android.util.Log.w("WakeAudioThread", "startRecording() 失败 (state=${record.recordingState})，第 $retry 次重试...")
+                        Thread.sleep(200)
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.w("WakeAudioThread", "startRecording() 异常: ${e.message}，第 $retry 次重试...")
+                    Thread.sleep(200)
+                }
+            }
+            if (!startSuccess) {
+                android.util.Log.e("WakeAudioThread", "AudioRecord 启动失败（重试3次均失败），麦克风可能被其他应用占用")
+                record.release()
+                return
+            }
             android.util.Log.d("WakeAudioThread", "开始录音，帧大小=$frameSize")
 
             try {
@@ -561,13 +637,62 @@ class VoiceAssistantService : Service() {
      * 无网络或百度未配置 → Vosk 离线识别（我们自己录音 + Vosk 识别）
      */
     private fun startRecognition() {
-        if (baiduAsrManager.isConfigured() && isNetworkAvailable()) {
+        // 正常启动识别时，重置"在线失败回退离线"标志位
+        isFallbackFromOnline = false
+        // ★ 网络连通性检测：缓存有效时直接用（无延迟），缓存无效时同步检测（首次唤醒等1~3秒，可接受）
+        // 缓存失效时机：首次启动、网络变化（开/关热点、进/出隧道）
+        // 同步检测的好处：首次唤醒就能正确判断，不会"盲走在线"
+        val hasNetwork = isNetworkAvailable()
+        val canReachInternet = if (networkCacheValid) {
+            networkReachable
+        } else {
+            // 没缓存 → 同步检测（首次唤醒会等1~3秒，可接受）
+            if (hasNetwork) {
+                checkNetworkReachable()
+            } else {
+                // 没连网直接标记为不通
+                networkReachable = false
+                networkCacheValid = true
+                false
+            }
+        }
+        // 连续在线失败超过阈值时，暂时降级为离线（避免每次都要等在线超时/失败）
+        // 适用于：Key错误、网络不通（WiFi已连接但无外网）等场景
+        if (consecutiveOnlineFailures >= MAX_CONSECUTIVE_ONLINE_FAILURES) {
+            android.util.Log.w("VoiceService", "连续在线识别失败 ${consecutiveOnlineFailures} 次，暂时降级为离线识别（下次启动应用后恢复）")
+            sendRecognitionLog("⚠️ 连续在线失败${consecutiveOnlineFailures}次，暂时使用离线识别")
+            startRecognitionOffline()
+            return
+        }
+        // 网络连通性判断：hasNetwork 和 canReachInternet 已在上面的同步检测中计算完成
+        // 车机场景：WiFi已连接但可能无外网（手机热点没开流量、路由器断网）
+        // 配置验证状态（三态）：
+        //   ok       = 测试连接通过 → 走在线
+        //   error    = 测试连接失败 → 直接走离线（不浪费时间在在线）
+        //   untested = 未测试或修改了配置 → 走在线，失败了自动降级（连续失败3次后暂时离线）
+        val configStatus = baiduAsrManager.getConfigStatus()
+        // 决定是否走在线：配置已配置 + 有网络 + 能访问外网 + 配置状态不是 error
+        // （untested 和 ok 都可以走在线，untested 失败后会自动降级）
+        val canUseOnline = baiduAsrManager.isConfigured() && hasNetwork && canReachInternet &&
+                configStatus != BaiduAsrManager.CONFIG_STATUS_ERROR
+        if (canUseOnline) {
             startRecognitionOnline()
         } else {
-            if (!baiduAsrManager.isConfigured()) {
-                android.util.Log.d("VoiceService", "百度语音未配置，使用 Vosk 离线识别")
-            } else {
-                android.util.Log.d("VoiceService", "无网络，使用 Vosk 离线识别")
+            when {
+                !baiduAsrManager.isConfigured() -> {
+                    android.util.Log.d("VoiceService", "百度语音未配置，使用 Vosk 离线识别")
+                }
+                !hasNetwork -> {
+                    android.util.Log.d("VoiceService", "无网络连接，使用 Vosk 离线识别")
+                }
+                !canReachInternet -> {
+                    android.util.Log.w("VoiceService", "网络已连接但无法访问外网，使用 Vosk 离线识别")
+                    sendRecognitionLog("⚠️ 网络不通，使用离线识别")
+                }
+                configStatus == BaiduAsrManager.CONFIG_STATUS_ERROR -> {
+                    android.util.Log.w("VoiceService", "百度配置验证失败（请在设置页重新测试连接），使用 Vosk 离线识别")
+                    sendRecognitionLog("⚠️ 配置错误，使用离线识别")
+                }
             }
             startRecognitionOffline()
         }
@@ -602,21 +727,69 @@ class VoiceAssistantService : Service() {
         android.util.Log.i("VoiceService", "启动百度在线识别（百度自录）")
         sendRecognitionLog("🌐 百度在线识别启动（百度自录）")
 
+        // 重置结果接收标志
+        onlineResultReceived = false
+
+        // ★ 超时保护：网络不通时百度 SDK 可能一直不返回回调，15秒后自动回退离线
+        val timeoutRunnable = Runnable {
+            if (!onlineResultReceived) {
+                android.util.Log.w("VoiceService", "百度在线识别超时（${ONLINE_RECOGNITION_TIMEOUT_MS}ms未返回），自动回退到离线识别")
+                sendRecognitionLog("⚠️ 在线识别超时，自动回退到离线识别")
+                handleOnlineFailure()
+            }
+        }
+        onlineTimeoutRunnable = timeoutRunnable
+        mainHandler.postDelayed(timeoutRunnable, ONLINE_RECOGNITION_TIMEOUT_MS)
+
         // 百度自己开麦、自己 VAD、自己识别
         baiduAsrManager.startStreamingRecognition { result ->
             mainHandler.post {
+                // 已经收到结果（或超时已处理），不再重复处理
+                if (onlineResultReceived) return@post
+                onlineResultReceived = true
+                // 取消超时定时器
+                onlineTimeoutRunnable?.let { mainHandler.removeCallbacks(it) }
+                onlineTimeoutRunnable = null
+
                 if (!result.isNullOrEmpty()) {
                     android.util.Log.i("VoiceService", "百度在线识别成功: '$result'")
                     sendRecognitionLog("✅ 百度识别: $result")
+                    // 在线识别成功，重置连续失败计数
+                    consecutiveOnlineFailures = 0
                     handleText(result)
                 } else {
-                    android.util.Log.w("VoiceService", "百度在线识别失败或结果为空")
-                    sendRecognitionLog("⚠️ 百度识别失败")
-                    currentState = State.IDLE
-                    resumeWake()
+                    android.util.Log.w("VoiceService", "百度在线识别失败或结果为空，自动回退到离线识别")
+                    sendRecognitionLog("⚠️ 百度识别失败，自动回退到离线识别")
+                    handleOnlineFailure()
                 }
             }
         }
+    }
+
+    /**
+     * 处理在线识别失败：增加失败计数，回退到离线识别
+     */
+    private fun handleOnlineFailure() {
+        // 增加连续失败计数
+        consecutiveOnlineFailures++
+        android.util.Log.w("VoiceService", "连续在线失败次数: $consecutiveOnlineFailures / $MAX_CONSECUTIVE_ONLINE_FAILURES")
+        // ★ 标记：本次是在线失败回退离线，防止离线失败后又重试在线导致无限循环
+        isFallbackFromOnline = true
+        // TTS 提示用户（仅在前2次失败时提示，避免每次都提示打扰用户）
+        val willSpeak = consecutiveOnlineFailures < MAX_CONSECUTIVE_ONLINE_FAILURES && ttsEngine.isReady
+        if (willSpeak) {
+            try {
+                ttsEngine.speak("在线识别失败，正在使用离线识别")
+            } catch (_: Exception) {}
+        }
+        // ★ 关键：动态延迟
+        // - TTS 播报时：延迟 2500ms（TTS 约2秒 + 余量，避免离线录音录进 TTS 声音）
+        // - 不播报时：延迟 800ms（只给百度 SDK 释放麦克风的时间）
+        val delayMs = if (willSpeak) 2500L else 800L
+        android.util.Log.d("VoiceService", "延迟 ${delayMs}ms 后启动离线识别（TTS播报=$willSpeak）")
+        mainHandler.postDelayed({
+            startRecognitionOffline()
+        }, delayMs)
     }
 
     /**
@@ -723,40 +896,8 @@ class VoiceAssistantService : Service() {
             // 音频数据缓冲区：保存应用增益后的 PCM 数据，用于保存 WAV 文件和百度识别
             val audioBuffer = java.io.ByteArrayOutputStream()
 
-            // 启动百度流式识别（边录边识别 + 百度内置 DNN VAD）
-            // 和百度官方 demo 保持一致：实时音频流 + 百度内置 VAD
-            var baiduStreamingStarted = false
-            var baiduResultDeferred: kotlinx.coroutines.CompletableDeferred<String?>? = null
-            // 百度检测到说话结束的标志 shouldStopRecording 是类成员变量（AtomicBoolean），保证线程可见性
-            // speechEndedAt 记录 asr.end 触发时间，用于继续喂 400ms 尾部音频
-            if (baiduAsrManager.isConfigured() && isNetworkAvailable()) {
-                try {
-                    android.util.Log.i("VoiceService", "启动百度流式识别（边录边识别 + DNN VAD）")
-                    sendRecognitionLog("🌐 百度流式识别启动")
-                    val deferred = kotlinx.coroutines.CompletableDeferred<String?>()
-                    baiduAsrManager.startStreamingRecognition { result ->
-                        // 流式识别结果回调（在识别完成时调用）
-                        android.util.Log.i("VoiceService", "百度流式识别结果: $result")
-                        if (deferred.isActive) {
-                            deferred.complete(result)
-                        }
-                    }
-                    // 设置百度说话结束监听器：百度内置 DNN VAD 检测到说话结束时，通知我们停止录音
-                    baiduAsrManager.setOnSpeechEndListener {
-                        // 只记录第一次 asr.end（百度可能发多次，只取第一次）
-                        if (speechEndedAt == 0L) {
-                            speechEndedAt = SystemClock.elapsedRealtime()
-                            shouldStopRecording.set(true)
-                            android.util.Log.i("VoiceService", "百度检测到说话结束（asr.end），继续喂 400ms 尾部音频")
-                        }
-                    }
-                    baiduResultDeferred = deferred
-                    baiduStreamingStarted = true
-                } catch (e: Exception) {
-                    android.util.Log.w("VoiceService", "启动百度流式识别失败: ${e.message}，将使用 Vosk 结果")
-                    baiduStreamingStarted = false
-                }
-            }
+            // ★ 纯离线模式：只用 Vosk 识别，不调用百度
+            // 百度在线识别走 startRecognitionOnline()（百度自己开麦），和离线完全分离
             try {
                 loop@ while (true) {
                     val n = record.read(shortBuf, 0, shortBuf.size, AudioRecord.READ_BLOCKING)
@@ -765,43 +906,15 @@ class VoiceAssistantService : Service() {
                         continue
                     }
 
-                    // 百度检测到说话结束 → 继续喂 400ms 尾部音频后再退出循环（主判据）
-                    // 百度内置 DNN VAD 比我们自己的 RMS VAD 更准确，能避免：
-                    // 1. 用户说话中间停 2 秒就被截断，后面的话全丢
-                    // 2. 强行 asr.stop，百度只能拿到半截音频
-                    // 注意：asr.end 之后不能立即 break！百度还需要 ~200ms 处理最后一段音频，
-                    // 立即停止会导致最后一个字的尾音丢失。继续喂 400ms 保证完整。
-                    if (shouldStopRecording.get()) {
-                        val elapsedSinceEnd = SystemClock.elapsedRealtime() - speechEndedAt
-                        if (elapsedSinceEnd >= 400L) {
-                            android.util.Log.i("VoiceService", "百度判句结束 + 尾部${elapsedSinceEnd}ms 音频喂完，停止录音")
-                            sendRecognitionLog("⏹️ 百度判句结束")
-                            break@loop
-                        }
-                        // 否则继续循环，继续喂音频
-                    }
-
                     // 应用降噪处理（高通滤波 + RNNoise）
                     // 注意：RNNoise 在 16kHz 音频上可能破坏人声特征，如识别率下降可改回 false
                     // 唤醒词检测阶段也启用 RNNoise，降噪有助于噪音环境唤醒
                     recNoiseReducer.process(shortBuf, n, enableRnNoise = false)
 
-                    // 给百度的音频：原始音频，不做任何增益（和百度官方 demo 一致）
-                    // 百度 SDK 内部有自己的音频处理，外部加增益反而可能导致：
-                    // 1. 用户声音大时削顶（波形变平头）
-                    // 2. 百度内部处理叠加后反而更糟
+                    // 保存原始音频用于诊断（不加增益）
                     val baiduBytes = ByteArray(n * 2)
                     shortsToBytes(shortBuf, n, baiduBytes)
-                    audioBuffer.write(baiduBytes)  // 保存原始音频用于诊断（不加增益）
-                    // 如果启动了流式识别，实时发送原始音频数据给百度 SDK
-                    // 注意：这是流式识别的核心！每读一块音频就通过 asr.audio 事件发给百度
-                    if (baiduStreamingStarted) {
-                        try {
-                            baiduAsrManager.sendAudioData(baiduBytes)
-                        } catch (e: Exception) {
-                            android.util.Log.w("VoiceService", "发送百度音频数据失败: ${e.message}")
-                        }
-                    }
+                    audioBuffer.write(baiduBytes)
 
                     // 给 Vosk 离线识别的音频：应用 asrGain（用户设置，当前默认 8.0x）
                     // Vosk 离线识别需要更大的增益来提高信噪比
@@ -857,7 +970,7 @@ class VoiceAssistantService : Service() {
                         // 只有连续静音超过阈值，且录音时间超过最短时间，才认为用户说完了
                         // 动态静音判定：已识别到内容说明用户在说话，中间可能停顿，用3000ms多等一会儿；
                         // 没识别到内容说明用户可能没说话，用2000ms快速结束
-                        // 注意：这是兜底判据！主判据是百度 asr.end（shouldStopRecording）
+                        // 注意：这是纯离线模式的主判据（基于 RMS 的端点检测）
                         // 之前1500ms太短，说话中间的自然停顿（如"打开空调，调到24度"中间的逗号停顿）
                         // 会被误判为说完了，导致录音只录前半段。加长到2000/3000ms更合理。
                         val dynamicSilenceMs = if (lastPartial.isNotEmpty()) 3000L else 2000L
@@ -883,9 +996,6 @@ class VoiceAssistantService : Service() {
                 finalText = recognizer.finish()
                 android.util.Log.d("VoiceService", "Vosk 识别文本: '$finalText'")
 
-                // 清理百度说话结束监听器
-                baiduAsrManager.setOnSpeechEndListener(null)
-
                 // 保存本次录音为 WAV 文件（最近10条，方便回听判断录音质量）
                 // 保存的是原始音频（不加增益），方便诊断"是录音本身音量小，还是增益放大后的问题"
                 try {
@@ -895,41 +1005,8 @@ class VoiceAssistantService : Service() {
                     android.util.Log.w("VoiceService", "保存录音失败: ${e.message}")
                 }
 
-                // 如果启动了百度流式识别，直接等待百度识别结果
-                // 注意：正常流程不发 asr.stop！百度内置 DNN VAD 已经检测到说话结束（asr.end），
-                // 会自动返回最终识别结果（asr.finish）。只有超时或用户取消时才发 asr.stop/asr.cancel
-                if (baiduStreamingStarted && baiduResultDeferred != null) {
-                    try {
-                        android.util.Log.d("VoiceService", "等待百度识别结果（百度已判 asr.end，自动返回 final_result）...")
-
-                        // 等待百度流式识别结果（带超时保护）
-                        val baiduResult = withTimeoutOrNull(10000L) {
-                            baiduResultDeferred.await()
-                        }
-
-                        if (!baiduResult.isNullOrEmpty()) {
-                            finalText = baiduResult
-                            android.util.Log.i("VoiceService", "百度流式识别成功: '$finalText'")
-                            sendRecognitionLog("✅ 百度识别: $finalText")
-                        } else {
-                            android.util.Log.w("VoiceService", "百度流式识别失败或结果为空或超时，回退到 Vosk 结果")
-                            sendRecognitionLog("⚠️ 百度识别失败，使用离线 Vosk 结果")
-                        }
-                    } catch (e: Exception) {
-                        android.util.Log.e("VoiceService", "百度流式识别异常: ${e.message}，回退到 Vosk", e)
-                        sendRecognitionLog("⚠️ 百度识别异常，使用离线 Vosk 结果")
-                    }
-                } else {
-                    if (!baiduAsrManager.isConfigured()) {
-                        android.util.Log.d("VoiceService", "百度语音未配置，使用离线 Vosk 识别")
-                    } else if (!isNetworkAvailable()) {
-                        android.util.Log.d("VoiceService", "无网络，使用离线 Vosk 识别")
-                    } else {
-                        android.util.Log.d("VoiceService", "百度流式识别未启动，使用离线 Vosk 识别")
-                    }
-                }
-
-                android.util.Log.d("VoiceService", "最终识别文本: '$finalText'")
+                // ★ 纯离线模式：直接用 Vosk 识别结果
+                android.util.Log.d("VoiceService", "最终识别文本（Vosk离线）: '$finalText'")
             } finally {
                 try { record.stop() } catch (_: Exception) {}
                 record.release()
@@ -999,6 +1076,45 @@ class VoiceAssistantService : Service() {
             android.util.Log.w("VoiceService", "检查网络状态失败: ${e.message}")
             false
         }
+    }
+
+    /**
+     * 同步检测网络连通性（是否能访问外网）
+     *
+     * 车机场景：WiFi 已连接但可能无外网（手机热点没开流量、路由器断网）。
+     * 同步检测，首次唤醒会等1~3秒（可接受），确保首次唤醒就能正确判断。
+     * 检测结果缓存到 networkReachable 变量，后续唤醒直接用缓存（无延迟）。
+     *
+     * @return true=能访问外网，false=不能访问外网
+     */
+    private fun checkNetworkReachable(): Boolean {
+        android.util.Log.d("VoiceService", "开始同步检测网络连通性...")
+        // ★ 网络请求不能在主线程执行（会抛 NetworkOnMainThreadException）
+        // 用后台线程执行网络检测，主线程用 join() 等待结果（保持同步语义）
+        var reachable = false
+        val thread = Thread {
+            try {
+                reachable = baiduAsrManager.isNetworkReachable()
+            } catch (e: Exception) {
+                android.util.Log.w("VoiceService", "网络检测线程异常: ${e.message}")
+                reachable = false
+            }
+        }
+        thread.start()
+        try {
+            thread.join(10000)  // 最多等10秒，避免 ANR
+        } catch (e: InterruptedException) {
+            android.util.Log.w("VoiceService", "网络检测线程被中断")
+        }
+        // 更新缓存
+        networkReachable = reachable
+        networkCacheValid = true
+        if (reachable) {
+            android.util.Log.i("VoiceService", "网络连通性检测: 正常（能访问外网）")
+        } else {
+            android.util.Log.w("VoiceService", "网络连通性检测: 异常（无法访问外网，将使用离线识别）")
+        }
+        return reachable
     }
 
     // ---------- 文本处理 ----------
@@ -1083,6 +1199,15 @@ class VoiceAssistantService : Service() {
             }
 
             FloatViewService.updateSubtitle(getString(R.string.subtitle_not_heard))
+            // ★ 如果本次是"在线失败回退离线"的场景，离线也没听清时直接恢复唤醒监听，不再重试
+            // 防止无限循环：在线失败→回退离线→离线没听清→又startRecognition()→又选在线→又失败...
+            if (isFallbackFromOnline) {
+                android.util.Log.d("VoiceService", "在线失败回退离线后仍未识别到内容，直接恢复唤醒监听（避免无限循环）")
+                isFallbackFromOnline = false
+                currentState = State.IDLE
+                resumeWake()
+                return
+            }
             // 设置标志位：TTS说完后直接重新监听，不需要唤醒词（和没听懂分支一致，避免固定3秒延迟竞态）
             isRetryListening = true
             ttsEngine.speak(getString(R.string.tts_not_heard))
@@ -1126,6 +1251,15 @@ class VoiceAssistantService : Service() {
             // 发送广播，将没听懂的结果显示到设置页的运行日志中
             sendRecognitionLog("❌ 未匹配: $correctedText")
             FloatViewService.updateSubtitle(getString(R.string.subtitle_not_understood))
+            // ★ 如果本次是"在线失败回退离线"的场景，离线也没听懂时直接恢复唤醒监听，不再重试
+            // 防止无限循环：在线失败→回退离线→离线没听懂→又startRecognition()→又选在线→又失败...
+            if (isFallbackFromOnline) {
+                android.util.Log.d("VoiceService", "在线失败回退离线后仍未匹配到意图，直接恢复唤醒监听（避免无限循环）")
+                isFallbackFromOnline = false
+                currentState = State.IDLE
+                resumeWake()
+                return
+            }
             // 设置标志位：TTS说完后直接重新监听，不需要唤醒词
             isRetryListening = true
             ttsEngine.speak(getString(R.string.tts_not_understood))
@@ -1284,6 +1418,16 @@ class VoiceAssistantService : Service() {
         wakeWordEngine.close()
         // 释放缓存的 Vosk Model，避免一直占内存（小模型约120MB，大模型可能1.5GB）
         SpeechRecognizer.releaseCachedModel()
+        // 注销网络变化监听
+        try {
+            networkCallback?.let {
+                val cm = getSystemService(CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+                cm.unregisterNetworkCallback(it)
+                android.util.Log.i("VoiceService", "网络变化监听已注销")
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("VoiceService", "注销网络变化监听失败: ${e.message}")
+        }
         // 释放百度语音识别引擎（EventManager + factory），避免服务反复启停时 SDK 资源累积泄漏
         // 注意：只释放引擎，保留配置（appId/apiKey/secretKey），下次 init() 直接复用
         baiduAsrManager.releaseEngine()
