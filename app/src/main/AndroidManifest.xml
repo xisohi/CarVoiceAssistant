@@ -30,11 +30,18 @@
     <!-- 悬浮窗 -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
-    <!-- 存储（保存日志、导出U盘、导入配置） -->
-    <!-- 注意：不能加 maxSdkVersion 限制，否则高版本Android没有存储权限 -->
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
-    <!-- Android 11+ 所有文件访问权限（用于U盘读写） -->
+    <!-- 存储权限说明：
+         1. 日志、录音、配置都保存在 getExternalFilesDir() 应用私有目录，不需要存储权限
+         2. U盘通过 StorageManager 获取真实路径（/storage/usb1 等），直接用 File API 访问
+         3. Android 10+ 分区存储（Scoped Storage）是标准做法，应用私有目录访问不需要任何权限
+         4. WRITE_EXTERNAL_STORAGE / READ_EXTERNAL_STORAGE 仅 Android 9 及以下需要，高版本已废弃
+         5. MANAGE_EXTERNAL_STORAGE 仅 Android 11+ 需要（用于所有文件访问），Android 10 忽略
+         6. requestLegacyExternalStorage="true" 仅 Android 10 生效，车机 U盘访问兼容需要 -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
+    <!-- Android 11+ 所有文件访问权限（用于U盘读写，Android 10 忽略此权限） -->
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
 
     <application
@@ -111,14 +118,9 @@
                 <action android:name="android.intent.action.ACTION_BOOT_COMPLETED" />
                 <action android:name="com.android.systemui.BOOT_COMPLETED" />
                 <action android:name="android.intent.action.BOOT_COMPLETED_FINISHED" />
-                <!-- 间接触发：网络连接、媒体挂载、蓝牙连接、USB连接等 -->
-                <action android:name="android.net.conn.CONNECTIVITY_CHANGE" />
-                <action android:name="android.intent.action.MEDIA_MOUNTED" />
-                <action android:name="android.bluetooth.adapter.action.STATE_CHANGED" />
-                <action android:name="android.hardware.usb.action.USB_STATE" />
-                <action android:name="android.intent.action.HEADSET_PLUG" />
-                <!-- 闹钟兜底触发（AlarmManager 设置的闹钟） -->
-                <action android:name="com.xisohi.car.voiceassistant.ACTION_ALARM_TRIGGER" />
+                <!-- 注意：Android 8.0+ 大部分隐式广播被禁止静态注册接收
+                     （CONNECTIVITY_CHANGE、MEDIA_MOUNTED、HEADSET_PLUG 等都收不到）
+                     服务被杀后的兜底由 AutoStartWorker（WorkManager，每15分钟检查）负责 -->
             </intent-filter>
         </receiver>
 

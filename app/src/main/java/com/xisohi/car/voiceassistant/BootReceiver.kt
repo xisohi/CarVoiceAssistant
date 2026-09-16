@@ -1,14 +1,10 @@
 package com.xisohi.car.voiceassistant
 
-import android.app.AlarmManager
-import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.os.Build
 import android.os.Handler
 import android.os.Looper
-import android.os.SystemClock
 import android.util.Log
 import com.xisohi.car.voiceassistant.core.FloatViewService
 import com.xisohi.car.voiceassistant.core.LogUtils
@@ -20,8 +16,6 @@ class BootReceiver : BroadcastReceiver() {
         private const val TAG = "BootReceiver"
         private const val PREFS_NAME = "voice_assistant_prefs"
         private const val KEY_AUTO_START = "auto_start_on_boot"
-        private const val ACTION_ALARM_TRIGGER = "com.xisohi.car.voiceassistant.ACTION_ALARM_TRIGGER"
-        private const val ALARM_INTERVAL_MS = 15 * 60 * 1000L  // 15分钟检查一次（Android 6.0+ Doze模式下最小间隔约9分钟，15分钟符合系统限制）
         private const val MAX_RETRY_COUNT = 3  // 最大重试次数
 
         /**
@@ -59,23 +53,8 @@ class BootReceiver : BroadcastReceiver() {
             "com.android.systemui.BOOT_COMPLETED",
             "android.intent.action.BOOT_COMPLETED_FINISHED"
         )
-        // 间接触发广播（系统事件，作为备用触发机制）
-        val indirectActions = listOf(
-            "android.net.conn.CONNECTIVITY_CHANGE",
-            "android.intent.action.MEDIA_MOUNTED",
-            "android.bluetooth.adapter.action.STATE_CHANGED",
-            "android.hardware.usb.action.USB_STATE",
-            "android.intent.action.HEADSET_PLUG",
-            ACTION_ALARM_TRIGGER  // AlarmManager 兜底触发
-        )
         val isBootAction = action in bootActions
-        val isIndirectAction = action in indirectActions
-        if (!isBootAction && !isIndirectAction) return
-
-        // 间接触发广播：语音服务和悬浮窗都在运行时才跳过，避免悬浮窗被杀后补不回来
-        if (isIndirectAction && VoiceAssistantService.isRunning && FloatViewService.isRunning) {
-            return
-        }
+        if (!isBootAction) return
 
         // 检查自启开关
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -98,9 +77,8 @@ class BootReceiver : BroadcastReceiver() {
         }
 
         // 开机广播：延迟启动，等待系统完全就绪（车机系统启动较慢）
-        // 间接触发：立即启动
-        val delayMs = if (isBootAction) 8000L else 0L
-        LogUtils.d(TAG, "${if (isBootAction) "开机广播" else "间接触发"}，延迟${delayMs}ms后启动服务...")
+        val delayMs = 8000L
+        LogUtils.d(TAG, "开机广播，延迟${delayMs}ms后启动服务...")
 
         Handler(Looper.getMainLooper()).postDelayed({
             tryStartServices(context, 0)

@@ -540,7 +540,11 @@ public class WakeWordEngine {
             for (ModelSlot m : models) {
                 if (m.session != null) m.session.close();
             }
-            if (env != null) env.close();
+            // 注意：不要调用 env.close()！
+            // OrtEnvironment.getEnvironment() 返回的是全局单例，整个进程共享一个。
+            // 如果在这里关闭，服务被系统杀掉又重启（START_STICKY）时，
+            // 第二次创建 WakeWordEngine 会拿到已关闭的 env，导致崩溃或推理失败。
+            // 全局 env 应该在进程退出时由系统自动清理，不需要手动关闭。
         } catch (OrtException e) {
             Log.e(TAG, "Error closing sessions", e);
         }

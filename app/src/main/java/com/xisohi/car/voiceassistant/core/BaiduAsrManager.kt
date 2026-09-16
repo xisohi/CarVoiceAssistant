@@ -59,6 +59,11 @@ class BaiduAsrManager private constructor(private val context: Context) {
     private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     private var asrManager: EventManager? = null
+    // AipeEventManagerFactory 必须提升为成员变量，不能是 init() 里的局部变量！
+    // 原因：factory 是局部变量时，init() 返回后就被 GC 了。
+    // 百度 SDK 里 EventManager 内部可能持有 factory 的引用，也可能不持有——
+    // 这是个未定义的依赖关系，模拟器上运气好不崩，车机上可能偶发 NullPointerException 或鉴权失败。
+    private var factory: AipeEventManagerFactory? = null
     private var isInitialized = false
     private var recognitionCallback: ((String?) -> Unit)? = null
     private var isRecognizing = false
@@ -128,9 +133,12 @@ class BaiduAsrManager private constructor(private val context: Context) {
 
             // 用 AipeEventManagerFactory，动态传用户填的 Key
             // 不再依赖 AndroidManifest.xml 的 meta-data，实现"谁用谁填自己的 Key"
-            val factory = AipeEventManagerFactory()
-            factory.setAkSk(appId, apiKey, secretKey)
-            asrManager = factory.create(context, "asr")
+            // 注意：factory 必须赋值给成员变量，不能是局部变量！
+            // 否则 init() 返回后 factory 被 GC，可能导致 EventManager 内部引用失效。
+            factory = AipeEventManagerFactory().apply {
+                setAkSk(appId, apiKey, secretKey)
+            }
+            asrManager = factory?.create(context, "asr")
             asrManager?.registerListener(eventListener)
             isInitialized = true
 
@@ -165,18 +173,39 @@ class BaiduAsrManager private constructor(private val context: Context) {
         }
     }
 
-    fun release() {
+    /**
+     * 只释放语音识别引擎（EventManager + factory），保留配置
+     *
+     * 用于服务销毁时调用（VoiceAssistantService.onDestroy）：
+     * - 释放 EventManager，避免服务反复启停（START_STICKY）时 SDK 内部资源累积泄漏
+     * - 保留 appId/apiKey/secretKey 配置（已在成员变量中，下次 init() 直接复用）
+     * - isInitialized 设为 false，下次使用时需要重新 init()（但不需要重新读取配置）
+     *
+     * 注意：这不会销毁单例本身，单例一直存在，只是释放了 SDK 引擎资源。
+     */
+    fun releaseEngine() {
         try {
             handler.removeCallbacks(timeoutRunnable)
             asrManager?.unregisterListener(eventListener)
             asrManager = null
+            factory = null  // 释放 factory 引用（注意：不要调用 factory.close()，百度SDK没有这个方法）
             isInitialized = false
             isRecognizing = false
             recognitionCallback = null
-            Log.d(TAG, "百度语音 SDK 已释放")
+            Log.d(TAG, "百度语音识别引擎已释放（配置保留，下次 init() 复用）")
         } catch (e: Exception) {
-            Log.e(TAG, "释放百度语音 SDK 失败: ${e.message}", e)
+            Log.e(TAG, "释放百度语音识别引擎失败: ${e.message}", e)
         }
+    }
+
+    /**
+     * 完全释放（兼容旧代码，内部调用 releaseEngine()）
+     *
+     * @deprecated 请使用 releaseEngine()，语义更清晰
+     */
+    @Deprecated("Use releaseEngine() instead", ReplaceWith("releaseEngine()"))
+    fun release() {
+        releaseEngine()
     }
 
     // ==================== 语音识别 ====================

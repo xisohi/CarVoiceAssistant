@@ -116,7 +116,8 @@ class MainActivity : AppCompatActivity() {
         refreshModelState()
         refreshPermissionState()
 
-        // 设置 AlarmManager 兜底闹钟：即使开机广播收不到，闹钟也会定期检查服务是否在运行
+        // 设置 WorkManager 周期性自启动检查：即使开机广播收不到或服务被杀，
+        // 每15分钟自动检查一次服务状态，未运行则自动启动（Android 12+ 后台启动被拒时发通知提醒）
         // 这是针对鼎微/全志车机系统的重要兜底机制
         BootReceiver.scheduleAutoStartCheck(this)
 
@@ -970,19 +971,15 @@ class MainActivity : AppCompatActivity() {
         val needed = mutableListOf(Manifest.permission.RECORD_AUDIO)
         if (Build.VERSION.SDK_INT >= 33) needed.add(Manifest.permission.POST_NOTIFICATIONS)
         if (Build.VERSION.SDK_INT >= 31) needed.add(Manifest.permission.BLUETOOTH_CONNECT)
-        // 存储权限（保存日志、导出U盘、导入配置）
-        // 注意：不能加版本限制，Android 10 通过 requestLegacyExternalStorage 仍需要此权限
-        needed.add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
-        needed.add(Manifest.permission.READ_EXTERNAL_STORAGE)
+        // 注意：不再申请 WRITE_EXTERNAL_STORAGE / READ_EXTERNAL_STORAGE！
+        // 原因：
+        // 1. 日志、录音、配置都保存在 getExternalFilesDir() 应用私有目录，不需要存储权限
+        // 2. U 盘读写通过 StorageManager 获取真实路径（/storage/usb1 等），直接用 File API 访问，不需要存储权限
+        // 3. Android 10+ requestLegacyExternalStorage 已被 Google Play 标记为废弃，上架时会被审核卡住
+        // 4. Android 11+ 分区存储（Scoped Storage）是标准做法，应用私有目录访问不需要任何权限
         val missing = needed.filter { !hasPermission(it) }
         if (missing.isNotEmpty()) {
             permissionLauncher.launch(missing.toTypedArray())
-        }
-        // Android 11+ 引导用户开启所有文件访问权限（用于U盘读写）
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            if (!android.os.Environment.isExternalStorageManager()) {
-                log("提示：Android 11+ 需要开启所有文件访问权限才能读写U盘")
-            }
         }
     }
 

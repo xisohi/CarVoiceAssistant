@@ -744,9 +744,17 @@ class VoiceAssistantService : Service() {
                         // 用 suspendCoroutine 把百度异步回调转成同步调用
                         val baiduResult = kotlinx.coroutines.suspendCancellableCoroutine<String?> { cont ->
                             baiduAsrManager.recognizeFile(tempFile) { result ->
-                                // 删除临时文件
+                                // 先删除临时文件（不管协程是否被取消，都要清理）
                                 try { tempFile.delete() } catch (_: Exception) {}
-                                cont.resumeWith(Result.success(result))
+                                // 注意：必须判断 cont.isActive！
+                                // 如果 recognitionJob 被 onDestroy 取消，cont 已经被取消，
+                                // 但百度 SDK 的回调还会跑，此时再 cont.resumeWith(...)
+                                // 会抛 IllegalStateException: Already resumed 或 CancellationException。
+                                if (cont.isActive) {
+                                    cont.resumeWith(Result.success(result))
+                                } else {
+                                    android.util.Log.w("VoiceService", "百度识别回调时协程已取消，忽略结果: $result")
+                                }
                             }
                         }
 
@@ -1125,6 +1133,9 @@ class VoiceAssistantService : Service() {
         wakeWordEngine.close()
         // 释放缓存的 Vosk Model，避免一直占内存（小模型约120MB，大模型可能1.5GB）
         SpeechRecognizer.releaseCachedModel()
+        // 释放百度语音识别引擎（EventManager + factory），避免服务反复启停时 SDK 资源累积泄漏
+        // 注意：只释放引擎，保留配置（appId/apiKey/secretKey），下次 init() 直接复用
+        baiduAsrManager.releaseEngine()
         ttsEngine.shutdown()
         // 释放提示音播放器
         toneGenerator?.release()

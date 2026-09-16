@@ -23,7 +23,7 @@ import kotlin.math.sqrt
  * 4. 调用 finish() 获取最终识别文本
  */
 class SpeechRecognizer private constructor(
-    private val model: Model,
+    private var model: Model?,  // 改成 var，release() 后置空避免泄漏
     private val recognizer: Recognizer,
     private val isModelCached: Boolean = false
 ) {
@@ -156,6 +156,8 @@ class SpeechRecognizer private constructor(
         // 如果 Model 是缓存的（isModelCached=true），关闭会导致后续识别失败
         // 如果 Model 不是缓存的，create() 中已经把它加入缓存了，也不要关闭
         // Model 的生命周期由缓存管理，应用退出时由系统回收
+        // 但是要把本实例对 Model 的引用置空，避免 SpeechRecognizer 实例被意外长期持有时连带 Model 一起泄漏
+        model = null
     }
 
     private fun textOf(json: String): String =
