@@ -64,9 +64,11 @@ class VoiceAssistantService : Service() {
         // ===== 自适应静音阈值参数 =====
         // 不再使用固定阈值，改为启动时采样环境噪音动态计算
         // 公式：adaptiveThreshold = ambientRms * NOISE_MULTIPLIER，并限制在 [MIN, MAX] 区间
-        private const val SILENCE_RMS_MIN = 500f      // 绝对下限（安静停车环境）
+        // 注意：车机环境通常很安静（环境噪音 RMS 50-150），下限不能设太高，
+        // 否则正常说话的轻音（辅音、轻声）会被误判为静音，导致录音只录前半段。
+        private const val SILENCE_RMS_MIN = 150f      // 绝对下限（安静停车环境，之前500太高导致轻音被误判）
         private const val SILENCE_RMS_MAX = 1200f     // 绝对上限（防止噪音过大导致阈值过高）
-        private const val NOISE_MULTIPLIER = 1.8f     // 环境噪音倍数
+        private const val NOISE_MULTIPLIER = 2.0f     // 环境噪音倍数（稍微提高，让安静环境下阈值更合理）
         private const val NOISE_WARMUP_MS = 100L      // 丢弃前 100ms（录音启动爆音）
         private const val NOISE_SAMPLE_MS = 300L      // 环境噪音采样时长
 
@@ -850,11 +852,12 @@ class VoiceAssistantService : Service() {
                         // 累加静音时长（这一帧的时长 = 样本数 / 采样率 * 1000ms）
                         silenceDuration += (n * 1000L / SpeechRecognizer.SAMPLE_RATE.toInt())
                         // 只有连续静音超过阈值，且录音时间超过最短时间，才认为用户说完了
-                        // 动态静音判定：已识别到内容说明用户在说话，中间可能停顿，用2500ms多等一会儿；
-                        // 没识别到内容说明用户可能没说话，用1500ms快速结束
+                        // 动态静音判定：已识别到内容说明用户在说话，中间可能停顿，用3000ms多等一会儿；
+                        // 没识别到内容说明用户可能没说话，用2000ms快速结束
                         // 注意：这是兜底判据！主判据是百度 asr.end（shouldStopRecording）
-                        // 百度判不准时说明音频有问题，多等也没用，2.5秒给足"说话中间自然停顿"空间
-                        val dynamicSilenceMs = if (lastPartial.isNotEmpty()) 2500L else 1500L
+                        // 之前1500ms太短，说话中间的自然停顿（如"打开空调，调到24度"中间的逗号停顿）
+                        // 会被误判为说完了，导致录音只录前半段。加长到2000/3000ms更合理。
+                        val dynamicSilenceMs = if (lastPartial.isNotEmpty()) 3000L else 2000L
                         if (silenceDuration >= dynamicSilenceMs && recordDuration >= MIN_RECORD_MS) {
                             android.util.Log.d("VoiceService",
                                 "连续静音${silenceDuration}ms，确认用户说完了，结束录音 (RMS=${rms.toInt()}, 阈值=${adaptiveSilenceThreshold.toInt()})")
