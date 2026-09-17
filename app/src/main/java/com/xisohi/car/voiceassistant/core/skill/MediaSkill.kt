@@ -165,21 +165,6 @@ class MediaSkill(private val context: Context) {
      * 设置为当前活跃播放器，并自动播放。
      */
     /**
-     * 打开音乐播放器并自动播放。
-     * 注意：当前"打开音乐"（app.open）走 setActivePlayer()（不自动播放），
-     * 这个方法保留用于兼容旧接口（SkillExecutor.setActiveMusicPlayer()）。
-     */
-    fun onMusicPlayerOpened(packageName: String) {
-        if (!musicPlayerManager.isMusicPlayer(packageName)) return
-
-        musicPlayerManager.setActivePlayer(packageName)
-        android.util.Log.d("MediaSkill", "打开音乐播放器，设置为活跃并自动播放: $packageName")
-
-        // 安排自动播放（延迟4秒/5.5秒各发一次播放键）
-        scheduleAutoPlay(packageName)
-    }
-
-    /**
      * 取消所有待执行的自动播放延迟任务。
      * 在切换播放器、暂停、onDestroy 时调用。
      */

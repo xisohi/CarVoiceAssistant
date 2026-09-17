@@ -449,6 +449,15 @@ class VoiceAssistantService : Service() {
             LogUtils.i("VoiceService", "用户手动唤醒，取消待执行的外部导航暂停（TTS播报中）")
             // 不需要 resumeWake()，因为 TTS 播完后 onSpeakDone() 里会检查 pendingExternalNavPause，
             // 现在是 false，会走正常 resumeWake() 分支
+            // ★ 加超时兜底：5秒内如果 onSpeakDone 没触发（TTS引擎出错），主动恢复
+            // 避免服务卡在 SPEAKING 状态
+            mainHandler.postDelayed({
+                if (currentState == State.SPEAKING && !isWakePromptSpeaking && !isRetryListening && !pendingExternalNavPause) {
+                    LogUtils.w("VoiceService", "TTS 播报超时（取消外部导航暂停后未回调），主动恢复唤醒监听")
+                    currentState = State.IDLE
+                    resumeWake()
+                }
+            }, 5000)
         }
     }
 
