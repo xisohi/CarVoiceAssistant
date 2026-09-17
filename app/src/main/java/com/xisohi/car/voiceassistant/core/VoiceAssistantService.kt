@@ -165,6 +165,7 @@ class VoiceAssistantService : Service() {
     // TTS 播报完后触发 pauseWakeForExternalNav()，30秒后自动恢复，或用户点击悬浮球提前恢复
     @Volatile
     private var pendingExternalNavPause = false  // 待执行的外部导航暂停（TTS播完后触发）
+    private var pendingNavIntent: VoiceIntent? = null  // 待执行的导航意图（TTS播完后再拉起高德，避免TTS和高德语音同时响）
     private var externalNavPauseRunnable: Runnable? = null  // 外部导航暂停的恢复定时器
 
     // 本次识别用户是否开口了（用于区分"没开口超时"和"开口了但没识别到内容"）
@@ -311,7 +312,9 @@ class VoiceAssistantService : Service() {
 
                 override fun onSpeakDone() {
                     // 如果已经是 IDLE 且没有待处理标志，说明是重复回调，忽略
-                    if (currentState == State.IDLE && !isWakePromptSpeaking && !isRetryListening) {
+                    // 注意：pendingNavIntent 和 pendingExternalNavPause 也是待处理标志，不能忽略
+                    if (currentState == State.IDLE && !isWakePromptSpeaking && !isRetryListening
+                        && pendingNavIntent == null && !pendingExternalNavPause) {
                         return
                     }
                     // 如果是唤醒提示音（"在呢，您请说"）刚说完，开始录音识别用户指令
@@ -340,6 +343,16 @@ class VoiceAssistantService : Service() {
                     }
                     // 正常回复播报完成
                     currentState = State.IDLE
+                    // ★ 如果有待执行的导航意图（TTS播完后再拉起高德），先执行拉起高德
+                    pendingNavIntent?.let { navIntent ->
+                        LogUtils.i("VoiceService", "TTS 播报完成，拉起高德导航")
+                        pendingNavIntent = null
+                        try {
+                            skillExecutor.execute(navIntent)
+                        } catch (e: Exception) {
+                            LogUtils.w("VoiceService", "拉起高德导航失败: ${e.message}")
+                        }
+                    }
                     // 如果拉起了外部导航，TTS播完后暂停唤醒监听，给高德让出麦克风
                     if (pendingExternalNavPause) {
                         pendingExternalNavPause = false
@@ -433,12 +446,36 @@ class VoiceAssistantService : Service() {
      * 用户点击悬浮球手动唤醒时调用（FloatViewService.triggerWake() 里调用）。
      */
     fun cancelExternalNavPause() {
-        // ★ 无条件清 pendingExternalNavPause，不管当前处于哪个阶段
-        // 场景：TTS 播报中用户点击悬浮球，此时 externalNavPauseRunnable 还是 null，
-        // 但 pendingExternalNavPause 是 true，TTS 播完后会暂停唤醒监听。
-        // 用户点击悬浮球应该取消这个待执行的暂停。
         val wasPending = pendingExternalNavPause
+
+        // ★ 如果有待执行的导航意图且 TTS 正在播报，停止 TTS，让 onSpeakDone() 正常执行导航
+        // 用户点击悬浮球是"别啰嗦了，直接导"，不是"取消导航"
+        // 停止 TTS 会触发 onSpeakDone()，onSpeakDone() 里会执行 pendingNavIntent + pauseWakeForExternalNav()
+        if (pendingNavIntent != null && currentState == State.SPEAKING) {
+            LogUtils.i("VoiceService", "用户手动唤醒，停止 TTS，立即执行导航（不清 pendingNavIntent）")
+            try {
+                ttsEngine.stopSpeaking()  // 会触发 onSpeakDone()，执行 pendingNavIntent + pauseWakeForExternalNav()
+            } catch (e: Exception) {
+                LogUtils.w("VoiceService", "停止 TTS 失败，手动执行导航: ${e.message}")
+                // 停止 TTS 失败，手动执行导航
+                pendingNavIntent?.let { navIntent ->
+                    try {
+                        skillExecutor.execute(navIntent)
+                    } catch (e2: Exception) {
+                        LogUtils.w("VoiceService", "拉起高德导航失败: ${e2.message}")
+                    }
+                    pendingNavIntent = null
+                }
+                pendingExternalNavPause = false
+                pauseWakeForExternalNav()
+            }
+            return  // 不需要 resumeWake()，onSpeakDone 会处理
+        }
+
+        // 没有待执行的导航意图，正常取消外部导航暂停
         pendingExternalNavPause = false
+        // 清掉待执行的导航意图（没有 TTS 播报中的导航，用户手动唤醒就是取消）
+        pendingNavIntent = null
 
         if (externalNavPauseRunnable != null) {
             mainHandler.removeCallbacks(externalNavPauseRunnable!!)
@@ -1483,6 +1520,29 @@ class VoiceAssistantService : Service() {
                     }
                 }
             }.start()
+            return
+        }
+
+        // ★ 导航意图特殊处理：先 TTS 播报，播报完再拉起高德
+        // 原因：如果先拉起高德再 TTS 播报，高德的导航语音和我们的 TTS 会同时响，声音重叠
+        if (intent.action == "nav.to") {
+            val dest = intent.params["dest"] ?: ""
+            val spoken = if (dest.isNotBlank()) "正在为您导航到$dest" else "正在为您导航"
+            LogUtils.i("VoiceService", "导航意图：先 TTS 播报'$spoken'，播报完再拉起高德（避免声音重叠）")
+            pendingNavIntent = intent
+            pendingExternalNavPause = true
+            FloatViewService.updateSubtitle("🧭 $spoken")
+            ttsEngine.speak(spoken)
+            if (!ttsEngine.isReady) {
+                // TTS 不可用，直接拉起高德
+                LogUtils.w("VoiceService", "TTS 不可用，直接拉起高德")
+                pendingNavIntent?.let { navIntent ->
+                    skillExecutor.execute(navIntent)
+                    pendingNavIntent = null
+                }
+                pendingExternalNavPause = false
+                pauseWakeForExternalNav()
+            }
             return
         }
 

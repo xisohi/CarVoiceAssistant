@@ -211,6 +211,7 @@ class LogViewerActivity : AppCompatActivity() {
 
         // 方法2：扫描常见的U盘挂载路径（车机可能用自定义路径）
         if (usbDir == null) {
+            LogUtils.i("LogViewer", "StorageManager 未找到U盘，开始扫描常见挂载路径...")
             val usbPaths = listOf(
                 // 标准 Android 路径
                 "/storage/usb0", "/storage/usb1", "/storage/usb2", "/storage/usb3",
@@ -230,34 +231,48 @@ class LogViewerActivity : AppCompatActivity() {
                 "/mnt/USBdisk", "/mnt/USBdisk1",
                 "/storage/usb_disk", "/mnt/usb_disk"
             )
+            var scannedCount = 0
             for (path in usbPaths) {
                 val dir = java.io.File(path)
-                if (dir.exists() && dir.isDirectory) {
-                    // 确认不是内置存储
-                    val canonicalPath = try { dir.canonicalPath } catch (_: Exception) { path }
-                    if (canonicalPath.contains("/sdcard") ||
-                        canonicalPath.contains("/emulated") ||
-                        canonicalPath.contains("/self")) {
-                        continue
-                    }
-                    // 测试可写性（创建普通文件，不创建隐藏文件）
-                    val testFile = java.io.File(dir, "test_write_${System.currentTimeMillis()}.tmp")
-                    val canWrite = try {
-                        testFile.createNewFile()
-                        testFile.writeText("test")
-                        testFile.delete()
-                        true
-                    } catch (e: Exception) {
-                        dir.canWrite()
-                    }
-                    if (canWrite) {
-                        usbDir = dir
-                        usbName = "U盘($path)"
-                        LogUtils.i("LogViewer", "路径扫描找到U盘: $path")
-                        break
-                    }
+                if (!dir.exists() || !dir.isDirectory) {
+                    continue
+                }
+                scannedCount++
+                // 确认不是内置存储
+                val canonicalPath = try { dir.canonicalPath } catch (_: Exception) { path }
+                if (canonicalPath.contains("/sdcard") ||
+                    canonicalPath.contains("/emulated") ||
+                    canonicalPath.contains("/self")) {
+                    LogUtils.i("LogViewer", "  跳过（内置存储）: $path")
+                    continue
+                }
+                val canRead = dir.canRead()
+                LogUtils.i("LogViewer", "  扫描路径: $path (exists=${dir.exists()}, canRead=$canRead)")
+                if (!canRead) {
+                    LogUtils.i("LogViewer", "    → 跳过：无读权限")
+                    continue
+                }
+                // 测试可写性（创建普通文件，不创建隐藏文件）
+                val testFile = java.io.File(dir, "test_write_${System.currentTimeMillis()}.tmp")
+                val canWrite = try {
+                    testFile.createNewFile()
+                    testFile.writeText("test")
+                    testFile.delete()
+                    true
+                } catch (e: Exception) {
+                    LogUtils.i("LogViewer", "    → 可写性测试失败: ${e.message}")
+                    dir.canWrite()
+                }
+                if (canWrite) {
+                    usbDir = dir
+                    usbName = "U盘($path)"
+                    LogUtils.i("LogViewer", "    ✅ 路径扫描找到U盘: $path")
+                    break
+                } else {
+                    LogUtils.i("LogViewer", "    → 跳过：不可写")
                 }
             }
+            LogUtils.i("LogViewer", "路径扫描完成，共扫描到 $scannedCount 个存在的路径")
         }
 
         if (usbDir != null) {
@@ -273,15 +288,19 @@ class LogViewerActivity : AppCompatActivity() {
             }
         } else {
             // 没找到U盘，先尝试导出到内置存储的 Download 目录（车机可能没有文件选择器）
+            LogUtils.w("LogViewer", "未找到U盘，尝试导出到应用内置存储目录")
             try {
                 // 使用应用自己的外部存储目录（Android 10+ 分区存储限制，不能写公共 Download 目录）
                 val appExternalDir = getExternalFilesDir(null)
                 val exportDir = java.io.File(appExternalDir, "export")
                 if (!exportDir.exists()) {
                     exportDir.mkdirs()
+                    LogUtils.i("LogViewer", "创建导出目录: ${exportDir.absolutePath}")
                 }
                 val destFile = java.io.File(exportDir, "CarVoiceAssistant_${logFile.name}")
+                LogUtils.i("LogViewer", "开始复制日志到: ${destFile.absolutePath}")
                 logFile.copyTo(destFile, overwrite = true)
+                LogUtils.i("LogViewer", "✅ 日志已导出到内置存储: ${destFile.absolutePath} (${destFile.length()} bytes)")
                 Toast.makeText(
                     this,
                     "未检测到U盘，已导出到: ${destFile.absolutePath}",

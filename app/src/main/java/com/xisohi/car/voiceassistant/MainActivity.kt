@@ -1155,6 +1155,10 @@ class MainActivity : AppCompatActivity() {
         val time = SimpleDateFormat("HH:mm:ss", Locale.CHINA).format(Date())
         binding.tvLog.append("[$time] $msg\n")
         binding.scrollLog.post { binding.scrollLog.fullScroll(android.view.View.FOCUS_DOWN) }
+        // ★ 同时写入 LogUtils 文件日志，这样在日志查看页也能看到（方便排查U盘导入导出问题）
+        try {
+            com.xisohi.car.voiceassistant.core.LogUtils.i("MainActivity", msg)
+        } catch (_: Exception) {}
     }
 
     private fun ensurePermissions() {
