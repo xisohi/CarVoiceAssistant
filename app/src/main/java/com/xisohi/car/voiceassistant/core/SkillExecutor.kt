@@ -32,12 +32,12 @@ import java.util.Locale
  * 执行结果
  * @param handled 是否成功处理
  * @param spoken 要向用户播报的文案
- * @param externalNavLaunched 是否拉起了外部导航App（true=需要暂停唤醒监听，给高德让出麦克风）
+ * @param needsMicPause 拉起外部导航后是否需要暂停唤醒监听给导航让麦（true=导航有语音助手）
  */
 data class ExecutionResult(
     val handled: Boolean,
     val spoken: String,
-    val externalNavLaunched: Boolean = false  // 默认 false，兼容旧代码
+    val needsMicPause: Boolean = false  // 默认不需要让麦
 )
 
 /**

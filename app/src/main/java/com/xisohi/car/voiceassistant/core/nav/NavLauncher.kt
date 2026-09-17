@@ -23,6 +23,15 @@ abstract class NavLauncher {
     abstract val packageName: String
 
     /**
+     * 拉起导航后是否需要暂停唤醒监听给导航让麦。
+     * true=导航应用有内置语音助手，要听用户说"选1"等，需要我们释放麦克风
+     * false=导航应用没有语音助手，只显示列表用户手动点，不需要让麦
+     *
+     * 默认 false。测试发现某个导航应用支持语音选择时，在对应 Launcher 里重写为 true。
+     */
+    open val needsMicPause: Boolean = false
+
+    /**
      * 构建关键字导航的 Intent 列表（按优先级排序）
      * 子类实现，只写 URI 拼接逻辑
      */
@@ -53,6 +62,18 @@ abstract class NavLauncher {
         }
         return false
     }
+
+    /**
+     * 导航回家（导航应用里设置的"家"地址）
+     * 默认用"家"作为关键字搜索（兜底），支持专门接口的子类重写。
+     */
+    open fun navigateHome(context: Context): Boolean = navigateByKeyword(context, "家")
+
+    /**
+     * 导航去公司（导航应用里设置的"公司"地址）
+     * 默认用"公司"作为关键字搜索（兜底），支持专门接口的子类重写。
+     */
+    open fun navigateCompany(context: Context): Boolean = navigateByKeyword(context, "公司")
 
     /**
      * 尝试启动 Activity，成功返回 true

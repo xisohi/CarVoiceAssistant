@@ -14,6 +14,8 @@ import android.net.Uri
  */
 class AmapMobileLauncher : NavLauncher() {
 
+    override val needsMicPause = false  // 测试阶段默认需要让麦true，确认不支持语音选择后改回 false
+
     override val packageName = "com.autonavi.minimap"
 
     override fun buildKeywordIntents(

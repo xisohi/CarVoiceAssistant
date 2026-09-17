@@ -5,9 +5,11 @@ import com.xisohi.car.voiceassistant.core.ExecutionResult
 import com.xisohi.car.voiceassistant.core.VoiceIntent
 import com.xisohi.car.voiceassistant.core.nav.AmapAutoLauncher
 import com.xisohi.car.voiceassistant.core.nav.AmapMobileLauncher
-import com.xisohi.car.voiceassistant.core.nav.BaiduLauncher
+import com.xisohi.car.voiceassistant.core.nav.BaiduAutoLauncher
+import com.xisohi.car.voiceassistant.core.nav.BaiduMobileLauncher
 import com.xisohi.car.voiceassistant.core.nav.GeoLauncher
-import com.xisohi.car.voiceassistant.core.nav.TencentLauncher
+import com.xisohi.car.voiceassistant.core.nav.TencentMobileLauncher
+import com.xisohi.car.voiceassistant.core.nav.TencentAutoLauncher
 
 /**
  * 导航调度 Skill
@@ -17,9 +19,11 @@ import com.xisohi.car.voiceassistant.core.nav.TencentLauncher
  * 优先级：
  * 1. 高德车机版（AmapAutoLauncher）- 原生支持多结果语音选择
  * 2. 高德手机版（AmapMobileLauncher）
- * 3. 百度地图汽车版（BaiduLauncher）
- * 4. 腾讯地图（TencentLauncher）
- * 5. 通用 geo: 协议（GeoLauncher）- 兜底
+ * 3. 百度地图汽车版（BaiduAutoLauncher）
+ * 4. 百度地图手机版（BaiduMobileLauncher）
+ * 5. 腾讯地图手机版（TencentMobileLauncher）- 官方支持 qqmap:// URI
+ * 6. 腾讯地图车机版（TencentAutoLauncher）- 先启动主界面再延迟发URI
+ * 7. 通用 geo: 协议（GeoLauncher）- 兜底
  *
  * 依赖：Context + 5个 Launcher
  */
@@ -27,16 +31,70 @@ class NavigationSkill(private val context: Context) {
 
     // 按优先级排序的 Launcher 列表
     private val launchers = listOf(
-        AmapAutoLauncher(),    // 1. 高德车机版（优先）
-        AmapMobileLauncher(),  // 2. 高德手机版
-        BaiduLauncher(),       // 3. 百度地图汽车版
-        TencentLauncher(),     // 4. 腾讯地图
-        GeoLauncher()          // 5. 通用 geo: 协议（兜底）
+        AmapAutoLauncher(),       // 1. 高德车机版（优先）
+        AmapMobileLauncher(),     // 2. 高德手机版
+        BaiduAutoLauncher(),      // 3. 百度地图汽车版
+        BaiduMobileLauncher(),    // 4. 百度地图手机版
+        TencentMobileLauncher(),  // 5. 腾讯地图手机版（官方支持 qqmap:// URI）
+        TencentAutoLauncher(),    // 6. 腾讯地图车机版（先启动主界面再延迟发URI）
+        GeoLauncher()             // 7. 通用 geo: 协议（兜底）
     )
 
     fun execute(intent: VoiceIntent): ExecutionResult {
-        val dest = intent.params["dest"] ?: ""
-        return navigate(dest)
+        return when (intent.action) {
+            "nav.home" -> navigateHome()
+            "nav.company" -> navigateCompany()
+            else -> {
+                val dest = intent.params["dest"] ?: ""
+                navigate(dest)
+            }
+        }
+    }
+
+    /**
+     * 导航回家（用导航应用里设置的"家"地址）
+     */
+    fun navigateHome(): ExecutionResult {
+        for (launcher in launchers) {
+            if (launcher.navigateHome(context)) {
+                val message = when (launcher) {
+                    is AmapAutoLauncher -> "正在为您导航回家"
+                    is AmapMobileLauncher -> "正在用高德地图导航回家"
+                    is BaiduAutoLauncher -> "正在用百度地图汽车版导航回家"
+                    is BaiduMobileLauncher -> "正在用百度地图导航回家"
+                    is TencentMobileLauncher -> "正在用腾讯地图导航回家"
+                    is TencentAutoLauncher -> "正在用腾讯地图车机版导航回家"
+                    is GeoLauncher -> "正在搜索家的位置，请选择导航"
+                    else -> "正在导航回家"
+                }
+                val needPause = launcher !is GeoLauncher && launcher.needsMicPause
+                return ExecutionResult(true, message, needsMicPause = needPause)
+            }
+        }
+        return ExecutionResult(false, "未找到可用的导航应用")
+    }
+
+    /**
+     * 导航去公司（用导航应用里设置的"公司"地址）
+     */
+    fun navigateCompany(): ExecutionResult {
+        for (launcher in launchers) {
+            if (launcher.navigateCompany(context)) {
+                val message = when (launcher) {
+                    is AmapAutoLauncher -> "正在为您导航去公司"
+                    is AmapMobileLauncher -> "正在用高德地图导航去公司"
+                    is BaiduAutoLauncher -> "正在用百度地图汽车版导航去公司"
+                    is BaiduMobileLauncher -> "正在用百度地图导航去公司"
+                    is TencentMobileLauncher -> "正在用腾讯地图导航去公司"
+                    is TencentAutoLauncher -> "正在用腾讯地图车机版导航去公司"
+                    is GeoLauncher -> "正在搜索公司的位置，请选择导航"
+                    else -> "正在导航去公司"
+                }
+                val needPause = launcher !is GeoLauncher && launcher.needsMicPause
+                return ExecutionResult(true, message, needsMicPause = needPause)
+            }
+        }
+        return ExecutionResult(false, "未找到可用的导航应用")
     }
 
     /**
@@ -56,14 +114,16 @@ class NavigationSkill(private val context: Context) {
                 val message = when (launcher) {
                     is AmapAutoLauncher -> "正在为您导航到${dest}"
                     is AmapMobileLauncher -> "正在用高德地图导航到${dest}"
-                    is BaiduLauncher -> "正在用百度地图搜索${dest}"
-                    is TencentLauncher -> "正在用腾讯地图导航到${dest}"
+                    is BaiduAutoLauncher -> "正在用百度地图汽车版导航到${dest}"
+                    is BaiduMobileLauncher -> "正在用百度地图导航到${dest}"
+                    is TencentMobileLauncher -> "正在用腾讯地图导航到${dest}"
+                    is TencentAutoLauncher -> "正在用腾讯地图车机版导航到${dest}"
                     is GeoLauncher -> "正在搜索${dest}，请选择导航"
                     else -> "正在导航到${dest}"
                 }
-                // geo 是系统弹窗，不算外部 App，不需要暂停唤醒
-                val isExternal = launcher !is GeoLauncher
-                return ExecutionResult(true, message, externalNavLaunched = isExternal)
+                // geo 是系统弹窗，不需要让麦；其他导航根据 Launcher 的 needsMicPause 决定
+                val needPause = launcher !is GeoLauncher && launcher.needsMicPause
+                return ExecutionResult(true, message, needsMicPause = needPause)
             }
         }
 
