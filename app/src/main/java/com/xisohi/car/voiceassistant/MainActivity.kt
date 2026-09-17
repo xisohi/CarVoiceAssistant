@@ -17,7 +17,6 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
-import com.xisohi.car.voiceassistant.core.AmapSearcher
 import com.xisohi.car.voiceassistant.core.BaiduAsrManager
 import com.xisohi.car.voiceassistant.core.LogUtils
 import com.xisohi.car.voiceassistant.core.VerifyResult
@@ -332,12 +331,6 @@ class MainActivity : AppCompatActivity() {
         binding.etBaiduSecretKey.setText(baiduAsrManager.getSecretKey())
         updateBaiduStatus()
 
-        // 初始化高德地图配置（读取已保存的 Key）
-        val amapKey = getSharedPreferences("amap_config", MODE_PRIVATE).getString("web_key", "") ?: ""
-        binding.etAmapWebKey.setText(amapKey)
-        AmapSearcher.setKey(amapKey)
-        updateAmapStatus()
-
         // 首次启动检测：如果未配置百度语音识别，弹出引导对话框
         if (!baiduAsrManager.isConfigured()) {
             showBaiduConfigGuide()
@@ -440,15 +433,6 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // 保存高德地图配置
-        binding.btnSaveAmapConfig.setOnClickListener {
-            saveAmapConfig()
-        }
-
-        // 测试高德地图配置
-        binding.btnTestAmapConfig.setOnClickListener {
-            testAmapConfig()
-        }
     }
 
     /**
@@ -735,85 +719,6 @@ class MainActivity : AppCompatActivity() {
         } catch (e: Exception) {
             toast("导入失败：${e.message}")
             log("导入配置异常：${e.message}")
-        }
-    }
-
-    /**
-     * 保存高德地图配置
-     */
-    private fun saveAmapConfig() {
-        val key = binding.etAmapWebKey.text.toString().trim()
-        if (key.isEmpty()) {
-            toast("高德 Web 服务 Key 不能为空")
-            return
-        }
-        getSharedPreferences("amap_config", MODE_PRIVATE)
-            .edit()
-            .putString("web_key", key)
-            .apply()
-        AmapSearcher.setKey(key)
-        toast("高德地图配置已保存")
-        log("✅ 高德地图配置已保存: ${key.take(4)}...${key.takeLast(4)}")
-        updateAmapStatus()
-    }
-
-    /**
-     * 测试高德地图配置（调用搜索 API 验证 Key 是否正确）
-     */
-    private fun testAmapConfig() {
-        val key = binding.etAmapWebKey.text.toString().trim()
-        if (key.isEmpty()) {
-            toast("请先填写高德 Web 服务 Key")
-            return
-        }
-        // 先保存，再测试
-        AmapSearcher.setKey(key)
-        binding.tvAmapStatus.text = "正在测试..."
-        binding.tvAmapStatus.setTextColor(0xFF9E9E9E.toInt())
-        Thread {
-            try {
-                // 用"北京"作为测试关键字搜索
-                val results = AmapSearcher.search("北京")
-                runOnUiThread {
-                    if (results.isNotEmpty()) {
-                        binding.tvAmapStatus.text = "✅ 配置正确（搜索到${results.size}个结果）"
-                        binding.tvAmapStatus.setTextColor(0xFF4CAF50.toInt())
-                        toast("高德地图配置验证成功")
-                        log("✅ 高德地图配置验证成功，搜索到${results.size}个结果")
-                        // 验证成功后保存
-                        getSharedPreferences("amap_config", MODE_PRIVATE)
-                            .edit()
-                            .putString("web_key", key)
-                            .apply()
-                    } else {
-                        binding.tvAmapStatus.text = "❌ 配置错误或无结果（请检查 Key）"
-                        binding.tvAmapStatus.setTextColor(0xFFF44336.toInt())
-                        toast("高德地图配置验证失败，请检查 Key")
-                        log("❌ 高德地图配置验证失败，搜索结果为空")
-                    }
-                }
-            } catch (e: Exception) {
-                runOnUiThread {
-                    binding.tvAmapStatus.text = "❌ 测试异常: ${e.message}"
-                    binding.tvAmapStatus.setTextColor(0xFFF44336.toInt())
-                    toast("测试异常: ${e.message}")
-                    log("❌ 高德地图配置测试异常: ${e.message}")
-                }
-            }
-        }.start()
-    }
-
-    /**
-     * 更新高德地图配置状态显示
-     */
-    private fun updateAmapStatus() {
-        val key = AmapSearcher.getKey()
-        if (key.isBlank()) {
-            binding.tvAmapStatus.text = "未配置"
-            binding.tvAmapStatus.setTextColor(0xFF9E9E9E.toInt())
-        } else {
-            binding.tvAmapStatus.text = "已配置（${key.take(4)}...${key.takeLast(4)}）"
-            binding.tvAmapStatus.setTextColor(0xFF4CAF50.toInt())
         }
     }
 
