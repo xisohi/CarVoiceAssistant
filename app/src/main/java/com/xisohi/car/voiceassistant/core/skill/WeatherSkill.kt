@@ -18,6 +18,14 @@ import com.xisohi.car.voiceassistant.core.VoiceIntent
  */
 class WeatherSkill(private val context: Context) {
 
+    /**
+     * 注意：此方法仅作为 SkillExecutor.execute() 的兜底分支，
+     * 实际天气查询不走这里，而是由 VoiceAssistantService 直接调用
+     * queryWeather()（在后台线程执行，因为需要网络请求）。
+     *
+     * 如果用户在离线模式下通过 execute() 触发 ask.weather，
+     * 返回提示文案。
+     */
     fun execute(intent: VoiceIntent): ExecutionResult = when (intent.action) {
         "ask.weather" -> ExecutionResult(true, "离线模式下暂时查不了天气，建议联网后使用")
         else -> ExecutionResult(false, "不支持的天气指令")

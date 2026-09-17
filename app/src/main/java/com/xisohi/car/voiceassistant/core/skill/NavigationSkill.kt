@@ -57,7 +57,9 @@ class NavigationSkill(private val context: Context) {
                     is GeoLauncher -> "正在搜索${dest}，请选择导航"
                     else -> "正在导航到${dest}"
                 }
-                return ExecutionResult(true, message)
+                // geo 是系统弹窗，不算外部 App，不需要暂停唤醒
+                val isExternal = launcher !is GeoLauncher
+                return ExecutionResult(true, message, externalNavLaunched = isExternal)
             }
         }
 

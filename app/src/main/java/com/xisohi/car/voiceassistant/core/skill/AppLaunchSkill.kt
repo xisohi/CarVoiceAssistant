@@ -107,9 +107,10 @@ class AppLaunchSkill(
             if (intent != null) {
                 intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 context.startActivity(intent)
-                // 如果打开的是音乐播放器，设置为当前活跃播放器，并自动播放
+                // 如果打开的是音乐播放器，只设置为当前活跃播放器，不自动播放
+                // 用户说"打开音乐"→ 只打开；用户说"播放音乐"（media.play）→ 才自动播放
                 if (mediaSkill.isMusicPlayer(packageName)) {
-                    mediaSkill.onMusicPlayerOpened(packageName)
+                    mediaSkill.setActivePlayer(packageName)
                 }
                 ExecutionResult(true, "已打开$displayName")
             } else {

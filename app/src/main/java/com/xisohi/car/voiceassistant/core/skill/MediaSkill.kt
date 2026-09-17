@@ -24,8 +24,12 @@ class MediaSkill(private val context: Context) {
     private val musicPlayerManager = MusicPlayerManager(context)
     private val mainHandler = Handler(Looper.getMainLooper())
 
+    /** 自动播放的延迟任务列表（用于取消） */
+    private val autoPlayRunnables = mutableListOf<Runnable>()
+
     fun execute(intent: VoiceIntent): ExecutionResult = when (intent.action) {
-        "media.play" -> mediaKey(android.view.KeyEvent.KEYCODE_MEDIA_PLAY)
+        // "播放音乐"：如果播放器没打开，先打开再播放；如果已打开，直接播放
+        "media.play" -> ensurePlayerAndPlay()
         "media.pause" -> mediaKey(android.view.KeyEvent.KEYCODE_MEDIA_PAUSE)
         "media.next" -> mediaKey(android.view.KeyEvent.KEYCODE_MEDIA_NEXT)
         "media.prev" -> mediaKey(android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS)
@@ -71,32 +75,108 @@ class MediaSkill(private val context: Context) {
         musicPlayerManager.isMusicPlayer(packageName)
 
     /**
+     * 只设置当前活跃播放器，不自动播放。
+     * 由 AppLaunchSkill 在"打开音乐"（app.open）时调用。
+     * 用户说"打开音乐"→ 只打开播放器，不自动播放。
+     */
+    fun setActivePlayer(packageName: String) {
+        if (musicPlayerManager.isMusicPlayer(packageName)) {
+            // 先取消之前的自动播放延迟任务（避免切换播放器后旧任务还在执行）
+            cancelAutoPlay()
+            musicPlayerManager.setActivePlayer(packageName)
+            android.util.Log.d("MediaSkill", "打开音乐播放器，设置为活跃（不自动播放）: $packageName")
+        }
+    }
+
+    /**
+     * 确保播放器已打开并播放。
+     * 如果播放器没打开，先打开再延迟发送播放键；如果已打开，直接发送播放键。
+     * 由"播放音乐"（media.play）调用。
+     */
+    private fun ensurePlayerAndPlay(): ExecutionResult {
+        val playerPkg = musicPlayerManager.getActivePlayer()
+        return if (playerPkg == null) {
+            // 没有活跃播放器，先打开播放器
+            android.util.Log.d("MediaSkill", "播放音乐：播放器未打开，先启动播放器")
+            musicPlayerManager.launchMusicPlayer()
+            // launchMusicPlayer() 内部会设置活跃播放器，这里再获取一次
+            val openedPkg = musicPlayerManager.getActivePlayer()
+            if (openedPkg != null) {
+                // 打开后延迟发送播放键（等播放器初始化完成）
+                scheduleAutoPlay(openedPkg)
+                ExecutionResult(true, "正在打开音乐播放器")
+            } else {
+                ExecutionResult(false, "未安装任何音乐播放器")
+            }
+        } else {
+            // 有活跃播放器，直接发送播放键
+            android.util.Log.d("MediaSkill", "播放音乐：播放器已打开，直接发送播放键")
+            musicPlayerManager.setActivePlayer(playerPkg)
+            mediaKeyDispatcher.dispatch(
+                android.view.KeyEvent.KEYCODE_MEDIA_PLAY,
+                playerPkg,
+                musicPlayerManager.getAllPlayerPackages()
+            )
+            ExecutionResult(true, "继续播放")
+        }
+    }
+
+    /**
+     * 安排自动播放：延迟4秒/5.5秒各发一次播放键。
+     * 复用 onMusicPlayerOpened() 和 ensurePlayerAndPlay() 的逻辑。
+     */
+    private fun scheduleAutoPlay(packageName: String) {
+        cancelAutoPlay()
+        val r1 = Runnable {
+            mediaKeyDispatcher.dispatch(
+                android.view.KeyEvent.KEYCODE_MEDIA_PLAY,
+                packageName,
+                musicPlayerManager.getAllPlayerPackages()
+            )
+        }
+        val r2 = Runnable {
+            mediaKeyDispatcher.dispatch(
+                android.view.KeyEvent.KEYCODE_MEDIA_PLAY,
+                packageName,
+                musicPlayerManager.getAllPlayerPackages()
+            )
+        }
+        autoPlayRunnables.add(r1)
+        autoPlayRunnables.add(r2)
+        mainHandler.postDelayed(r1, 4000)
+        mainHandler.postDelayed(r2, 5500)
+        android.util.Log.d("MediaSkill", "已安排自动播放（4秒/5.5秒各发一次播放键）")
+    }
+
+    /**
      * 打开音乐播放器时的回调（由 AppLaunchSkill 或 SkillExecutor 调用）。
      * 设置为当前活跃播放器，并自动播放。
+     */
+    /**
+     * 打开音乐播放器并自动播放。
+     * 注意：当前"打开音乐"（app.open）走 setActivePlayer()（不自动播放），
+     * 这个方法保留用于兼容旧接口（SkillExecutor.setActiveMusicPlayer()）。
      */
     fun onMusicPlayerOpened(packageName: String) {
         if (!musicPlayerManager.isMusicPlayer(packageName)) return
 
         musicPlayerManager.setActivePlayer(packageName)
-        android.util.Log.d("MediaSkill", "打开音乐播放器，设置为活跃: $packageName")
+        android.util.Log.d("MediaSkill", "打开音乐播放器，设置为活跃并自动播放: $packageName")
 
-        // 自动播放：延迟4秒发第一次播放键（等播放器初始化完成）
-        mainHandler.postDelayed({
-            mediaKeyDispatcher.dispatch(
-                android.view.KeyEvent.KEYCODE_MEDIA_PLAY,
-                packageName,
-                musicPlayerManager.getAllPlayerPackages()
-            )
-        }, 4000)
-        // 延迟5.5秒发第二次播放键（确保触发播放）
-        mainHandler.postDelayed({
-            mediaKeyDispatcher.dispatch(
-                android.view.KeyEvent.KEYCODE_MEDIA_PLAY,
-                packageName,
-                musicPlayerManager.getAllPlayerPackages()
-            )
-        }, 5500)
-        android.util.Log.d("MediaSkill", "已安排自动播放（4秒/5.5秒各发一次播放键）")
+        // 安排自动播放（延迟4秒/5.5秒各发一次播放键）
+        scheduleAutoPlay(packageName)
+    }
+
+    /**
+     * 取消所有待执行的自动播放延迟任务。
+     * 在切换播放器、暂停、onDestroy 时调用。
+     */
+    fun cancelAutoPlay() {
+        if (autoPlayRunnables.isNotEmpty()) {
+            autoPlayRunnables.forEach { mainHandler.removeCallbacks(it) }
+            autoPlayRunnables.clear()
+            android.util.Log.d("MediaSkill", "已取消所有自动播放延迟任务")
+        }
     }
 
     /**

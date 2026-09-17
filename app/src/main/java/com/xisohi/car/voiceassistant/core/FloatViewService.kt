@@ -169,6 +169,10 @@ class FloatViewService : Service() {
     // ---------- 原有功能 ----------
     private fun triggerWake() {
         try {
+            // 如果当前处于外部导航暂停状态（拉起高德后暂停唤醒监听），先取消暂停，立即恢复
+            // 这样用户点击悬浮球可以随时打断高德的选择模式，回到语音助手
+            VoiceAssistantService.cancelExternalNavPause()
+
             val intent = Intent(this, VoiceAssistantService::class.java)
             if (VoiceAssistantService.isRunning) {
                 intent.action = VoiceAssistantService.ACTION_WAKE_TRIGGER

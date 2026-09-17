@@ -28,8 +28,17 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-/** 执行结果：spoken 为要向用户播报的文案 */
-data class ExecutionResult(val handled: Boolean, val spoken: String)
+/**
+ * 执行结果
+ * @param handled 是否成功处理
+ * @param spoken 要向用户播报的文案
+ * @param externalNavLaunched 是否拉起了外部导航App（true=需要暂停唤醒监听，给高德让出麦克风）
+ */
+data class ExecutionResult(
+    val handled: Boolean,
+    val spoken: String,
+    val externalNavLaunched: Boolean = false  // 默认 false，兼容旧代码
+)
 
 /**
  * 车控执行层。
