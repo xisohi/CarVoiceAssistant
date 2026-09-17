@@ -508,7 +508,7 @@ class VoiceAssistantService : Service() {
                 sampleRate,
                 channelConfig,
                 audioFormat,
-                maxOf(minBufSize * 8, 64_000)  // minBuf*8，最小64KB（约2秒缓冲），避免ring buffer溢出
+                maxOf(minBufSize * 8, 256_000)  // minBuf*8，最小256KB（约8秒缓冲），避免车机CPU慢导致ring buffer溢出丢帧
             )
             if (record.state != AudioRecord.STATE_INITIALIZED) {
                 android.util.Log.e("WakeAudioThread", "AudioRecord 初始化失败")
@@ -922,7 +922,7 @@ class VoiceAssistantService : Service() {
                 SpeechRecognizer.SAMPLE_RATE.toInt(),
                 AudioFormat.CHANNEL_IN_MONO,
                 AudioFormat.ENCODING_PCM_16BIT,
-                maxOf(minBuf * 8, 64_000)  // minBuf*8，最小64KB（约2秒缓冲），避免ring buffer溢出导致音频被覆盖
+                maxOf(minBuf * 8, 256_000)  // minBuf*8，最小256KB（约8秒缓冲），避免车机CPU慢导致ring buffer溢出丢帧
             )
 
             // 初始化音频降噪（系统降噪 + 高通滤波器）
@@ -975,6 +975,7 @@ class VoiceAssistantService : Service() {
             val byteBuf = ByteArray(1024)
             val startMs = SystemClock.elapsedRealtime()
             var lastPartial = ""
+            var lastPartialUpdateMs = 0L  // 上次更新悬浮窗 subtitle 的时间（节流，避免每帧都切主线程）
             var silenceDuration = 0L  // 连续静音时长（ms）
             var hasSpeechStarted = false  // 用户是否已开口（开口前不累积静音，避免TTS刚说完就截断）
             var speechFrameCount = 0  // 连续非静音帧数（连续3帧非静音才算开口，避免噪音波动误触发）
@@ -1039,13 +1040,17 @@ class VoiceAssistantService : Service() {
                     shortsToBytes(shortBuf, n, byteBuf)
                     val partial = recognizer.feed(byteBuf, n * 2)
 
-                    // 更新 partial 显示
+                    // 更新 partial 显示（节流：每100ms最多更新一次，避免每帧都切主线程导致CPU占用过高）
                     if (!partial.isNullOrEmpty() && partial != lastPartial) {
                         lastPartial = partial
                         lastPartialText = partial
                         android.util.Log.d("VoiceService", "识别中: '$partial' (RMS=${rms.toInt()}, 静音=$isSilence)")
-                        withContext(Dispatchers.Main) {
-                            FloatViewService.updateSubtitle("💬 $partial")
+                        val nowMs = SystemClock.elapsedRealtime()
+                        if (nowMs - lastPartialUpdateMs >= 100) {
+                            lastPartialUpdateMs = nowMs
+                            withContext(Dispatchers.Main) {
+                                FloatViewService.updateSubtitle("💬 $partial")
+                            }
                         }
                     }
 
