@@ -10,12 +10,12 @@ import android.net.Uri
  * 包名：com.baidu.naviauto
  *
  * URI Scheme：
- * - baidumap://map/direction（路线规划）
- * - baidumap://map/search（搜索）
+ * - baidumap://map/place/search（地点搜索，显示结果列表让用户选择）
+ * - baidumap://map/direction（路线规划/导航，兜底）
  */
 class BaiduAutoLauncher : NavLauncher() {
 
-    override val needsMicPause = false  // 测试阶段默认需要让麦true，确认不支持语音选择后改回 false
+    override val needsMicPause = false  // 经实测不支持语音选择，不需要让麦
 
     override val packageName = "com.baidu.naviauto"
 
@@ -49,6 +49,30 @@ class BaiduAutoLauncher : NavLauncher() {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
         )
+    }
+
+    /**
+     * 重写 navigateByKeyword：前两种方式都失败时，直接启动百度地图主界面
+     */
+    override fun navigateByKeyword(context: Context, keyword: String): Boolean {
+        if (super.navigateByKeyword(context, keyword)) return true
+
+        // 方式3：直接启动百度地图主界面（兜底）
+        return try {
+            val launchIntent = context.packageManager.getLaunchIntentForPackage(packageName)
+            if (launchIntent != null) {
+                launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                context.startActivity(launchIntent)
+                android.util.Log.d("BaiduAutoLauncher", "直接启动百度地图汽车版主界面")
+                true
+            } else {
+                android.util.Log.w("BaiduAutoLauncher", "未找到百度地图汽车版的启动 Intent")
+                false
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("BaiduAutoLauncher", "启动百度地图汽车版失败: ${e.message}")
+            false
+        }
     }
 
     /**

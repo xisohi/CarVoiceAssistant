@@ -18,7 +18,7 @@ import android.net.Uri
  */
 class TencentMobileLauncher : NavLauncher() {
 
-    override val needsMicPause = false  // 测试阶段默认需要让麦true，确认不支持语音选择后改回 false
+    override val needsMicPause = false  // 经实测不支持语音选择，不需要让麦
 
     override val packageName = "com.tencent.map"
 

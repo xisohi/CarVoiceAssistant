@@ -14,7 +14,10 @@ import android.content.Intent
  * 子类：
  * - AmapAutoLauncher（高德车机版）
  * - AmapMobileLauncher（高德手机版）
- * - BaiduLauncher（百度汽车版）
+ * - BaiduAutoLauncher（百度汽车版）
+ * - BaiduMobileLauncher（百度手机版）
+ * - TencentMobileLauncher（腾讯手机版）
+ * - TencentAutoLauncher（腾讯车机版）
  * - GeoLauncher（geo 兜底）
  */
 abstract class NavLauncher {

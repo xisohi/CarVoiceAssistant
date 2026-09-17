@@ -14,12 +14,12 @@ import android.net.Uri
  * - androidauto://poi（打开搜索页）
  * - 直接启动主界面（兜底）
  *
- * 注意：高德车机版原生支持多结果语音选择，
- * 使用 keywordNavi 后，高德会自己搜索、弹出列表、提示用户说"选几"。
+ * 注意：使用 keywordNavi 后，高德会自己搜索并弹出结果列表，用户手动选择。
+ * 经实测高德车机版没有语音助手，不需要让麦。
  */
 class AmapAutoLauncher : NavLauncher() {
 
-    override val needsMicPause = false  // 测试阶段默认需要让麦true，确认不支持语音选择后改回 false
+    override val needsMicPause = false  // 经实测不支持语音选择，不需要让麦
 
     override val packageName = "com.autonavi.amapauto"
 

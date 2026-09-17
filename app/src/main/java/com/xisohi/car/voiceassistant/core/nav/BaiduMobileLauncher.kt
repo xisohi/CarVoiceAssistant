@@ -10,13 +10,12 @@ import android.net.Uri
  * 包名：com.baidu.BaiduMap（手机版）
  *
  * URI Scheme（官方文档：baidumap://）：
- * - baidumap://map/direction（路线规划/导航）
- * - baidumap://map/search（搜索）
- * - baidumap://map/marker（地点标注）
+ * - baidumap://map/place/search（地点搜索，显示结果列表让用户选择）
+ * - baidumap://map/direction（路线规划/导航，兜底）
  */
 class BaiduMobileLauncher : NavLauncher() {
 
-    override val needsMicPause = false  // 测试阶段默认需要让麦true，确认不支持语音选择后改回 false
+    override val needsMicPause = false  // 经实测不支持语音选择，不需要让麦
 
     override val packageName = "com.baidu.BaiduMap"
 

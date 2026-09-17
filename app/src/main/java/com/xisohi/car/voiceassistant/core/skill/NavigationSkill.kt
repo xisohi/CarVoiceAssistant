@@ -16,27 +16,27 @@ import com.xisohi.car.voiceassistant.core.nav.TencentAutoLauncher
  *
  * 职责：按优先级依次尝试各个导航应用
  *
- * 优先级：
- * 1. 高德车机版（AmapAutoLauncher）- 原生支持多结果语音选择
- * 2. 高德手机版（AmapMobileLauncher）
- * 3. 百度地图汽车版（BaiduAutoLauncher）
- * 4. 百度地图手机版（BaiduMobileLauncher）
- * 5. 腾讯地图手机版（TencentMobileLauncher）- 官方支持 qqmap:// URI
- * 6. 腾讯地图车机版（TencentAutoLauncher）- 先启动主界面再延迟发URI
+ * 优先级（按易用程度排序）：
+ * 1. 高德车机版（AmapAutoLauncher）- 搜索正常，不占麦，车机版体验最好
+ * 2. 百度地图手机版（BaiduMobileLauncher）- 搜索正常，不占麦
+ * 3. 高德手机版（AmapMobileLauncher）- 搜索正常，不占麦
+ * 4. 腾讯地图手机版（TencentMobileLauncher）- 搜索正常，不占麦
+ * 5. 百度地图汽车版（BaiduAutoLauncher）- 搜索正常，但强占麦克风
+ * 6. 腾讯地图车机版（TencentAutoLauncher）- 只启动主界面，用户手动搜索
  * 7. 通用 geo: 协议（GeoLauncher）- 兜底
  *
  * 依赖：Context + 5个 Launcher
  */
 class NavigationSkill(private val context: Context) {
 
-    // 按优先级排序的 Launcher 列表
+    // 按优先级排序的 Launcher 列表（按易用程度排序）
     private val launchers = listOf(
-        AmapAutoLauncher(),       // 1. 高德车机版（优先）
-        AmapMobileLauncher(),     // 2. 高德手机版
-        BaiduAutoLauncher(),      // 3. 百度地图汽车版
-        BaiduMobileLauncher(),    // 4. 百度地图手机版
-        TencentMobileLauncher(),  // 5. 腾讯地图手机版（官方支持 qqmap:// URI）
-        TencentAutoLauncher(),    // 6. 腾讯地图车机版（先启动主界面再延迟发URI）
+        AmapAutoLauncher(),       // 1. 高德车机版（搜索正常，不占麦，体验最好）
+        BaiduMobileLauncher(),    // 2. 百度地图手机版（搜索正常，不占麦）
+        AmapMobileLauncher(),     // 3. 高德手机版（搜索正常，不占麦）
+        TencentMobileLauncher(),  // 4. 腾讯地图手机版（搜索正常，不占麦）
+        BaiduAutoLauncher(),      // 5. 百度地图汽车版（搜索正常，但强占麦克风）
+        TencentAutoLauncher(),    // 6. 腾讯地图车机版（只启动主界面，用户手动搜索）
         GeoLauncher()             // 7. 通用 geo: 协议（兜底）
     )
 
@@ -58,12 +58,12 @@ class NavigationSkill(private val context: Context) {
         for (launcher in launchers) {
             if (launcher.navigateHome(context)) {
                 val message = when (launcher) {
-                    is AmapAutoLauncher -> "正在为您导航回家"
+                    is AmapAutoLauncher -> "正在为您搜索回家路线"
                     is AmapMobileLauncher -> "正在用高德地图导航回家"
                     is BaiduAutoLauncher -> "正在用百度地图汽车版导航回家"
                     is BaiduMobileLauncher -> "正在用百度地图导航回家"
                     is TencentMobileLauncher -> "正在用腾讯地图导航回家"
-                    is TencentAutoLauncher -> "正在用腾讯地图车机版导航回家"
+                    is TencentAutoLauncher -> "已打开腾讯地图车机版，请手动设置回家路线"
                     is GeoLauncher -> "正在搜索家的位置，请选择导航"
                     else -> "正在导航回家"
                 }
@@ -81,12 +81,12 @@ class NavigationSkill(private val context: Context) {
         for (launcher in launchers) {
             if (launcher.navigateCompany(context)) {
                 val message = when (launcher) {
-                    is AmapAutoLauncher -> "正在为您导航去公司"
+                    is AmapAutoLauncher -> "正在为您搜索去公司路线"
                     is AmapMobileLauncher -> "正在用高德地图导航去公司"
                     is BaiduAutoLauncher -> "正在用百度地图汽车版导航去公司"
                     is BaiduMobileLauncher -> "正在用百度地图导航去公司"
                     is TencentMobileLauncher -> "正在用腾讯地图导航去公司"
-                    is TencentAutoLauncher -> "正在用腾讯地图车机版导航去公司"
+                    is TencentAutoLauncher -> "已打开腾讯地图车机版，请手动设置去公司路线"
                     is GeoLauncher -> "正在搜索公司的位置，请选择导航"
                     else -> "正在导航去公司"
                 }
@@ -112,12 +112,12 @@ class NavigationSkill(private val context: Context) {
         for (launcher in launchers) {
             if (launcher.navigateByKeyword(context, dest)) {
                 val message = when (launcher) {
-                    is AmapAutoLauncher -> "正在为您导航到${dest}"
+                    is AmapAutoLauncher -> "正在为您搜索${dest}，请选择目的地"
                     is AmapMobileLauncher -> "正在用高德地图导航到${dest}"
                     is BaiduAutoLauncher -> "正在用百度地图汽车版导航到${dest}"
                     is BaiduMobileLauncher -> "正在用百度地图导航到${dest}"
                     is TencentMobileLauncher -> "正在用腾讯地图导航到${dest}"
-                    is TencentAutoLauncher -> "正在用腾讯地图车机版导航到${dest}"
+                    is TencentAutoLauncher -> "已打开腾讯地图车机版，请手动输入目的地"
                     is GeoLauncher -> "正在搜索${dest}，请选择导航"
                     else -> "正在导航到${dest}"
                 }
