@@ -104,7 +104,7 @@ class SkillExecutor(private val context: Context) {
     fun extractCity(word: String?): String? = weatherSkill.extractCity(word)
 
     fun setActiveMusicPlayer(packageName: String) =
-        mediaSkill.onMusicPlayerOpened(packageName)
+        mediaSkill.setActivePlayer(packageName)  // 只设置活跃，不自动播放
 
     fun selectSong(indexStr: String): ExecutionResult =
         mediaSkill.selectSong(indexStr)

@@ -30,9 +30,21 @@ class MediaSkill(private val context: Context) {
     fun execute(intent: VoiceIntent): ExecutionResult = when (intent.action) {
         // "播放音乐"：如果播放器没打开，先打开再播放；如果已打开，直接播放
         "media.play" -> ensurePlayerAndPlay()
-        "media.pause" -> mediaKey(android.view.KeyEvent.KEYCODE_MEDIA_PAUSE)
-        "media.next" -> mediaKey(android.view.KeyEvent.KEYCODE_MEDIA_NEXT)
-        "media.prev" -> mediaKey(android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS)
+        // 暂停/下一首/上一首时，取消待执行的自动播放任务
+        // 场景：用户说"播放音乐"→ 打开播放器 + 延迟4秒发播放键；4秒内用户说"暂停"
+        // 如果不取消，4秒后播放键还会发，导致暂停后又自动播放
+        "media.pause" -> {
+            cancelAutoPlay()
+            mediaKey(android.view.KeyEvent.KEYCODE_MEDIA_PAUSE)
+        }
+        "media.next" -> {
+            cancelAutoPlay()
+            mediaKey(android.view.KeyEvent.KEYCODE_MEDIA_NEXT)
+        }
+        "media.prev" -> {
+            cancelAutoPlay()
+            mediaKey(android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS)
+        }
         else -> ExecutionResult(false, "不支持的媒体指令")
     }
 

@@ -433,12 +433,22 @@ class VoiceAssistantService : Service() {
      * 用户点击悬浮球手动唤醒时调用（FloatViewService.triggerWake() 里调用）。
      */
     fun cancelExternalNavPause() {
+        // ★ 无条件清 pendingExternalNavPause，不管当前处于哪个阶段
+        // 场景：TTS 播报中用户点击悬浮球，此时 externalNavPauseRunnable 还是 null，
+        // 但 pendingExternalNavPause 是 true，TTS 播完后会暂停唤醒监听。
+        // 用户点击悬浮球应该取消这个待执行的暂停。
+        val wasPending = pendingExternalNavPause
+        pendingExternalNavPause = false
+
         if (externalNavPauseRunnable != null) {
             mainHandler.removeCallbacks(externalNavPauseRunnable!!)
             externalNavPauseRunnable = null
-            pendingExternalNavPause = false
             LogUtils.i("VoiceService", "用户手动唤醒，取消外部导航暂停，立即恢复唤醒监听")
             resumeWake()
+        } else if (wasPending) {
+            LogUtils.i("VoiceService", "用户手动唤醒，取消待执行的外部导航暂停（TTS播报中）")
+            // 不需要 resumeWake()，因为 TTS 播完后 onSpeakDone() 里会检查 pendingExternalNavPause，
+            // 现在是 false，会走正常 resumeWake() 分支
         }
     }
 

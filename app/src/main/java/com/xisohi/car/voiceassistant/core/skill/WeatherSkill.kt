@@ -27,7 +27,9 @@ class WeatherSkill(private val context: Context) {
      * 返回提示文案。
      */
     fun execute(intent: VoiceIntent): ExecutionResult = when (intent.action) {
-        "ask.weather" -> ExecutionResult(true, "离线模式下暂时查不了天气，建议联网后使用")
+        // 注意：ask.weather 正常不走这里，由 VoiceAssistantService 直接调用 queryWeather()（后台线程）
+        // 这个分支保留只是为了防御性编程，正常情况下不会走到
+        "ask.weather" -> ExecutionResult(false, "天气查询需要联网，请通过语音唤醒后说'北京天气'")
         else -> ExecutionResult(false, "不支持的天气指令")
     }
 
