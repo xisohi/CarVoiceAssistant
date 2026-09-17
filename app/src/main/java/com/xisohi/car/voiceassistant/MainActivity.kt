@@ -429,7 +429,15 @@ class MainActivity : AppCompatActivity() {
             } catch (e: Exception) {
                 log("系统文件选择器不可用：${e.message}，尝试扫描U盘")
                 // 系统没有文件选择器（如精简版车机系统），自动扫描U盘
-                scanUsbAndImport()
+                // ★ 必须在后台线程执行！StorageManager 遍历 USB 存储卷涉及跨进程 binder 调用，
+                // 在主线程执行会卡住导致 ANR，应用被系统杀死
+                Thread {
+                    try {
+                        scanUsbAndImport()
+                    } catch (e2: Exception) {
+                        log("U盘扫描异常: ${e2.javaClass.simpleName}: ${e2.message}")
+                    }
+                }.start()
             }
         }
 
@@ -458,26 +466,54 @@ class MainActivity : AppCompatActivity() {
             val volumes = sm.storageVolumes
             log("StorageManager 共找到 ${volumes.size} 个存储卷")
 
-            for (volume in volumes) {
-                val desc = try { volume.getDescription(this) } catch (_: Exception) { "未知" }
+            for ((idx, volume) in volumes.withIndex()) {
+                log("  处理存储卷 [$idx] 开始...")
+                val desc = try {
+                    log("    获取 description...")
+                    val d = volume.getDescription(this)
+                    log("    description=$d")
+                    d
+                } catch (e: Exception) {
+                    log("    获取 description 失败: ${e.message}")
+                    "未知"
+                }
                 val isPrimary = volume.isPrimary
                 val isRemovable = volume.isRemovable
+                log("    isPrimary=$isPrimary, isRemovable=$isRemovable")
 
                 // ★ 关键：反射调用 getDirectory()
                 // 返回的 File 对象在 Android 10 上有读写权限
+                log("    反射调用 getDirectory()...")
                 val dir = try {
                     val m = volume.javaClass.getMethod("getDirectory")
-                    m.invoke(volume) as? java.io.File
+                    val result = m.invoke(volume) as? java.io.File
+                    log("    反射成功, dir=${result?.absolutePath}")
+                    result
                 } catch (e: Exception) {
-                    // 反射失败，尝试公开 API（API 30+）
-                    try { volume.directory } catch (_: Exception) { null }
+                    log("    反射失败: ${e.message}，尝试公开 API（API 30+）")
+                    try {
+                        val d = volume.directory
+                        log("    公开 API 成功, dir=${d?.absolutePath}")
+                        d
+                    } catch (e2: Exception) {
+                        log("    公开 API 也失败: ${e2.message}")
+                        null
+                    }
                 }
 
                 val path = dir?.absolutePath
-                val canRead = dir?.canRead() ?: false
-                val canWrite = dir?.canWrite() ?: false
+                log("    检查权限: canRead...")
+                val canRead = try { dir?.canRead() ?: false } catch (e: Exception) {
+                    log("    canRead() 异常: ${e.message}")
+                    false
+                }
+                log("    检查权限: canWrite...")
+                val canWrite = try { dir?.canWrite() ?: false } catch (e: Exception) {
+                    log("    canWrite() 异常: ${e.message}")
+                    false
+                }
 
-                log("  存储卷: desc=$desc, path=$path, isPrimary=$isPrimary, isRemovable=$isRemovable, canRead=$canRead, canWrite=$canWrite")
+                log("  存储卷 [$idx]: desc=$desc, path=$path, isPrimary=$isPrimary, isRemovable=$isRemovable, canRead=$canRead, canWrite=$canWrite")
 
                 if (isPrimary) {
                     log("    → 跳过：内置存储")
