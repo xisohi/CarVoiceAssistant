@@ -34,6 +34,18 @@ class VoiceAssistantService : Service() {
 
     enum class State { IDLE, LISTENING, PROCESSING, SPEAKING }
 
+
+    /**
+     * 音频帧数据类（生产者-消费者模式用）
+     * 录音线程只负责读音频和封装成 AudioFrame 入队，识别线程负责所有处理
+     * 注意：不用 data class，因为 data class 自动生成的 equals() 对 ShortArray 用引用比较，
+     * 可能导致 queue.contains()/remove() 行为错误。这里只需要数据容器，用普通 class。
+     */
+    private class AudioFrame(
+        val data: ShortArray,
+        val length: Int
+    )
+
     companion object {
         const val ACTION_START = "com.xisohi.car.voiceassistant.action.START"
         const val ACTION_STOP = "com.xisohi.car.voiceassistant.action.STOP"
@@ -937,8 +949,6 @@ class VoiceAssistantService : Service() {
         }
         recognitionJob = scope.launch(Dispatchers.IO) {
             // 使用自由听写模式（不限制 Grammar 词表）
-            // 之前用 Grammar 模式导致大量词被 Vosk 忽略（Ignoring word missing in vocabulary），识别反而不准
-            // 自由听写模式能识别完整句子，包括地名、歌曲名等，后续通过同音字纠正和意图解析提高准确率
             val recognizer = SpeechRecognizer.create(modelDir)
             val minBuf = AudioRecord.getMinBufferSize(
                 SpeechRecognizer.SAMPLE_RATE.toInt(),
@@ -950,16 +960,12 @@ class VoiceAssistantService : Service() {
                 withContext(Dispatchers.Main) { resumeWake() }
                 return@launch
             }
-            // 注意：使用 VOICE_RECOGNITION 而不是 MIC！
-            // VOICE_RECOGNITION 会触发系统级 AGC/降噪/回声消除，车机上系统降噪能有效降低底噪
-            // MIC 源在车机上可能不经过系统 AEC/NS，音频更"原始"，但同时底噪也更大
-            // 和唤醒线程保持一致，都用 VOICE_RECOGNITION
             val record = AudioRecord(
                 MediaRecorder.AudioSource.VOICE_RECOGNITION,
                 SpeechRecognizer.SAMPLE_RATE.toInt(),
                 AudioFormat.CHANNEL_IN_MONO,
                 AudioFormat.ENCODING_PCM_16BIT,
-                maxOf(minBuf * 8, 256_000)  // minBuf*8，最小256KB（约8秒缓冲），避免车机CPU慢导致ring buffer溢出丢帧
+                maxOf(minBuf * 8, 256_000)  // minBuf*8，最小256KB（约8秒缓冲）
             )
 
             // 初始化音频降噪（系统降噪 + 高通滤波器）
@@ -972,7 +978,6 @@ class VoiceAssistantService : Service() {
             sendRecognitionLog("🎙️ 开始录音识别")
 
             // ===== 环境噪音采样，动态设定静音阈值 =====
-            // 先丢弃前 100ms（录音刚启动时可能有爆音）
             val warmupSamples = (NOISE_WARMUP_MS * SpeechRecognizer.SAMPLE_RATE / 1000).toInt()
             val warmupBuf = ShortArray(warmupSamples)
             try {
@@ -980,7 +985,6 @@ class VoiceAssistantService : Service() {
             } catch (_: Exception) {
             }
 
-            // 采样 300ms 环境噪音，计算自适应静音阈值
             val noiseSampleCount = (NOISE_SAMPLE_MS * SpeechRecognizer.SAMPLE_RATE / 1000).toInt()
             val noiseBuf = ShortArray(noiseSampleCount)
             val noiseRead = try {
@@ -988,8 +992,6 @@ class VoiceAssistantService : Service() {
             } catch (_: Exception) {
                 -1
             }
-// 关键：采样音频也走和循环相同的处理路径（降噪 + 增益）
-// 这样 ambientRms 和循环 rms 才在同一基准上，阈值才有意义
             if (noiseRead > 0) {
                 recNoiseReducer.process(noiseBuf, noiseRead, enableRnNoise = false)
                 applyGain(noiseBuf, noiseRead)
@@ -999,8 +1001,6 @@ class VoiceAssistantService : Service() {
             } else {
                 SILENCE_RMS_MIN
             }
-// 动态阈值 = 环境噪音 RMS * 倍数，限制在 [MIN, MAX] 区间
-// 注意：ambientRms 和循环 rms 现在都含 asrGain，同一基准，可直接比较
             val adaptiveSilenceThreshold = (ambientRms * NOISE_MULTIPLIER)
                 .coerceIn(SILENCE_RMS_MIN, SILENCE_RMS_MAX)
             android.util.Log.d("VoiceService",
@@ -1008,32 +1008,72 @@ class VoiceAssistantService : Service() {
                 sendRecognitionLog("📊 环境噪音RMS=${ambientRms.toInt()}, 阈值=${adaptiveSilenceThreshold.toInt()}")
             // =========================================
 
+            // ★★★ 方案3：生产者-消费者模式，录音线程和识别线程分离 ★★★
+            // 录音线程（生产者）：只做 record.read() + 入队，不做任何处理，避免阻塞导致丢帧
+            // 识别线程（消费者，当前协程）：从队列取音频 + 所有处理（降噪/增益/Vosk识别/UI更新/端点检测）
+            val audioQueue = java.util.concurrent.LinkedBlockingQueue<AudioFrame>(300)  // 约10秒缓冲
+            val recordingFinished = java.util.concurrent.atomic.AtomicBoolean(false)
+
+            // ★ 录音线程（生产者）：只做录音和入队，极轻量，不会阻塞
+            val recordingJob = scope.launch(Dispatchers.IO) {
+                try {
+                    val recordBuf = ShortArray(512)
+                    while (!shouldStopRecording.get()) {
+                        val n = record.read(recordBuf, 0, recordBuf.size, AudioRecord.READ_BLOCKING)
+                        if (n <= 0) {
+                            Thread.sleep(10)
+                            continue
+                        }
+                        // 复制一份数据（recordBuf 会被复用）
+                        val dataCopy = ShortArray(n)
+                        System.arraycopy(recordBuf, 0, dataCopy, 0, n)
+                        // 用 offer() + 100ms 超时，避免队列满时永久阻塞（理论死锁风险）
+                        // 队列容量300帧（约10秒），实际很难满；如果真满了，丢弃这一帧并打日志
+                        if (!audioQueue.offer(AudioFrame(dataCopy, n), 100, java.util.concurrent.TimeUnit.MILLISECONDS)) {
+                            android.util.Log.w("VoiceService", "音频队列满，丢弃一帧（${n} samples）")
+                        }
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.w("VoiceService", "录音线程异常: ${e.message}")
+                } finally {
+                    recordingFinished.set(true)
+                    // 放入结束帧，唤醒识别线程
+                    audioQueue.offer(AudioFrame(ShortArray(0), 0))
+                }
+            }
+
+            // ★ 识别循环（消费者，当前协程）：做所有处理
             val shortBuf = ShortArray(512)
             val byteBuf = ByteArray(1024)
             val startMs = SystemClock.elapsedRealtime()
             var lastPartial = ""
-            var lastPartialUpdateMs = 0L  // 上次更新悬浮窗 subtitle 的时间（节流，避免每帧都切主线程）
-            var silenceDuration = 0L  // 连续静音时长（ms）
-            var hasSpeechStarted = false  // 用户是否已开口（开口前不累积静音，避免TTS刚说完就截断）
-            var speechFrameCount = 0  // 连续非静音帧数（连续3帧非静音才算开口，避免噪音波动误触发）
-
+            var lastPartialUpdateMs = 0L
+            var silenceDuration = 0L
+            var hasSpeechStarted = false
+            var speechFrameCount = 0
             var finalText = ""
-            // 音频数据缓冲区：保存应用增益后的 PCM 数据，用于保存 WAV 文件和百度识别
             val audioBuffer = java.io.ByteArrayOutputStream()
 
-            // ★ 纯离线模式：只用 Vosk 识别，不调用百度
-            // 百度在线识别走 startRecognitionOnline()（百度自己开麦），和离线完全分离
             try {
                 loop@ while (true) {
-                    val n = record.read(shortBuf, 0, shortBuf.size, AudioRecord.READ_BLOCKING)
-                    if (n <= 0) {
-                        Thread.sleep(10)
+                    // 从队列取音频帧（阻塞等待，最多等100ms，避免队列空时卡死）
+                    val frame = audioQueue.poll(100, java.util.concurrent.TimeUnit.MILLISECONDS)
+                    if (frame == null) {
+                        // 队列空，检查是否录音已结束
+                        if (recordingFinished.get() && audioQueue.isEmpty()) {
+                            break
+                        }
                         continue
                     }
+                    if (frame.length <= 0) {
+                        // 结束帧
+                        break
+                    }
+                    val n = frame.length
+                    // 把数据复制到 shortBuf（后续处理会原地修改）
+                    System.arraycopy(frame.data, 0, shortBuf, 0, n)
 
                     // 应用降噪处理（高通滤波 + RNNoise）
-                    // 注意：RNNoise 在 16kHz 音频上可能破坏人声特征，如识别率下降可改回 false
-                    // 唤醒词检测阶段也启用 RNNoise，降噪有助于噪音环境唤醒
                     recNoiseReducer.process(shortBuf, n, enableRnNoise = false)
 
                     // 保存原始音频用于诊断（不加增益）
@@ -1041,24 +1081,18 @@ class VoiceAssistantService : Service() {
                     shortsToBytes(shortBuf, n, baiduBytes)
                     audioBuffer.write(baiduBytes)
 
-                    // 给 Vosk 离线识别的音频：应用 asrGain（用户设置，当前默认 8.0x）
-                    // Vosk 离线识别需要更大的增益来提高信噪比
-                    // 注意：applyGain 会原地修改 shortBuf，所以必须在给百度发完音频之后才能调用
+                    // 给 Vosk 离线识别的音频：应用 asrGain
                     applyGain(shortBuf, n)
 
-                    // 计算 RMS 能量，判断是否静音（不依赖 Vosk 内置端点检测，太敏感）
+                    // 计算 RMS 能量，判断是否静音
                     val rms = SpeechRecognizer.calculateRms(shortBuf, n)
-                    // 更新静态变量，供设置页实时显示（帮助调整增益参数）
                     currentRms = rms.toInt()
-                    // 更新峰值（取最大值），设置页显示峰值，车机上看不到日志，峰值更有意义
                     if (rms.toInt() > peakRms) {
                         peakRms = rms.toInt()
                     }
-                    // 使用自适应阈值（基于环境噪音动态计算）
                     val isSilence = rms < adaptiveSilenceThreshold
 
-                    // 检测到连续3帧有效语音后，标记用户已开口，之后才开始静音计时
-                    // （连续3帧非静音才算开口，避免环境噪音波动（如路过大车）误触发）
+                    // 检测到连续3帧有效语音后，标记用户已开口
                     if (!hasSpeechStarted) {
                         if (!isSilence) {
                             speechFrameCount++
@@ -1069,7 +1103,7 @@ class VoiceAssistantService : Service() {
                                 sendRecognitionLog("🗣️ 检测到开口 (连续${speechFrameCount}帧, RMS=${rms.toInt()})")
                             }
                         } else {
-                            speechFrameCount = 0  // 静音，重置计数
+                            speechFrameCount = 0
                         }
                     }
 
@@ -1077,7 +1111,7 @@ class VoiceAssistantService : Service() {
                     shortsToBytes(shortBuf, n, byteBuf)
                     val partial = recognizer.feed(byteBuf, n * 2)
 
-                    // 更新 partial 显示（节流：每100ms最多更新一次，避免每帧都切主线程导致CPU占用过高）
+                    // 更新 partial 显示（节流：每100ms最多更新一次）
                     if (!partial.isNullOrEmpty() && partial != lastPartial) {
                         lastPartial = partial
                         lastPartialText = partial
@@ -1091,42 +1125,63 @@ class VoiceAssistantService : Service() {
                         }
                     }
 
-                    // 基于 RMS 的端点检测：用户开口后，连续静音超过阈值才认为说完了
+                    // 基于 RMS 的端点检测
                     val recordDuration = SystemClock.elapsedRealtime() - startMs
                     if (hasSpeechStarted && isSilence) {
-                        // 累加静音时长（这一帧的时长 = 样本数 / 采样率 * 1000ms）
                         silenceDuration += (n * 1000L / SpeechRecognizer.SAMPLE_RATE.toInt())
-                        // 只有连续静音超过阈值，且录音时间超过最短时间，才认为用户说完了
-                        // 动态静音判定：已识别到内容说明用户在说话，中间可能停顿，用3000ms多等一会儿；
-                        // 没识别到内容说明用户可能没说话，用2000ms快速结束
-                        // 注意：这是纯离线模式的主判据（基于 RMS 的端点检测）
-                        // 之前1500ms太短，说话中间的自然停顿（如"打开空调，调到24度"中间的逗号停顿）
-                        // 会被误判为说完了，导致录音只录前半段。加长到2000/3000ms更合理。
                         val dynamicSilenceMs = if (lastPartial.isNotEmpty()) 3000L else 2000L
                         if (silenceDuration >= dynamicSilenceMs && recordDuration >= MIN_RECORD_MS) {
                             android.util.Log.d("VoiceService",
                                 "连续静音${silenceDuration}ms，确认用户说完了，结束录音 (RMS=${rms.toInt()}, 阈值=${adaptiveSilenceThreshold.toInt()})")
                                 sendRecognitionLog("⏹️ 结束录音 (静音${silenceDuration}ms, RMS=${rms.toInt()})")
+                            shouldStopRecording.set(true)
                             break@loop
                         }
                     } else if (!isSilence) {
-                        // 有声音，重置静音计时
                         silenceDuration = 0
                     }
 
-                    // 超时保护：用户开口前用 WAIT_SPEECH_TIMEOUT_MS，开口后用 MAX_RECORD_MS
+                    // 超时保护
                     val timeoutLimit = if (hasSpeechStarted) MAX_RECORD_MS else WAIT_SPEECH_TIMEOUT_MS
                     if (recordDuration > timeoutLimit) {
                         android.util.Log.d("VoiceService",
                             "录音超时（${if (hasSpeechStarted) "已开口" else "未检测到语音"}，${recordDuration}ms）")
+                        shouldStopRecording.set(true)
                         break@loop
                     }
                 }
+
+                // 等待录音线程结束（最多等2秒，超时就 cancel，避免永久阻塞）
+                shouldStopRecording.set(true)
+                try {
+                    // 主动 stop AudioRecord，中断阻塞的 read() 调用
+                    try { record.stop() } catch (_: Exception) {}
+                    // Job.join() 是无参的，用 withTimeoutOrNull 实现带超时的等待
+                    withTimeoutOrNull(2000) { recordingJob.join() }
+                } catch (_: Exception) {}
+                if (recordingJob.isActive) {
+                    recordingJob.cancel()
+                }
+
+                // 处理队列里剩余的音频帧（如果有）
+                while (true) {
+                    val frame = audioQueue.poll() ?: break
+                    if (frame.length <= 0) break
+                    val n = frame.length
+                    System.arraycopy(frame.data, 0, shortBuf, 0, n)
+                    recNoiseReducer.process(shortBuf, n, enableRnNoise = false)
+                    val baiduBytes = ByteArray(n * 2)
+                    shortsToBytes(shortBuf, n, baiduBytes)
+                    audioBuffer.write(baiduBytes)
+                    applyGain(shortBuf, n)
+                    shortsToBytes(shortBuf, n, byteBuf)
+                    recognizer.feed(byteBuf, n * 2)
+                }
+
                 finalText = recognizer.finish()
                 android.util.Log.d("VoiceService", "Vosk 识别文本: '$finalText'")
 
-                // 保存本次录音为 WAV 文件（最近10条，方便回听判断录音质量）
-                // 保存的是原始音频（不加增益），方便诊断"是录音本身音量小，还是增益放大后的问题"
+                // 保存本次录音为 WAV 文件
                 try {
                     val saveLabel = finalText.ifEmpty { "未识别" }
                     AudioSaver.saveRecording(audioBuffer.toByteArray(), saveLabel)
@@ -1134,7 +1189,6 @@ class VoiceAssistantService : Service() {
                     android.util.Log.w("VoiceService", "保存录音失败: ${e.message}")
                 }
 
-                // ★ 纯离线模式：直接用 Vosk 识别结果
                 android.util.Log.d("VoiceService", "最终识别文本（Vosk离线）: '$finalText'")
             } finally {
                 try { record.stop() } catch (_: Exception) {}
@@ -1283,7 +1337,12 @@ class VoiceAssistantService : Service() {
             "牛韦存" to "牛圩村",
             // 其他常见同音字纠正
             "娅" to "亚",
-            "米娅" to "米亚"
+            "米娅" to "米亚",
+            // 空调控制："调"常被识别成"条"（发音相同 tiáo）
+            "空调条到" to "空调调到",
+            "空调条的" to "空调调到",  // "到"被识别成"的"的情况
+            "条到" to "调到",
+            "条至" to "调至"
             // 可以在这里继续添加其他同音字纠正，例如：
             // "七里香" to "七里香",  // 如果识别成其他同音字
             // "万达广场" to "万达广场",
