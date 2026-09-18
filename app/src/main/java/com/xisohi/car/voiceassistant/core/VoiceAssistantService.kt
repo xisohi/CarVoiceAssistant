@@ -1133,7 +1133,7 @@ class VoiceAssistantService : Service() {
                     val recordDuration = SystemClock.elapsedRealtime() - startMs
                     if (hasSpeechStarted && isSilence) {
                         silenceDuration += (n * 1000L / SpeechRecognizer.SAMPLE_RATE.toInt())
-                        val dynamicSilenceMs = if (lastPartial.isNotEmpty()) 1500L else 1000L
+                        val dynamicSilenceMs = if (lastPartial.isNotEmpty()) 3000L else 2000L
                         if (silenceDuration >= dynamicSilenceMs && recordDuration >= MIN_RECORD_MS) {
                             android.util.Log.d("VoiceService",
                                 "连续静音${silenceDuration}ms，确认用户说完了，结束录音 (RMS=${rms.toInt()}, 阈值=${adaptiveSilenceThreshold.toInt()})")
