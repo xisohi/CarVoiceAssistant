@@ -44,6 +44,10 @@ class NavigationSkill(private val context: Context) {
         return when (intent.action) {
             "nav.home" -> navigateHome()
             "nav.company" -> navigateCompany()
+            "nav.nearby" -> {
+                val keyword = intent.params["keyword"] ?: ""
+                navigateNearby(keyword)
+            }
             else -> {
                 val dest = intent.params["dest"] ?: ""
                 navigate(dest)
@@ -94,6 +98,40 @@ class NavigationSkill(private val context: Context) {
                 return ExecutionResult(true, message, needsMicPause = needPause)
             }
         }
+        return ExecutionResult(false, "未找到可用的导航应用")
+    }
+
+    /**
+     * 附近搜索（搜索当前位置附近的地点）
+     *
+     * @param keyword 搜索关键词
+     * @return ExecutionResult（handled=true 表示成功拉起）
+     */
+    fun navigateNearby(keyword: String): ExecutionResult {
+        if (keyword.isBlank()) {
+            return ExecutionResult(false, "请告诉我要搜索什么")
+        }
+
+        // 按优先级依次尝试各个 Launcher
+        for (launcher in launchers) {
+            if (launcher.navigateNearby(context, keyword)) {
+                val message = when (launcher) {
+                    is AmapAutoLauncher -> "正在为您搜索附近的${keyword}"
+                    is AmapMobileLauncher -> "正在用高德地图搜索附近的${keyword}"
+                    is BaiduAutoLauncher -> "正在用百度地图汽车版搜索附近的${keyword}"
+                    is BaiduMobileLauncher -> "正在用百度地图搜索附近的${keyword}"
+                    is TencentMobileLauncher -> "正在用腾讯地图搜索附近的${keyword}"
+                    is TencentAutoLauncher -> "已打开腾讯地图车机版，请手动搜索附近的${keyword}"
+                    is GeoLauncher -> "正在搜索附近的${keyword}，请选择"
+                    else -> "正在搜索附近的${keyword}"
+                }
+                // geo 是系统弹窗，不需要让麦；其他导航根据 Launcher 的 needsMicPause 决定
+                val needPause = launcher !is GeoLauncher && launcher.needsMicPause
+                return ExecutionResult(true, message, needsMicPause = needPause)
+            }
+        }
+
+        // 全部失败
         return ExecutionResult(false, "未找到可用的导航应用")
     }
 

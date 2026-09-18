@@ -55,6 +55,32 @@ class AmapAutoLauncher : NavLauncher() {
     }
 
     /**
+     * 附近搜索（高德车机版专门接口）
+     * URI: androidauto://arroundpoi?keywords=XXX
+     */
+    override fun navigateNearby(context: Context, keyword: String): Boolean {
+        if (!isAvailable(context)) return false
+        val encoded = java.net.URLEncoder.encode(keyword, "UTF-8")
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            data = Uri.parse(
+                "androidauto://arroundpoi?" +
+                        "sourceApplication=${context.packageName}" +
+                        "&keywords=$encoded" +
+                        "&style=2"
+            )
+            setPackage(packageName)
+            addCategory(android.content.Intent.CATEGORY_DEFAULT)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        if (tryStartActivity(context, intent)) {
+            android.util.Log.d("AmapAutoLauncher", "附近搜索成功: $keyword")
+            return true
+        }
+        android.util.Log.w("AmapAutoLauncher", "附近搜索失败，fallback 到普通搜索")
+        return super.navigateNearby(context, keyword)
+    }
+
+    /**
      * 重写 navigateByKeyword：前两种方式都失败时，直接启动高德主界面
      */
     override fun navigateByKeyword(context: Context, keyword: String): Boolean {

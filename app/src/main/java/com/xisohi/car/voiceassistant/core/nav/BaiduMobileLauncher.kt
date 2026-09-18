@@ -52,6 +52,31 @@ class BaiduMobileLauncher : NavLauncher() {
     }
 
     /**
+     * 附近搜索（百度地图专门接口）
+     * URI: baidumap://map/place/nearby?query=XXX
+     */
+    override fun navigateNearby(context: Context, keyword: String): Boolean {
+        if (!isAvailable(context)) return false
+        val encoded = java.net.URLEncoder.encode(keyword, "UTF-8")
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            data = Uri.parse(
+                "baidumap://map/place/nearby?" +
+                        "query=$encoded" +
+                        "&src=voiceassistant"
+            )
+            setPackage(packageName)
+            addCategory(android.content.Intent.CATEGORY_DEFAULT)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        if (tryStartActivity(context, intent)) {
+            android.util.Log.d("BaiduMobileLauncher", "附近搜索成功: $keyword")
+            return true
+        }
+        android.util.Log.w("BaiduMobileLauncher", "附近搜索失败，fallback 到普通搜索")
+        return super.navigateNearby(context, keyword)
+    }
+
+    /**
      * 重写 navigateByKeyword：前几种方式都失败时，直接启动百度地图主界面
      */
     override fun navigateByKeyword(context: Context, keyword: String): Boolean {

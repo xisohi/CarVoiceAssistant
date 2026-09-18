@@ -79,6 +79,12 @@ abstract class NavLauncher {
     open fun navigateCompany(context: Context): Boolean = navigateByKeyword(context, "公司")
 
     /**
+     * 附近搜索（搜索当前位置附近的地点）
+     * 默认用普通关键字搜索（兜底），支持附近搜索接口的子类重写。
+     */
+    open fun navigateNearby(context: Context, keyword: String): Boolean = navigateByKeyword(context, keyword)
+
+    /**
      * 尝试启动 Activity，成功返回 true
      */
     protected fun tryStartActivity(context: Context, intent: Intent): Boolean {

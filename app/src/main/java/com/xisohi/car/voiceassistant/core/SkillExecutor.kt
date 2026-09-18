@@ -76,7 +76,8 @@ class SkillExecutor(private val context: Context) {
             "media.play", "media.pause", "media.next", "media.prev" ->
                 mediaSkill.execute(intent)
             // 导航（转发给 NavigationSkill）
-            "nav.to" -> navigationSkill.execute(intent)
+            "nav.to", "nav.home", "nav.company", "nav.nearby" ->
+                navigationSkill.execute(intent)
             // 车控（转发给 CarControlSkill）
             "climate.on", "climate.off", "climate.temp", "window.open", "window.close" ->
                 carControlSkill.execute(intent)

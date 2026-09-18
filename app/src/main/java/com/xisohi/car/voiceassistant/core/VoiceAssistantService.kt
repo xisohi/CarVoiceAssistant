@@ -1588,10 +1588,14 @@ class VoiceAssistantService : Service() {
 
         // ★ 导航意图特殊处理：先 TTS 播报，播报完再拉起导航
         // 原因：如果先拉起导航再 TTS 播报，导航的语音和我们的 TTS 会同时响，声音重叠
-        if (intent.action == "nav.to" || intent.action == "nav.home" || intent.action == "nav.company") {
+        if (intent.action == "nav.to" || intent.action == "nav.home" || intent.action == "nav.company" || intent.action == "nav.nearby") {
             val spoken = when (intent.action) {
                 "nav.home" -> "正在为您导航回家"
                 "nav.company" -> "正在为您导航去公司"
+                "nav.nearby" -> {
+                    val keyword = intent.params["keyword"] ?: ""
+                    if (keyword.isNotBlank()) "正在为您搜索附近的$keyword" else "正在为您搜索附近"
+                }
                 else -> {
                     val dest = intent.params["dest"] ?: ""
                     if (dest.isNotBlank()) "正在为您导航到$dest" else "正在为您导航"
