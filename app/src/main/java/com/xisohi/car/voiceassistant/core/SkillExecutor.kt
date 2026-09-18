@@ -70,7 +70,7 @@ class SkillExecutor(private val context: Context) {
     fun execute(intent: VoiceIntent): ExecutionResult = try {
         when (intent.action) {
             // 音量（转发给 VolumeSkill）
-            "volume.set", "volume.up", "volume.down", "volume.mute" ->
+            "volume.set", "volume.up", "volume.down", "volume.mute", "volume.unmute" ->
                 volumeSkill.execute(intent)
             // 媒体（转发给 MediaSkill）
             "media.play", "media.pause", "media.next", "media.prev" ->

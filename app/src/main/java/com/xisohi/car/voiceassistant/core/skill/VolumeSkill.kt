@@ -20,6 +20,7 @@ class VolumeSkill(private val context: Context) {
         "volume.up" -> adjustVolume(true)
         "volume.down" -> adjustVolume(false)
         "volume.mute" -> setMute(true)
+        "volume.unmute" -> setMute(false)
         else -> ExecutionResult(false, "不支持的音量指令")
     }
 
@@ -44,9 +45,9 @@ class VolumeSkill(private val context: Context) {
     private fun setMute(on: Boolean): ExecutionResult {
         audioManager.adjustStreamVolume(
             AudioManager.STREAM_MUSIC,
-            AudioManager.ADJUST_MUTE,
+            if (on) AudioManager.ADJUST_MUTE else AudioManager.ADJUST_UNMUTE,
             0
         )
-        return ExecutionResult(true, "已静音")
+        return ExecutionResult(true, if (on) "已静音" else "已取消静音")
     }
 }
