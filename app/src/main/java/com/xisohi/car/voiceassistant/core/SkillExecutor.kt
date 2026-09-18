@@ -21,6 +21,7 @@ import com.xisohi.car.voiceassistant.core.skill.CarControlSkill
 import com.xisohi.car.voiceassistant.core.skill.MediaSkill
 import com.xisohi.car.voiceassistant.core.skill.NavigationSkill
 import com.xisohi.car.voiceassistant.core.skill.TimeHelpSkill
+import com.xisohi.car.voiceassistant.core.skill.PhoneSkill
 import com.xisohi.car.voiceassistant.core.skill.VolumeSkill
 import com.xisohi.car.voiceassistant.core.skill.WeatherSkill
 import java.net.URLEncoder
@@ -51,6 +52,7 @@ class SkillExecutor(private val context: Context) {
 
     // ===== 拆分后的 Skill 实例 =====
     private val volumeSkill = VolumeSkill(context)
+    private val phoneSkill = PhoneSkill(context)
     private val timeHelpSkill = TimeHelpSkill()
     private val weatherSkill = WeatherSkill(context)
     private val navigationSkill = NavigationSkill(context)
@@ -72,6 +74,9 @@ class SkillExecutor(private val context: Context) {
             // 音量（转发给 VolumeSkill）
             "volume.set", "volume.up", "volume.down", "volume.mute", "volume.unmute" ->
                 volumeSkill.execute(intent)
+            // 电话（转发给 PhoneSkill）
+            "phone.call" ->
+                phoneSkill.execute(intent)
             // 媒体（转发给 MediaSkill）
             "media.play", "media.pause", "media.next", "media.prev" ->
                 mediaSkill.execute(intent)

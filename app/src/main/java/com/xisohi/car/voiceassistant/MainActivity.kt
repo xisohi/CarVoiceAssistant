@@ -76,6 +76,12 @@ class MainActivity : AppCompatActivity() {
             if (result[Manifest.permission.RECORD_AUDIO] != true) {
                 toast(getString(R.string.toast_no_microphone_permission))
             }
+            if (result[Manifest.permission.CALL_PHONE] != true) {
+                toast("未授予拨打电话权限，打电话功能将只能打开拨号界面")
+            }
+            if (result[Manifest.permission.READ_CONTACTS] != true) {
+                toast("未授予联系人权限，将无法通过姓名拨打电话")
+            }
         }
 
     // 文件选择器：用于从任意位置（U盘、车机内部存储等）选择百度配置文件
@@ -1198,7 +1204,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun ensurePermissions() {
-        val needed = mutableListOf(Manifest.permission.RECORD_AUDIO)
+        val needed = mutableListOf(
+            Manifest.permission.RECORD_AUDIO,
+            Manifest.permission.CALL_PHONE,
+            Manifest.permission.READ_CONTACTS,
+            Manifest.permission.READ_PHONE_STATE
+        )
         if (Build.VERSION.SDK_INT >= 33) needed.add(Manifest.permission.POST_NOTIFICATIONS)
         if (Build.VERSION.SDK_INT >= 31) needed.add(Manifest.permission.BLUETOOTH_CONNECT)
 

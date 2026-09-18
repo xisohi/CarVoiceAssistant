@@ -29,6 +29,8 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import android.media.ToneGenerator
 import android.media.AudioManager
+import android.telephony.PhoneStateListener
+import android.telephony.TelephonyManager
 
 class VoiceAssistantService : Service() {
 
@@ -208,6 +210,30 @@ class VoiceAssistantService : Service() {
     // 用 AtomicBoolean 保证线程安全的 CAS 操作
     private val networkCheckInProgress = java.util.concurrent.atomic.AtomicBoolean(false)
     private var networkCallback: android.net.ConnectivityManager.NetworkCallback? = null
+
+    // 电话状态监听：通话中暂停唤醒监听（避免麦克风冲突和误唤醒），通话结束后恢复
+    private var telephonyManager: TelephonyManager? = null
+    private val phoneStateListener = object : PhoneStateListener() {
+        override fun onCallStateChanged(state: Int, phoneNumber: String?) {
+            when (state) {
+                TelephonyManager.CALL_STATE_RINGING,
+                TelephonyManager.CALL_STATE_OFFHOOK -> {
+                    // 电话响铃或通话中，暂停唤醒监听（释放麦克风）
+                    if (isWakeListening) {
+                        android.util.Log.d("VoiceService", "电话中（state=$state），暂停唤醒监听")
+                        stopWakeListening()
+                    }
+                }
+                TelephonyManager.CALL_STATE_IDLE -> {
+                    // 电话挂断/空闲，恢复唤醒监听
+                    if (!isWakeListening) {
+                        android.util.Log.d("VoiceService", "电话结束，恢复唤醒监听")
+                        startWakeListening()
+                    }
+                }
+            }
+        }
+    }
     // 网络变化防抖：5秒内的连续回调只处理一次（避免WiFi/4G切换时频繁清空缓存）
     private var lastNetworkChangeTime = 0L
     private val NETWORK_CHANGE_DEBOUNCE_MS = 5000L
@@ -267,6 +293,16 @@ class VoiceAssistantService : Service() {
         } catch (e: Exception) {
             android.util.Log.w("VoiceService", "注册网络变化监听失败: ${e.message}")
         }
+
+        // 注册电话状态监听：通话中暂停唤醒监听，避免麦克风冲突和误唤醒
+        try {
+            telephonyManager = getSystemService(TELEPHONY_SERVICE) as TelephonyManager
+            telephonyManager?.listen(phoneStateListener, PhoneStateListener.LISTEN_CALL_STATE)
+            android.util.Log.i("VoiceService", "电话状态监听已注册")
+        } catch (e: Exception) {
+            android.util.Log.w("VoiceService", "注册电话状态监听失败: ${e.message}")
+        }
+
         currentState = State.IDLE
         createChannel()
 
@@ -1680,6 +1716,13 @@ class VoiceAssistantService : Service() {
         wakeWordEngine.close()
         // 释放缓存的 Vosk Model，避免一直占内存（小模型约120MB，大模型可能1.5GB）
         SpeechRecognizer.releaseCachedModel()
+        // 注销电话状态监听
+        try {
+            telephonyManager?.listen(phoneStateListener, PhoneStateListener.LISTEN_NONE)
+            android.util.Log.d("VoiceService", "电话状态监听已注销")
+        } catch (e: Exception) {
+            android.util.Log.w("VoiceService", "注销电话状态监听失败: ${e.message}")
+        }
         // 注销网络变化监听
         try {
             networkCallback?.let {

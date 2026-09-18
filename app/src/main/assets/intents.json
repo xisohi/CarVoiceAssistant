@@ -106,6 +106,27 @@
       ]
     },
     {
+      "id": "phone.call",
+      "action": "phone.call",
+      "slots": ["name", "number"],
+      "grammar": [
+        "给张三打电话",
+        "打电话给张三",
+        "呼叫张三",
+        "拨打10086",
+        "拨打电话10086",
+        "打给张三"
+      ],
+      "patterns": [
+        {
+          "re": "(给|打电话给|呼叫|打给)\s*(?<name>[\\u4e00-\\u9fa5A-Za-z]{1,10})\s*(打电话)?"
+        },
+        {
+          "re": "(拨打|拨打电话|呼叫)\s*(?<number>1\\d{10}|\\d{3,4}-?\\d{7,8}|\\d{3,15})"
+        }
+      ]
+    },
+    {
       "id": "media.play",
       "action": "media.play",
       "slots": [],
