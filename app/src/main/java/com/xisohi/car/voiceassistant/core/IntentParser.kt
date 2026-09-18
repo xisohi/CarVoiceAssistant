@@ -38,7 +38,10 @@ class IntentParser(context: Context) {
     fun parse(text: String): VoiceIntent? {
         // 去掉所有空格：Vosk 识别结果可能在词之间加空格（如"播放 音乐"），
         // 而 intents.json 里的正则是无空格的（如"播放音乐"）
-        val trimmed = text.replace(" ", "").trim()
+        var trimmed = text.replace(" ", "").trim()
+        // 去掉末尾的标点符号：百度识别结果常带句号/问号（如"播放音乐。"），
+        // 而完全匹配的正则（^...$）会因为末尾标点匹配失败
+        trimmed = trimmed.replace(Regex("[。？！，.?!,；;：:、…]+$"), "")
         if (trimmed.isEmpty()) return null
         for (rule in rules) {
             for (pattern in rule.patterns) {

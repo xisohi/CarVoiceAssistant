@@ -102,35 +102,23 @@ class MediaSkill(private val context: Context) {
 
     /**
      * 确保播放器已打开并播放。
-     * 如果播放器没打开，先打开再延迟发送播放键；如果已打开，直接发送播放键。
+     * 不管播放器之前是否在前台，都先启动播放器（带到前台），然后延迟发送播放键。
+     * 原因：getActivePlayer() 只判断"是否已安装"，不判断"是否在前台运行"。
+     * 如果只发播放键不启动播放器，播放器可能在后台，用户看不到界面。
      * 由"播放音乐"（media.play）调用。
      */
     private fun ensurePlayerAndPlay(): ExecutionResult {
         val playerPkg = musicPlayerManager.getActivePlayer()
-        return if (playerPkg == null) {
-            // 没有活跃播放器，先打开播放器
-            android.util.Log.d("MediaSkill", "播放音乐：播放器未打开，先启动播放器")
-            musicPlayerManager.launchMusicPlayer()
-            // launchMusicPlayer() 内部会设置活跃播放器，这里再获取一次
-            val openedPkg = musicPlayerManager.getActivePlayer()
-            if (openedPkg != null) {
-                // 打开后延迟发送播放键（等播放器初始化完成）
-                scheduleAutoPlay(openedPkg)
-                ExecutionResult(true, "正在打开音乐播放器")
-            } else {
-                ExecutionResult(false, "未安装任何音乐播放器")
-            }
-        } else {
-            // 有活跃播放器，直接发送播放键
-            android.util.Log.d("MediaSkill", "播放音乐：播放器已打开，直接发送播放键")
-            musicPlayerManager.setActivePlayer(playerPkg)
-            mediaKeyDispatcher.dispatch(
-                android.view.KeyEvent.KEYCODE_MEDIA_PLAY,
-                playerPkg,
-                musicPlayerManager.getAllPlayerPackages()
-            )
-            ExecutionResult(true, "继续播放")
+        if (playerPkg == null) {
+            return ExecutionResult(false, "未安装任何音乐播放器")
         }
+        // 先启动播放器（带到前台）
+        android.util.Log.d("MediaSkill", "播放音乐：启动播放器 $playerPkg 并延迟播放")
+        musicPlayerManager.launchPlayer(playerPkg)
+        musicPlayerManager.setActivePlayer(playerPkg)
+        // 延迟发送播放键（等播放器初始化完成）
+        scheduleAutoPlay(playerPkg)
+        return ExecutionResult(true, "正在打开音乐播放器")
     }
 
     /**
