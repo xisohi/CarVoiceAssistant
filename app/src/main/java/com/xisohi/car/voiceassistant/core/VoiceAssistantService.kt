@@ -1564,6 +1564,8 @@ class VoiceAssistantService : Service() {
         FloatViewService.updateSubtitle("")
         mainHandler.removeCallbacks(clearSubtitleRunnable)
         // 取消外部导航暂停定时器
+        externalNavPauseRunnable?.let { mainHandler.removeCallbacks(it) }
+        externalNavPauseRunnable = null
         super.onDestroy()
     }
 

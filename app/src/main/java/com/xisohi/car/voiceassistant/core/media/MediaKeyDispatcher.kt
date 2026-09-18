@@ -9,10 +9,9 @@ import android.media.AudioManager
  *
  * 职责：发送媒体按键（播放/暂停/下一首/上一首）
  *
- * 三层策略（按优先级）：
- * 1. [通用] AudioManager.dispatchMediaKeyEvent（系统级媒体按键，最可靠）
- * 2. [通用] 发送给目标播放器（指定包名的广播）
- * 3. [通用] 逐个指定常见播放器包名发送广播（兜底）
+ * 两层策略（按优先级）：
+ * 1. [通用] AudioManager.dispatchMediaKeyEvent（系统级媒体按键，发给当前活跃 MediaSession）
+ * 2. [兜底] 逐个指定常见播放器包名发送广播（跳过目标，避免和第1层双重触发）
  *
  * 依赖：Context + AudioManager
  */
@@ -45,26 +44,9 @@ class MediaKeyDispatcher(private val context: Context) {
             android.util.Log.w("MediaKeyDispatcher", "dispatchMediaKeyEvent 失败: ${e.message}")
         }
 
-        // 2. 发送给目标播放器（指定包名的广播）
-        targetPackage?.let { pkg ->
-            try {
-                val downIntent = Intent(Intent.ACTION_MEDIA_BUTTON)
-                    .setPackage(pkg)
-                    .putExtra(Intent.EXTRA_KEY_EVENT, down)
-                val upIntent = Intent(Intent.ACTION_MEDIA_BUTTON)
-                    .setPackage(pkg)
-                    .putExtra(Intent.EXTRA_KEY_EVENT, up)
-                context.sendBroadcast(downIntent)
-                context.sendBroadcast(upIntent)
-                android.util.Log.d("MediaKeyDispatcher", "已发送媒体按键广播给: $pkg")
-            } catch (e: Exception) {
-                android.util.Log.w("MediaKeyDispatcher", "发送广播给 $pkg 失败: ${e.message}")
-            }
-        }
-
-        // 3. 兜底：逐个指定所有播放器包名发送广播（确保至少有一个响应）
+        // 2. 兜底：逐个指定所有播放器包名发送广播（跳过目标，避免和系统级按键双重触发）
         for (pkg in allPlayerPackages) {
-            if (pkg == targetPackage) continue // 已经发过了，跳过
+            if (pkg == targetPackage) continue // 目标已通过系统级按键收到，跳过
             try {
                 val downIntent = Intent(Intent.ACTION_MEDIA_BUTTON)
                     .setPackage(pkg)

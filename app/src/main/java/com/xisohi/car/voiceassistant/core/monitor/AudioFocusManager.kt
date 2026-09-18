@@ -74,6 +74,15 @@ class AudioFocusManager(private val context: Context) {
     fun isMuted(): Boolean = isMediaVolumeMuted
 
     /**
+     * 重置状态（强制清空保存的原始音量）。
+     * 在异常恢复或服务销毁时调用，避免下次 muteMediaVolume() 不更新音量。
+     */
+    fun reset() {
+        originalMediaVolume = -1
+        isMediaVolumeMuted = false
+    }
+
+    /**
      * 获取当前媒体音量。
      */
     fun getCurrentVolume(): Int {

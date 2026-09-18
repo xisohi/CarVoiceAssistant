@@ -16,7 +16,7 @@ import android.net.Uri
  */
 class TencentAutoLauncher : NavLauncher() {
 
-    override val needsMicPause = false  // 测试阶段默认需要让麦true，确认不支持语音选择后改回 false
+    override val needsMicPause = false  // 腾讯车机版只启动主界面，不会自己开麦
 
     override val packageName = "com.tencent.wecarnavi"
 
