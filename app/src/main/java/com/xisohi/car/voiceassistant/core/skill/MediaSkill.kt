@@ -87,6 +87,12 @@ class MediaSkill(private val context: Context) {
         musicPlayerManager.isMusicPlayer(packageName)
 
     /**
+     * 获取当前活跃的音乐播放器（按优先级选择第一个已安装的）。
+     * 由 AppLaunchSkill 在"打开音乐"时调用，自动选择播放器。
+     */
+    fun getActivePlayer(): String? = musicPlayerManager.getActivePlayer()
+
+    /**
      * 只设置当前活跃播放器，不自动播放。
      * 由 AppLaunchSkill 在"打开音乐"（app.open）时调用。
      * 用户说"打开音乐"→ 只打开播放器，不自动播放。

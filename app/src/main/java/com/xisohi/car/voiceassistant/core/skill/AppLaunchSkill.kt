@@ -29,20 +29,30 @@ class AppLaunchSkill(
         "百度地图汽车版" to "com.baidu.naviauto",
         "高德地图" to "com.autonavi.amapauto",
         "高德" to "com.autonavi.amapauto",
-        // 音乐
-        "音乐" to "fun.upup.musicfree",
+        // 音乐（车机版优先）
         "MusicFree" to "fun.upup.musicfree",
-        "网易云音乐" to "com.netease.cloudmusic",
-        "网易云" to "com.netease.cloudmusic",
-        "QQ音乐" to "com.tencent.qqmusic",
-        "酷狗音乐" to "com.kugou.android",
-        "酷狗" to "com.kugou.android",
+        "网易云音乐" to "com.netease.cloudmusic.iot",
+        "网易云" to "com.netease.cloudmusic.iot",
+        "网易云车机版" to "com.netease.cloudmusic.iot",
+        "QQ音乐" to "com.tencent.qqmusiccar",
+        "QQ音乐车机版" to "com.tencent.qqmusiccar",
+        "酷狗音乐" to "com.kugou.android.auto",
+        "酷狗" to "com.kugou.android.auto",
+        "酷狗车机版" to "com.kugou.android.auto",
+        "酷我音乐" to "cn.kuwo.kwmusiccar",
+        "酷我" to "cn.kuwo.kwmusiccar",
+        "酷我车机版" to "cn.kuwo.kwmusiccar",
+        "汽水音乐" to "com.luna.music",
+        "汽水" to "com.luna.music",
         // 设置
         "设置" to "com.android.settings",
         "系统设置" to "com.android.settings",
         // 浏览器
         "浏览器" to "com.android.browser",
     )
+
+    /** 通用音乐关键词（不指定具体播放器，自动选择优先级最高的已安装播放器） */
+    private val genericMusicNames = setOf("音乐", "播放器", "音乐播放器", "听歌", "放歌")
 
     /** 设置项到 Settings Action 的映射 */
     private val settingsActionMap = mapOf(
@@ -66,6 +76,15 @@ class AppLaunchSkill(
     private fun openApp(appName: String): ExecutionResult {
         val name = appName.trim()
         if (name.isEmpty()) return ExecutionResult(false, "没听清要打开什么")
+
+        // 0. 通用音乐关键词：自动选择优先级最高的已安装播放器
+        if (name in genericMusicNames) {
+            val playerPkg = mediaSkill.getActivePlayer()
+            if (playerPkg != null) {
+                return launchByPackage(playerPkg, "音乐")
+            }
+            return ExecutionResult(false, "未安装任何音乐播放器")
+        }
 
         // 1. 精确匹配已知应用
         val packageName = appMap[name]
