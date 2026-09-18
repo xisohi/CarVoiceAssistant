@@ -17,11 +17,17 @@ class MusicPlayerManager(private val context: Context) {
 
     // 音乐播放器优先级列表（从高到低）
     private val musicPlayerPackages = listOf(
-        "fun.upup.musicfree",        // MusicFree（支持自动搜索播放）
-        "com.netease.cloudmusic",    // 网易云音乐
-        "com.tencent.qqmusic",       // QQ音乐
-        "com.kugou.android",         // 酷狗音乐
-        "cn.kuwo.player"             // 酷我音乐
+        "fun.upup.musicfree",          // MusicFree（开源，支持自动搜索播放）
+        "com.netease.cloudmusic.iot",  // 网易云音乐车机版（IoT）
+        "com.tencent.qqmusiccar",      // QQ音乐车机版
+        "com.kugou.android.auto",      // 酷狗音乐车机版
+        "cn.kuwo.kwmusiccar",          // 酷我音乐车机版
+        "cn.kuwo.autolite",            // 酷我音乐车简版
+        "com.netease.cloudmusic",      // 网易云音乐手机版
+        "com.luna.music",              // 汽水音乐
+        "com.tencent.qqmusic",         // QQ音乐
+        "com.kugou.android",           // 酷狗音乐
+        "cn.kuwo.player"               // 酷我音乐
     )
 
     // 当前活跃的音乐播放器包名（null=未设置，按优先级选择）
