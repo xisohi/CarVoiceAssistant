@@ -29,6 +29,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import android.media.ToneGenerator
 import android.media.AudioManager
+import com.xisohi.car.voiceassistant.core.monitor.AudioFocusManager
 import com.xisohi.car.voiceassistant.core.monitor.NetworkMonitor
 import com.xisohi.car.voiceassistant.core.monitor.PhoneStateMonitor
 
@@ -167,11 +168,8 @@ class VoiceAssistantService : Service() {
     /** 标记是否正在播放唤醒提示音（TTS说"在呢，您请说"），用于 onSpeakDone 中区分 */
     private var isWakePromptSpeaking = false
 
-    // ---------- 音量控制（唤醒时自动降低媒体音量，减少背景噪音，提高识别率） ----------
-    /** 保存唤醒前的原始媒体音量，识别完成后恢复 */
-    private var originalMediaVolume: Int = -1
-    /** 标记是否已经降低了媒体音量 */
-    private var isMediaVolumeMuted = false
+    // ---------- 音量控制（已移到 AudioFocusManager） ----------
+    private lateinit var audioFocusManager: AudioFocusManager
     // 没听懂后是否需要重新监听（true=TTS说完后直接开始录音，不需要唤醒词）
     private var isRetryListening = false
 
@@ -233,6 +231,8 @@ class VoiceAssistantService : Service() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        // 初始化音频焦点管理器
+        audioFocusManager = AudioFocusManager(this)
         // 初始化网络监控器
         networkMonitor = NetworkMonitor(this, scope)
         // 注册网络变化监听：开/关热点、进/出隧道时触发，清空网络缓存
@@ -627,44 +627,9 @@ class VoiceAssistantService : Service() {
         }
     }
 
-    // ---------- 音量控制 ----------
-    /**
-     * 降低媒体音量到 0（音乐、导航等），专注听用户说话，提高识别率
-     * 第一次调用时保存原始音量，后续调用不会重复保存
-     */
-    private fun muteMediaVolume() {
-        try {
-            val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-            if (originalMediaVolume < 0) {
-                originalMediaVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
-            }
-            if (!isMediaVolumeMuted) {
-                audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, 0, 0)
-                isMediaVolumeMuted = true
-                android.util.Log.d("VoiceService", "已降低媒体音量到 0（原始音量: $originalMediaVolume），专注听用户说话")
-            }
-        } catch (e: Exception) {
-            android.util.Log.w("VoiceService", "降低媒体音量失败: ${e.message}")
-        }
-    }
-
-    /**
-     * 恢复媒体音量到唤醒前的原始值
-     * 识别完成后或 TTS 播报前调用
-     */
-    private fun restoreMediaVolume() {
-        try {
-            if (isMediaVolumeMuted && originalMediaVolume >= 0) {
-                val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-                audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, originalMediaVolume, 0)
-                isMediaVolumeMuted = false
-                android.util.Log.d("VoiceService", "已恢复媒体音量到: $originalMediaVolume")
-                originalMediaVolume = -1
-            }
-        } catch (e: Exception) {
-            android.util.Log.w("VoiceService", "恢复媒体音量失败: ${e.message}")
-        }
-    }
+    // ---------- 音量控制（已移到 AudioFocusManager） ----------
+    private fun muteMediaVolume() = audioFocusManager.muteMediaVolume()
+    private fun restoreMediaVolume() = audioFocusManager.restoreMediaVolume()
 
     // ---------- 唤醒触发 ----------
     private fun onWakeWord() {
