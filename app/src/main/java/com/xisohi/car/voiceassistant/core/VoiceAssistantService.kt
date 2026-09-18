@@ -29,8 +29,8 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import android.media.ToneGenerator
 import android.media.AudioManager
-import android.telephony.PhoneStateListener
-import android.telephony.TelephonyManager
+import com.xisohi.car.voiceassistant.core.monitor.NetworkMonitor
+import com.xisohi.car.voiceassistant.core.monitor.PhoneStateMonitor
 
 class VoiceAssistantService : Service() {
 
@@ -198,46 +198,25 @@ class VoiceAssistantService : Service() {
     private var onlineTimeoutRunnable: Runnable? = null
     // 标记在线识别是否已经收到结果（避免超时和回调同时触发）
     private var onlineResultReceived = false
-    // 网络连通性缓存（首次唤醒检测，后续唤醒直接用缓存；网络变化时清空缓存，下次唤醒重新检测）
-    // true=能访问外网，false=不能访问外网（WiFi已连接但无外网）
-    @Volatile
-    private var networkReachable = true
-    // 网络连通性缓存是否有效（true=直接用缓存，false=需要重新检测）
-    @Volatile
-    private var networkCacheValid = false
-    // 网络变化回调（开/关热点、进/出隧道时触发，清空缓存）
-    // ★ 标记是否正在异步检测网络中（避免重复启动检测线程）
-    // 用 AtomicBoolean 保证线程安全的 CAS 操作
-    private val networkCheckInProgress = java.util.concurrent.atomic.AtomicBoolean(false)
-    private var networkCallback: android.net.ConnectivityManager.NetworkCallback? = null
+    // 网络监控器（网络状态监听、连通性检测、缓存管理）
+    private lateinit var networkMonitor: NetworkMonitor
 
-    // 电话状态监听：通话中暂停唤醒监听（避免麦克风冲突和误唤醒），通话结束后恢复
-    private var telephonyManager: TelephonyManager? = null
-    private val phoneStateListener = object : PhoneStateListener() {
-        override fun onCallStateChanged(state: Int, phoneNumber: String?) {
-            when (state) {
-                TelephonyManager.CALL_STATE_RINGING,
-                TelephonyManager.CALL_STATE_OFFHOOK -> {
-                    // 电话响铃或通话中，暂停唤醒监听（释放麦克风）
-                    if (isWakeListening) {
-                        android.util.Log.d("VoiceService", "电话中（state=$state），暂停唤醒监听")
-                        stopWakeListening()
-                    }
-                }
-                TelephonyManager.CALL_STATE_IDLE -> {
-                    // 电话挂断/空闲，恢复唤醒监听
-                    if (!isWakeListening) {
-                        android.util.Log.d("VoiceService", "电话结束，恢复唤醒监听")
-                        startWakeListening()
-                    }
-                }
+    // 电话状态监控：通话中暂停唤醒监听，通话结束后恢复
+    private val phoneStateMonitor = PhoneStateMonitor(this, object : PhoneStateMonitor.Callback {
+        override fun onCallStarted() {
+            if (isWakeListening) {
+                android.util.Log.d("VoiceService", "电话中，暂停唤醒监听")
+                stopWakeListening()
             }
         }
-    }
+        override fun onCallEnded() {
+            if (!isWakeListening) {
+                android.util.Log.d("VoiceService", "电话结束，恢复唤醒监听")
+                startWakeListening()
+            }
+        }
+    })
     // 网络变化防抖：5秒内的连续回调只处理一次（避免WiFi/4G切换时频繁清空缓存）
-    private var lastNetworkChangeTime = 0L
-    private val NETWORK_CHANGE_DEBOUNCE_MS = 5000L
-
     private lateinit var skillExecutor: SkillExecutor
     private lateinit var ttsEngine: TtsEngine
     private lateinit var placeMatcher: PlaceMatcher  // 地名模糊匹配器（导航同音字纠正）
@@ -254,54 +233,20 @@ class VoiceAssistantService : Service() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        // 初始化网络监控器
+        networkMonitor = NetworkMonitor(this, scope)
         // 注册网络变化监听：开/关热点、进/出隧道时触发，清空网络缓存
-        // 下次唤醒时重新检测网络连通性
-        try {
-            val cm = getSystemService(CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
-            // 用局部变量避免可变属性智能转换问题
-            val callback = object : android.net.ConnectivityManager.NetworkCallback() {
-                override fun onAvailable(network: android.net.Network) {
-                    // 防抖：5秒内的连续回调只处理一次（避免WiFi/4G切换时频繁检测）
-                    val now = System.currentTimeMillis()
-                    if (now - lastNetworkChangeTime < NETWORK_CHANGE_DEBOUNCE_MS) return
-                    lastNetworkChangeTime = now
-                    android.util.Log.d("VoiceService", "网络已连接，延迟1秒后检测（等网络完全就绪）")
-                    // ★ 延迟1秒再检测，避免网络刚连上还没就绪时误判为不通
-                    // 网络刚连上时，DHCP可能还没拿到IP、DNS还没配置好，此时检测会失败
-                    // 车机WiFi重连很频繁（停车、启动、信号弱时），这个问题会经常出现
-                    networkCacheValid = false
-                    mainHandler.postDelayed({
-                        checkNetworkReachableAsync()
-                    }, 1000)
-                }
-                override fun onLost(network: android.net.Network) {
-                    // ★ onLost 不用防抖（它只是清缓存，很轻量）
-                    // 原因：onLost 只清缓存，不做耗时操作，频繁触发也没关系
-                    // 如果和 onAvailable 共享防抖，可能导致 onLost 被拦住，缓存没清
-                    android.util.Log.d("VoiceService", "网络已断开，清空缓存（下次唤醒重新判断）")
-                    // 只清缓存，不主动检测
-                    // 原因：onLost 触发时，系统可能还在切换网络（WiFi→4G），
-                    // 此时 activeNetwork 可能为 null 或旧网络，检测结果不可靠
-                    // 让下次唤醒时重新判断：isNetworkAvailable() 会正确处理网络切换
-                    networkCacheValid = false
-                    // 不设 networkReachable，让下次唤醒的乐观假设逻辑处理
-                }
+        networkMonitor.start(object : NetworkMonitor.Callback {
+            override fun onNetworkAvailable() {
+                // 网络已连接，NetworkMonitor 内部会延迟1秒后异步检测
             }
-            networkCallback = callback
-            cm.registerDefaultNetworkCallback(callback)
-            android.util.Log.i("VoiceService", "网络变化监听已注册")
-        } catch (e: Exception) {
-            android.util.Log.w("VoiceService", "注册网络变化监听失败: ${e.message}")
-        }
+            override fun onNetworkLost() {
+                // 网络已断开，NetworkMonitor 内部会清空缓存
+            }
+        })
 
         // 注册电话状态监听：通话中暂停唤醒监听，避免麦克风冲突和误唤醒
-        try {
-            telephonyManager = getSystemService(TELEPHONY_SERVICE) as TelephonyManager
-            telephonyManager?.listen(phoneStateListener, PhoneStateListener.LISTEN_CALL_STATE)
-            android.util.Log.i("VoiceService", "电话状态监听已注册")
-        } catch (e: Exception) {
-            android.util.Log.w("VoiceService", "注册电话状态监听失败: ${e.message}")
-        }
+        phoneStateMonitor.start()
 
         currentState = State.IDLE
         createChannel()
@@ -824,17 +769,16 @@ class VoiceAssistantService : Service() {
         // 为什么不阻塞？因为阻塞主线程会导致ANR（输入事件5秒无响应即ANR）
         // 首次唤醒假设网络通，走在线识别；如果实际网络不通，在线失败后自动回退离线（已有机制）
         // 后台异步检测（单URL，2秒超时）完成后更新缓存，后续唤醒用正确的网络状态
-        val hasNetwork = isNetworkAvailable()
-        val canReachInternet = if (networkCacheValid) {
-            networkReachable  // 缓存有效，直接用（无延迟）
+        val hasNetwork = networkMonitor.isAvailable()
+        val canReachInternet = if (networkMonitor.isCacheValid()) {
+            networkMonitor.isReachable()  // 缓存有效，直接用（无延迟）
         } else {
             // 缓存无效 → 不阻塞，假设网络通，同时后台异步检测更新缓存
             if (hasNetwork) {
-                checkNetworkReachableAsync()  // 后台异步检测，不阻塞主线程
+                networkMonitor.checkReachableAsync()  // 后台异步检测，不阻塞主线程
             } else {
                 // 没连网直接标记为不通
-                networkReachable = false
-                networkCacheValid = true
+                networkMonitor.markUnavailable()
             }
             true  // 假设网络通（走在线识别，失败自动回退离线）
         }
@@ -1277,82 +1221,7 @@ class VoiceAssistantService : Service() {
         }
     }
 
-    /**
-     * 检查网络是否可用
-     * 用于判断是否可以使用百度在线语音识别
-     */
-    private fun isNetworkAvailable(): Boolean {
-        return try {
-            val cm = getSystemService(CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
-            val network = cm.activeNetwork
-            if (network != null) {
-                val capabilities = cm.getNetworkCapabilities(network)
-                capabilities != null && (
-                    capabilities.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) ||
-                    capabilities.hasTransport(android.net.NetworkCapabilities.TRANSPORT_CELLULAR) ||
-                    capabilities.hasTransport(android.net.NetworkCapabilities.TRANSPORT_ETHERNET)
-                )
-            } else {
-                false
-            }
-        } catch (e: Exception) {
-            android.util.Log.w("VoiceService", "检查网络状态失败: ${e.message}")
-            false
-        }
-    }
-
-    /**
-     * 同步检测网络连通性（是否能访问外网）
-     *
-     * 车机场景：WiFi 已连接但可能无外网（手机热点没开流量、路由器断网）。
-     * 同步检测，首次唤醒会等1~3秒（可接受），确保首次唤醒就能正确判断。
-     * 检测结果缓存到 networkReachable 变量，后续唤醒直接用缓存（无延迟）。
-     *
-     * @return true=能访问外网，false=不能访问外网
-     */
-    /**
-     * 后台异步检测网络连通性（不阻塞主线程，检测完成后更新缓存）
-     *
-     * 为什么用异步而不是同步？
-     * - 如果同步等待，会阻塞主线程，导致ANR（输入事件5秒无响应即ANR）
-     * - 首次唤醒假设网络通，走在线识别；如果实际网络不通，在线失败后自动回退离线
-     * - 检测完成后更新缓存，后续唤醒用正确的网络状态
-     *
-     * 为什么用协程而不是裸 Thread？
-     * - 协程在 onDestroy 时会自动 cancel()，清理未完成的检测
-     * - 用 AtomicBoolean CAS 防重复启动，避免频繁唤醒时创建多个线程
-     */
-    private fun checkNetworkReachableAsync() {
-        // CAS：如果已经在检测中，直接返回，避免重复启动
-        if (!networkCheckInProgress.compareAndSet(false, true)) {
-            android.util.Log.d("VoiceService", "网络检测已在进行中，跳过")
-            return
-        }
-        scope.launch(Dispatchers.IO) {
-            try {
-                android.util.Log.d("VoiceService", "开始异步检测网络连通性...")
-                val reachable = baiduAsrManager.isNetworkReachable()
-                if (reachable) {
-                    // ★ 只有检测到"通"时才写缓存
-                    // "不通"可能是网络还没就绪（DHCP/DNS没配置好），写缓存会导致误判
-                    // 车机WiFi重连频繁，"刚就绪"的场景更多，不写缓存更安全
-                    networkReachable = true
-                    networkCacheValid = true
-                    android.util.Log.i("VoiceService", "网络连通性检测: 正常（能访问外网，下次唤醒走在线）")
-                } else {
-                    // 检测到不通，不写缓存，让下次唤醒重新检测
-                    // 因为可能是网络刚连上还没就绪，或者是临时抖动
-                    // consecutiveOnlineFailures 会兜底：连续3次在线失败后强制走离线
-                    android.util.Log.w("VoiceService", "网络连通性检测: 不通（不写缓存，下次唤醒重新检测）")
-                }
-            } catch (e: Exception) {
-                android.util.Log.w("VoiceService", "网络连通性检测异常: ${e.message}（不写缓存）")
-                // 异常也不写缓存，让下次唤醒重新检测
-            } finally {
-                networkCheckInProgress.set(false)
-            }
-        }
-    }
+    // 网络相关逻辑已移到 NetworkMonitor
 
     // ---------- 文本处理 ----------
     /**
@@ -1717,22 +1586,9 @@ class VoiceAssistantService : Service() {
         // 释放缓存的 Vosk Model，避免一直占内存（小模型约120MB，大模型可能1.5GB）
         SpeechRecognizer.releaseCachedModel()
         // 注销电话状态监听
-        try {
-            telephonyManager?.listen(phoneStateListener, PhoneStateListener.LISTEN_NONE)
-            android.util.Log.d("VoiceService", "电话状态监听已注销")
-        } catch (e: Exception) {
-            android.util.Log.w("VoiceService", "注销电话状态监听失败: ${e.message}")
-        }
+        phoneStateMonitor.stop()
         // 注销网络变化监听
-        try {
-            networkCallback?.let {
-                val cm = getSystemService(CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
-                cm.unregisterNetworkCallback(it)
-                android.util.Log.i("VoiceService", "网络变化监听已注销")
-            }
-        } catch (e: Exception) {
-            android.util.Log.w("VoiceService", "注销网络变化监听失败: ${e.message}")
-        }
+        networkMonitor.stop()
         // 释放百度语音识别引擎（EventManager + factory），避免服务反复启停时 SDK 资源累积泄漏
         // 注意：只释放引擎，保留配置（appId/apiKey/secretKey），下次 init() 直接复用
         baiduAsrManager.releaseEngine()
