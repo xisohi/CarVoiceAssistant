@@ -97,6 +97,34 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
+        // ★ 临时检测：SAF（Storage Access Framework）是否可用
+        // 用于判断 targetSdk=34 下 U 盘访问方案是否可行
+        try {
+            val safIntent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
+            val list = packageManager.queryIntentActivities(safIntent, 0)
+            log("SAF 可用性: 找到 ${list.size} 个 Activity 处理 ACTION_OPEN_DOCUMENT_TREE")
+            list.forEach {
+                log("  - ${it.activityInfo.packageName}/${it.activityInfo.name}")
+            }
+            if (list.isEmpty()) {
+                log("⚠️ 车机没有 DocumentsUI，SAF 方案不可行，targetSdk=34 下 U 盘读写会失败")
+            } else {
+                log("✅ 车机支持 SAF，现在自动弹出选择器实测...")
+                // 延迟 1 秒弹窗，等日志先输出完
+                binding.root.postDelayed({
+                    try {
+                        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
+                        startActivityForResult(intent, 9999)
+                        log("已发出 SAF 弹窗请求，请在弹出的界面中选择 U 盘根目录")
+                    } catch (e: Exception) {
+                        log("SAF 弹窗失败: ${e.message}")
+                    }
+                }, 1000)
+            }
+        } catch (e: Exception) {
+            log("查询 SAF 可用性失败: ${e.message}")
+        }
+
         // 初始化文件日志系统
         LogUtils.init(this)
 
@@ -463,6 +491,15 @@ class MainActivity : AppCompatActivity() {
      */
     private fun scanUsbAndImport() {
         log("========== 开始 U 盘扫描（MusicFree 方案） ==========")
+
+        // 检查"所有文件访问权限"（Android 11+ / targetSdk=30+ 需要）
+        if (Build.VERSION.SDK_INT >= 30) {
+            val hasAllFiles = android.os.Environment.isExternalStorageManager()
+            log("USB 权限检查: isExternalStorageManager=$hasAllFiles")
+            if (!hasAllFiles) {
+                log("⚠️ 未获得「所有文件访问权限」，U 盘读写可能失败")
+            }
+        }
 
         val candidatePaths = mutableListOf<String>()
 
