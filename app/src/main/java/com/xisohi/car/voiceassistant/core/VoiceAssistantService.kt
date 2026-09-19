@@ -943,7 +943,7 @@ class VoiceAssistantService : Service() {
             }
             if (noiseRead > 0) {
                 recNoiseReducer.process(noiseBuf, noiseRead, enableRnNoise = false)
-                applyGain(noiseBuf, noiseRead)
+                // ★ 端点检测用原始 RMS（不增益），避免偶尔的底噪尖峰误判
             }
             val ambientRms = if (noiseRead > 0) {
                 SpeechRecognizer.calculateRms(noiseBuf, noiseRead)
@@ -953,7 +953,7 @@ class VoiceAssistantService : Service() {
             val adaptiveSilenceThreshold = (ambientRms * NOISE_MULTIPLIER)
                 .coerceIn(SILENCE_RMS_MIN, SILENCE_RMS_MAX)
             android.util.Log.d("VoiceService",
-                "环境噪音 RMS=${ambientRms.toInt()}（含增益）, 自适应静音阈值=${adaptiveSilenceThreshold.toInt()}")
+                "环境噪音 RMS=${ambientRms.toInt()}（原始，未增益）, 自适应静音阈值=${adaptiveSilenceThreshold.toInt()}")
                 sendRecognitionLog("📊 环境噪音RMS=${ambientRms.toInt()}, 阈值=${adaptiveSilenceThreshold.toInt()}")
             // =========================================
 
@@ -998,6 +998,7 @@ class VoiceAssistantService : Service() {
             var lastPartial = ""
             var lastPartialUpdateMs = 0L
             var silenceDuration = 0L
+            var nonSilenceFrameCount = 0  // ★ 连续非静音帧计数（用于端点检测防抖）
             var hasSpeechStarted = false
             var speechFrameCount = 0
             var finalText = ""
@@ -1030,16 +1031,20 @@ class VoiceAssistantService : Service() {
                     shortsToBytes(shortBuf, n, baiduBytes)
                     audioBuffer.write(baiduBytes)
 
+                    // ★ 端点检测用原始 RMS（先算 RMS，再增益）
+                    val originalRms = SpeechRecognizer.calculateRms(shortBuf, n)
+                    
                     // 给 Vosk 离线识别的音频：应用 asrGain
                     applyGain(shortBuf, n)
 
-                    // 计算 RMS 能量，判断是否静音
+                    // 计算 RMS 能量（增益后，用于显示和峰值统计）
                     val rms = SpeechRecognizer.calculateRms(shortBuf, n)
                     currentRms = rms.toInt()
                     if (rms.toInt() > peakRms) {
                         peakRms = rms.toInt()
                     }
-                    val isSilence = rms < adaptiveSilenceThreshold
+                    // ★ 端点检测用原始 RMS，避免增益后偶尔的底噪尖峰误判
+                    val isSilence = originalRms < adaptiveSilenceThreshold
 
                     // 检测到连续3帧有效语音后，标记用户已开口
                     if (!hasSpeechStarted) {
@@ -1075,10 +1080,18 @@ class VoiceAssistantService : Service() {
                     }
 
                     // 基于 RMS 的端点检测
+                    // ★ 改进：连续非静音帧确认（避免偶尔的底噪尖峰重置静音时长）
                     val recordDuration = SystemClock.elapsedRealtime() - startMs
+                    if (!isSilence) {
+                        nonSilenceFrameCount++
+                    } else {
+                        nonSilenceFrameCount = maxOf(0, nonSilenceFrameCount - 1)
+                    }
+                    
                     if (hasSpeechStarted && isSilence) {
                         silenceDuration += (n * 1000L / SpeechRecognizer.SAMPLE_RATE.toInt())
-                        val dynamicSilenceMs = if (lastPartial.isNotEmpty()) 3000L else 2000L
+                        // ★ 降低动态静音时间：有结果 1500ms，无结果 1000ms
+                        val dynamicSilenceMs = if (lastPartial.isNotEmpty()) 1500L else 1000L
                         if (silenceDuration >= dynamicSilenceMs && recordDuration >= MIN_RECORD_MS) {
                             android.util.Log.d("VoiceService",
                                 "连续静音${silenceDuration}ms，确认用户说完了，结束录音 (RMS=${rms.toInt()}, 阈值=${adaptiveSilenceThreshold.toInt()})")
@@ -1086,7 +1099,8 @@ class VoiceAssistantService : Service() {
                             shouldStopRecording.set(true)
                             break@loop
                         }
-                    } else if (!isSilence) {
+                    } else if (nonSilenceFrameCount >= 3) {
+                        // ★ 只有连续 3 帧非静音，才认为真的在说话，重置静音时长
                         silenceDuration = 0
                     }
 
