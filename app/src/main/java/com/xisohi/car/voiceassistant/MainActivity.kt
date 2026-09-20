@@ -61,7 +61,7 @@ class MainActivity : AppCompatActivity() {
     private var ttsChecker: TextToSpeech? = null
     private var ttsChecked = false
     private var ttsAvailable = false
-    private var ttsEngineName = "" 
+    private var ttsEngineName = ""
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val handler = Handler(Looper.getMainLooper())
     private val stateRefresher = object : Runnable {
@@ -94,11 +94,14 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // ★ 先初始化日志，保证所有日志都能写文件
+        LogUtils.init(this)
+
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        // ★ 临时检测：SAF（Storage Access Framework）是否可用
-        // 用于判断 targetSdk=34 下 U 盘访问方案是否可行
+        // SAF 可用性检测（只查不弹）
         try {
             val safIntent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
             val list = packageManager.queryIntentActivities(safIntent, 0)
@@ -107,26 +110,13 @@ class MainActivity : AppCompatActivity() {
                 log("  - ${it.activityInfo.packageName}/${it.activityInfo.name}")
             }
             if (list.isEmpty()) {
-                log("⚠️ 车机没有 DocumentsUI，SAF 方案不可行，targetSdk=34 下 U 盘读写会失败")
+                log("⚠️ 车机没有 DocumentsUI，SAF 方案不可行")
             } else {
-                log("✅ 车机支持 SAF，现在自动弹出选择器实测...")
-                // 延迟 1 秒弹窗，等日志先输出完
-                binding.root.postDelayed({
-                    try {
-                        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
-                        startActivityForResult(intent, 9999)
-                        log("已发出 SAF 弹窗请求，请在弹出的界面中选择 U 盘根目录")
-                    } catch (e: Exception) {
-                        log("SAF 弹窗失败: ${e.message}")
-                    }
-                }, 1000)
+                log("✅ 车机支持 SAF")
             }
         } catch (e: Exception) {
             log("查询 SAF 可用性失败: ${e.message}")
         }
-
-        // 初始化文件日志系统
-        LogUtils.init(this)
 
         // 注册识别结果广播接收器（实时显示识别结果到运行日志）
         val filter = IntentFilter(VoiceAssistantService.ACTION_RECOGNITION_LOG)
@@ -170,9 +160,6 @@ class MainActivity : AppCompatActivity() {
                         return@setOnClickListener
                     }
                     // 无障碍服务不再强制要求（导航使用 URI scheme）
-                    // if (!isAccessibilityEnabled()) {
-                    //     toast("建议启用无障碍服务以获得完整的导航自动输入体验")
-                    // }
                     VoiceAssistantService.start(this)
                     toast(getString(R.string.toast_service_started))
                 } else {
@@ -215,7 +202,6 @@ class MainActivity : AppCompatActivity() {
         val savedGain = prefs.getFloat(KEY_MANUAL_GAIN, -1f)
         if (savedThreshold > 0 && savedGain > 0) {
             binding.tvSensitivityDesc.text = "当前：（增益${String.format("%.1f", savedGain)}x，阈值${String.format("%.3f", savedThreshold)}）"
-            // 有手动参数时，不高亮任何预设按钮
             binding.btnSensLow.isEnabled = true
             binding.btnSensMedium.isEnabled = true
             binding.btnSensHigh.isEnabled = true
@@ -223,7 +209,6 @@ class MainActivity : AppCompatActivity() {
             val gain = WakeWordEngine.getAudioGain()
             val threshold = WakeWordEngine.getDetectionThreshold()
             binding.tvSensitivityDesc.text = "当前：${WakeWordEngine.getSensitivityName()}（增益${gain}x，阈值$threshold）"
-            // 无手动参数时，高亮当前引擎对应的预设
             val currentLevel = WakeWordEngine.getSensitivity()
             updatePresetButtonState(currentLevel)
         }
@@ -248,22 +233,18 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        // 页面可见时启动状态定时刷新（每500ms）
         handler.post(stateRefresher)
-        // 刷新权限状态
         refreshPermissionState()
     }
 
     override fun onPause() {
         super.onPause()
-        // 页面不可见时停止状态刷新，节省资源
         handler.removeCallbacks(stateRefresher)
     }
 
     override fun onDestroy() {
         super.onDestroy()
         handler.removeCallbacks(stateRefresher)
-        // 释放 TTS 检测实例
         ttsChecker?.shutdown()
         ttsChecker = null
     }
@@ -272,29 +253,24 @@ class MainActivity : AppCompatActivity() {
     private fun initManualControls() {
         val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
 
-        // 读取已保存的手动参数（如果有）
         val savedThreshold = prefs.getFloat(KEY_MANUAL_THRESHOLD, -1f)
         val savedGain = prefs.getFloat(KEY_MANUAL_GAIN, -1f)
         val savedAsrGain = prefs.getFloat(KEY_MANUAL_ASR_GAIN, -1f)
 
-        // 如果有保存的手动参数，应用它
         if (savedThreshold > 0 && savedGain > 0) {
             WakeWordEngine.setGainAndThreshold(savedGain, savedThreshold)
             updateManualUI(savedThreshold, savedGain)
             log("已加载手动参数：threshold=$savedThreshold, gain=${savedGain}x")
         } else {
-            // 否则用当前引擎的值初始化 UI
             updateManualUI(WakeWordEngine.getDetectionThreshold(), WakeWordEngine.getAudioGain())
         }
 
-        // 加载识别增益（asrGain）
         if (savedAsrGain >= 3.0f) {
             WakeWordEngine.setAsrGain(savedAsrGain)
             log("已加载识别增益：asrGain=${savedAsrGain}x")
         }
         updateAsrGainUI(WakeWordEngine.getAsrGain())
 
-        // threshold 滑块：0.001 ~ 0.10，步长 0.001
         binding.seekThreshold.setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: android.widget.SeekBar?, progress: Int, fromUser: Boolean) {
                 val threshold = (progress + 1) * 0.001f
@@ -304,7 +280,6 @@ class MainActivity : AppCompatActivity() {
             override fun onStopTrackingTouch(seekBar: android.widget.SeekBar?) {}
         })
 
-        // gain 滑块：1.0 ~ 5.5，步长 0.1
         binding.seekGain.setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: android.widget.SeekBar?, progress: Int, fromUser: Boolean) {
                 val gain = 1.0f + progress * 0.1f
@@ -314,7 +289,6 @@ class MainActivity : AppCompatActivity() {
             override fun onStopTrackingTouch(seekBar: android.widget.SeekBar?) {}
         })
 
-        // asrGain 滑块：3.0 ~ 8.0，步长 0.1
         binding.seekAsrGain.setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: android.widget.SeekBar?, progress: Int, fromUser: Boolean) {
                 val asrGain = 5.0f + progress * 0.1f
@@ -324,53 +298,44 @@ class MainActivity : AppCompatActivity() {
             override fun onStopTrackingTouch(seekBar: android.widget.SeekBar?) {}
         })
 
-        // 应用手动参数
         binding.btnApplyManual.setOnClickListener {
             val threshold = (binding.seekThreshold.progress + 1) * 0.001f
             val gain = 1.0f + binding.seekGain.progress * 0.1f
             val asrGain = 5.0f + binding.seekAsrGain.progress * 0.1f
             WakeWordEngine.setGainAndThreshold(gain, threshold)
             WakeWordEngine.setAsrGain(asrGain)
-            // 保存到 SharedPreferences
             prefs.edit()
                 .putFloat(KEY_MANUAL_THRESHOLD, threshold)
                 .putFloat(KEY_MANUAL_GAIN, gain)
                 .putFloat(KEY_MANUAL_ASR_GAIN, asrGain)
                 .apply()
-            // 更新灵敏度描述
             binding.tvSensitivityDesc.text = "当前：手动（增益${String.format("%.1f", gain)}x，阈值${String.format("%.3f", threshold)}，识别增益${String.format("%.1f", asrGain)}x）"
             toast("已应用：threshold=$threshold, gain=${gain}x, asrGain=${asrGain}x")
             log("手动参数已应用：threshold=$threshold, gain=${gain}x, asrGain=${asrGain}x")
         }
 
-        // 恢复默认（清除手动参数，用三档灵敏度）
         binding.btnResetManual.setOnClickListener {
             prefs.edit()
                 .remove(KEY_MANUAL_THRESHOLD)
                 .remove(KEY_MANUAL_GAIN)
                 .remove(KEY_MANUAL_ASR_GAIN)
                 .apply()
-            // 恢复识别增益默认值
             WakeWordEngine.setAsrGain(8.0f)
-            // 恢复到中档预设
             fillPresetToSliders(1)
             toast(getString(R.string.toast_sensitivity_reset))
             log("已恢复默认灵敏度（中）")
         }
 
-        // 初始化百度语音识别配置
         baiduAsrManager = BaiduAsrManager.getInstance(this)
         binding.etBaiduAppId.setText(baiduAsrManager.getAppId())
         binding.etBaiduApiKey.setText(baiduAsrManager.getApiKey())
         binding.etBaiduSecretKey.setText(baiduAsrManager.getSecretKey())
         updateBaiduStatus()
 
-        // 首次启动检测：如果未配置百度语音识别，弹出引导对话框
         if (!baiduAsrManager.isConfigured()) {
             showBaiduConfigGuide()
         }
 
-        // 保存百度配置
         binding.btnSaveBaiduConfig.setOnClickListener {
             val appId = binding.etBaiduAppId.text.toString().trim()
             val apiKey = binding.etBaiduApiKey.text.toString().trim()
@@ -381,12 +346,10 @@ class MainActivity : AppCompatActivity() {
             }
             log("保存百度配置：appId=$appId, apiKey=${apiKey.take(4)}...${apiKey.takeLast(4)}, secretKey=${secretKey.take(4)}...${secretKey.takeLast(4)}")
             baiduAsrManager.saveConfig(appId, apiKey, secretKey)
-            // saveConfig() 内部已经调用了 init()，这里再调用一次确保初始化成功，并把结果显示给用户
             val success = baiduAsrManager.init()
             if (success) {
                 toast("百度语音配置已保存，请点测试连接验证")
                 log("✅ 百度语音配置已保存并初始化成功（未验证，请点测试连接）")
-                // ★ 配置已保存但未验证，提示用户点测试连接（不要误导用户以为配置一定正确）
                 binding.tvBaiduStatus.text = "已配置（未验证，请点测试连接）"
                 binding.tvBaiduStatus.setTextColor(0xFFFF9800.toInt())
             } else {
@@ -398,7 +361,6 @@ class MainActivity : AppCompatActivity() {
             updateBaiduStatus()
         }
 
-        // 测试百度配置（调用 token 接口验证 Key 是否正确）
         binding.btnTestBaiduConfig.setOnClickListener {
             val appId = binding.etBaiduAppId.text.toString().trim()
             val apiKey = binding.etBaiduApiKey.text.toString().trim()
@@ -407,18 +369,15 @@ class MainActivity : AppCompatActivity() {
                 toast("请先填写 App ID、API Key 和 Secret Key")
                 return@setOnClickListener
             }
-            // 先保存配置
             baiduAsrManager.saveConfig(appId, apiKey, secretKey)
             binding.tvBaiduStatus.text = "正在验证配置..."
             binding.tvBaiduStatus.setTextColor(0xFFFF9800.toInt())
             log("开始验证百度配置: appId=$appId")
-            // 在后台线程调用 token 接口验证 Key（网络请求不能在主线程）
             Thread {
                 val result = baiduAsrManager.verifyConfig(apiKey, secretKey)
                 runOnUiThread {
                     when (result) {
                         is VerifyResult.Success -> {
-                            // ★ 鉴权通过 → 状态=ok，识别时走在线
                             baiduAsrManager.setConfigStatus(BaiduAsrManager.CONFIG_STATUS_OK)
                             binding.tvBaiduStatus.text = "✅ 配置正确"
                             binding.tvBaiduStatus.setTextColor(0xFF4CAF50.toInt())
@@ -426,7 +385,6 @@ class MainActivity : AppCompatActivity() {
                             log("✅ 百度配置验证成功（状态=ok，识别时走在线）")
                         }
                         is VerifyResult.AuthError -> {
-                            // ★ 鉴权错误（Key错）→ 状态=error，识别时直接走离线（不浪费时间）
                             baiduAsrManager.setConfigStatus(BaiduAsrManager.CONFIG_STATUS_ERROR)
                             binding.tvBaiduStatus.text = "❌ ${result.message}"
                             binding.tvBaiduStatus.setTextColor(0xFFF44336.toInt())
@@ -434,8 +392,6 @@ class MainActivity : AppCompatActivity() {
                             log("❌ 百度配置验证失败（鉴权错误）: ${result.message}（状态=error，识别时直接走离线）")
                         }
                         is VerifyResult.NetworkError -> {
-                            // ★ 网络问题（不是Key错）→ 状态保持 untested，不要误判为配置错误
-                            // 用户的 Key 可能是对的，只是当前网络不通，等网络通了再测试
                             baiduAsrManager.setConfigStatus(BaiduAsrManager.CONFIG_STATUS_UNTESTED)
                             binding.tvBaiduStatus.text = "⚠️ ${result.message}"
                             binding.tvBaiduStatus.setTextColor(0xFFFF9800.toInt())
@@ -443,7 +399,6 @@ class MainActivity : AppCompatActivity() {
                             log("⚠️ 百度配置验证失败（网络问题）: ${result.message}（状态保持未测试，等网络通了再试）")
                         }
                         else -> {
-                            // 理论上不会走到这里（密封类只有三个子类），但编译器要求穷举
                             baiduAsrManager.setConfigStatus(BaiduAsrManager.CONFIG_STATUS_UNTESTED)
                             binding.tvBaiduStatus.text = "未知验证结果"
                             binding.tvBaiduStatus.setTextColor(0xFFFF9800.toInt())
@@ -454,15 +409,12 @@ class MainActivity : AppCompatActivity() {
             }.start()
         }
 
-        // 从文件导入百度配置（支持U盘、车机内部存储等任意位置）
         binding.btnImportBaiduConfig.setOnClickListener {
             try {
-                // 先尝试系统文件选择器
                 filePickerLauncher.launch(arrayOf("application/json", "*/*"))
                 log("打开文件选择器，选择百度配置文件")
             } catch (e: Exception) {
                 log("系统文件选择器不可用：${e.message}，尝试扫描U盘")
-                // 系统没有文件选择器（如精简版车机系统），自动扫描U盘
                 // ★ 必须在后台线程执行！StorageManager 遍历 USB 存储卷涉及跨进程 binder 调用，
                 // 在主线程执行会卡住导致 ANR，应用被系统杀死
                 Thread {
@@ -474,25 +426,14 @@ class MainActivity : AppCompatActivity() {
                 }.start()
             }
         }
-
     }
 
     /**
      * 扫描U盘并导入配置文件（系统没有文件选择器时的 fallback）
-     *
-     * 核心方案（参考 MusicFree）：
-     * 1. StorageManager + 反射 getDirectory() —— 最可靠，Android 10+ 都能用
-     *    getDirectory() 返回的 File 对象在 Android 10 上有读写权限（Google 兼容性后门）
-     *    注意：不能用 getPath()，它返回字符串路径，Android 10 上无权限
-     *    注意：不能用 volume.directory，这是 API 30+ 才有的公开属性，Android 10 上是 null
-     * 2. 扫描 /storage 下的可读子目录（排除 emulated、self）
-     * 3. 扫描 /mnt 下的 usb 挂载点
-     * 4. 逐个扫描路径找 .json 文件
      */
     private fun scanUsbAndImport() {
         log("========== 开始 U 盘扫描（MusicFree 方案） ==========")
 
-        // 检查"所有文件访问权限"（Android 11+ / targetSdk=30+ 需要）
         if (Build.VERSION.SDK_INT >= 30) {
             val hasAllFiles = android.os.Environment.isExternalStorageManager()
             log("USB 权限检查: isExternalStorageManager=$hasAllFiles")
@@ -524,8 +465,6 @@ class MainActivity : AppCompatActivity() {
                 val isRemovable = volume.isRemovable
                 log("    isPrimary=$isPrimary, isRemovable=$isRemovable")
 
-                // ★ 关键：反射调用 getDirectory()
-                // 返回的 File 对象在 Android 10 上有读写权限
                 log("    反射调用 getDirectory()...")
                 val dir = try {
                     val m = volume.javaClass.getMethod("getDirectory")
@@ -698,29 +637,24 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * 弹出文件选择对话框（多个配置文件时让用户选择）
-     */
     private fun showFileSelectDialog(files: List<java.io.File>) {
-        val fileNames = files.map { it.name }.toTypedArray()
-        androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle("选择配置文件")
-            .setItems(fileNames) { _, which ->
-                importBaiduConfigFromFile(files[which])
-            }
-            .setNegativeButton("取消", null)
-            .show()
+        runOnUiThread {
+            val fileNames = files.map { it.name }.toTypedArray()
+            androidx.appcompat.app.AlertDialog.Builder(this)
+                .setTitle("选择配置文件")
+                .setItems(fileNames) { _, which ->
+                    importBaiduConfigFromFile(files[which])
+                }
+                .setNegativeButton("取消", null)
+                .show()
+        }
     }
 
-    /**
-     * 从本地文件导入百度语音配置
-     */
     private fun importBaiduConfigFromFile(file: java.io.File) {
         try {
             val content = file.readText(Charsets.UTF_8)
             log("导入配置：读取文件成功，内容长度=${content.length}")
 
-            // 解析 JSON
             val json = org.json.JSONObject(content)
             val appId = json.optString("app_id", "").trim()
             val apiKey = json.optString("api_key", "").trim()
@@ -732,14 +666,13 @@ class MainActivity : AppCompatActivity() {
                 return
             }
 
-            // 填充到输入框
-            binding.etBaiduAppId.setText(appId)
-            binding.etBaiduApiKey.setText(apiKey)
-            binding.etBaiduSecretKey.setText(secretKey)
-
-            // 自动保存配置
-            baiduAsrManager.saveConfig(appId, apiKey, secretKey)
-            updateBaiduStatus()
+            runOnUiThread {
+                binding.etBaiduAppId.setText(appId)
+                binding.etBaiduApiKey.setText(apiKey)
+                binding.etBaiduSecretKey.setText(secretKey)
+                baiduAsrManager.saveConfig(appId, apiKey, secretKey)
+                updateBaiduStatus()
+            }
 
             toast("配置导入成功！请点测试连接验证配置")
             log("配置导入成功（状态=未验证，请点测试连接）")
@@ -751,14 +684,8 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * 从用户选择的文件导入百度语音配置
-     * 支持从任意位置（U盘、车机内部存储等）选择文件
-     * 配置文件格式：{"app_id":"xxx","api_key":"xxx","secret_key":"xxx"}
-     */
     private fun importBaiduConfigFromUri(uri: android.net.Uri) {
         try {
-            // 通过 ContentResolver 读取文件内容
             val inputStream = contentResolver.openInputStream(uri)
             if (inputStream == null) {
                 toast("无法读取文件")
@@ -770,7 +697,6 @@ class MainActivity : AppCompatActivity() {
             inputStream.close()
             log("导入配置：读取文件成功，内容长度=${content.length}")
 
-            // 解析 JSON
             val json = org.json.JSONObject(content)
             val appId = json.optString("app_id", "").trim()
             val apiKey = json.optString("api_key", "").trim()
@@ -782,12 +708,9 @@ class MainActivity : AppCompatActivity() {
                 return
             }
 
-            // 填充到输入框
             binding.etBaiduAppId.setText(appId)
             binding.etBaiduApiKey.setText(apiKey)
             binding.etBaiduSecretKey.setText(secretKey)
-
-            // 自动保存配置
             baiduAsrManager.saveConfig(appId, apiKey, secretKey)
             updateBaiduStatus()
 
@@ -801,15 +724,11 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * 更新百度语音配置状态显示
-     */
     private fun updateBaiduStatus() {
         if (!baiduAsrManager.isConfigured()) {
             binding.tvBaiduStatus.text = "未配置"
             binding.tvBaiduStatus.setTextColor(0xFF9E9E9E.toInt())
         } else {
-            // ★ 根据配置验证状态三态显示
             when (baiduAsrManager.getConfigStatus()) {
                 BaiduAsrManager.CONFIG_STATUS_OK -> {
                     binding.tvBaiduStatus.text = "✅ 已配置（已验证）"
@@ -820,7 +739,6 @@ class MainActivity : AppCompatActivity() {
                     binding.tvBaiduStatus.setTextColor(0xFFF44336.toInt())
                 }
                 else -> {
-                    // untested：未测试或修改了配置
                     binding.tvBaiduStatus.text = "⚠️ 已配置（未验证，请点测试连接）"
                     binding.tvBaiduStatus.setTextColor(0xFFFF9800.toInt())
                 }
@@ -828,28 +746,22 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * 显示百度语音识别配置引导对话框
-     * 首次启动且未配置时弹出，引导用户去百度智能云创建应用并配置参数
-     */
     private fun showBaiduConfigGuide() {
         val dialog = android.app.AlertDialog.Builder(this)
             .setTitle("配置百度语音识别")
             .setMessage(
                 "百度语音识别（在线）识别率更高，需要您使用自己的百度账号进行配置：\n\n" +
-                "1. 打开百度智能云官网（console.bce.baidu.com）\n" +
-                "2. 进入「语音技术」→「应用管理」→「创建应用」\n" +
-                "3. 开通「短语音识别」服务（个人认证免费15万次）\n" +
-                "4. 复制 App ID、API Key、Secret Key 填入下方设置页\n\n" +
-                "未配置时将使用离线 Vosk 识别（准确率较低）。\n\n" +
-                "是否现在配置？"
+                        "1. 打开百度智能云官网（console.bce.baidu.com）\n" +
+                        "2. 进入「语音技术」→「应用管理」→「创建应用」\n" +
+                        "3. 开通「短语音识别」服务（个人认证免费15万次）\n" +
+                        "4. 复制 App ID、API Key、Secret Key 填入下方设置页\n\n" +
+                        "未配置时将使用离线 Vosk 识别（准确率较低）。\n\n" +
+                        "是否现在配置？"
             )
             .setPositiveButton("立即配置") { _, _ ->
-                // 滚动到百度配置区域
                 binding.scrollView.post {
                     binding.scrollView.smoothScrollTo(0, binding.cardBaiduConfig.top)
                 }
-                // 聚焦到 App ID 输入框
                 binding.etBaiduAppId.requestFocus()
                 toast("请在下方填写您的百度语音识别配置")
             }
@@ -862,51 +774,31 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateManualUI(threshold: Float, gain: Float) {
-        // threshold: 0.001 ~ 0.10 -> progress 0 ~ 99
         val thresholdProgress = ((threshold / 0.001f).toInt() - 1).coerceIn(0, 99)
         binding.seekThreshold.progress = thresholdProgress
         binding.tvThresholdValue.text = String.format("%.3f", threshold)
-        // gain: 1.0 ~ 5.5 -> progress 0 ~ 45
         val gainProgress = ((gain - 1.0f) / 0.1f).toInt().coerceIn(0, 45)
         binding.seekGain.progress = gainProgress
         binding.tvGainValue.text = String.format("%.1fx", gain)
     }
 
-    /**
-     * 更新识别增益（asrGain）滑块 UI
-     * asrGain: 3.0 ~ 8.0 -> progress 0 ~ 50
-     */
     private fun updateAsrGainUI(asrGain: Float) {
         val asrGainProgress = ((asrGain - 5.0f) / 0.1f).toInt().coerceIn(0, 50)
         binding.seekAsrGain.progress = asrGainProgress
         binding.tvAsrGainValue.text = String.format("%.1fx", asrGain)
     }
 
-    /**
-     * 将预设灵敏度（低/中/高）的参数填充到手动调节滑块
-     * 用户可以在此基础上微调，然后点击"应用手动参数"生效
-     */
     private fun fillPresetToSliders(level: Int) {
-        // 临时设置到引擎以获取对应的参数值
         WakeWordEngine.setSensitivity(level)
         val threshold = WakeWordEngine.getDetectionThreshold()
         val gain = WakeWordEngine.getAudioGain()
         val name = WakeWordEngine.getSensitivityName()
-        // 填充到滑块
         updateManualUI(threshold, gain)
-        // 更新按钮选中状态（禁用当前选中的按钮，启用其他按钮）
         updatePresetButtonState(level)
-        // 提示用户
         toast("已填充「$name」预设（增益${gain}x，阈值$threshold），可微调后点击应用")
         log("预设「$name」已填充到滑块：threshold=$threshold, gain=${gain}x")
     }
 
-    // ===== 唤醒灵敏度设置 =====
-    /**
-     * 更新三档预设按钮的选中高亮状态
-     * 选中的按钮：填充背景（主题色）+ 白色文字
-     * 未选中的按钮：透明背景 + 灰色文字（无描边，不高亮）
-     */
     private fun updatePresetButtonState(selectedLevel: Int) {
         val buttons = listOf(
             binding.btnSensLow to 0,
@@ -919,14 +811,12 @@ class MainActivity : AppCompatActivity() {
         for ((btn, level) in buttons) {
             val selected = (level == selectedLevel)
             btn.isSelected = selected
-            btn.isEnabled = true  // 所有按钮都保持可点击
+            btn.isEnabled = true
             if (selected) {
-                // 选中：填充背景
                 btn.setBackgroundColor(accentColor)
                 btn.setTextColor(whiteColor)
                 btn.strokeWidth = 0
             } else {
-                // 未选中：透明背景 + 灰色文字（无描边，不高亮）
                 btn.setBackgroundColor(android.graphics.Color.TRANSPARENT)
                 btn.setTextColor(grayColor)
                 btn.strokeWidth = 0
@@ -940,9 +830,7 @@ class MainActivity : AppCompatActivity() {
             getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
                 .putInt(KEY_SENSITIVITY, level).apply()
         }
-        // 更新按钮状态
         updatePresetButtonState(level)
-        // 更新描述
         val gain = WakeWordEngine.getAudioGain()
         val threshold = WakeWordEngine.getDetectionThreshold()
         binding.tvSensitivityDesc.text = "当前：${WakeWordEngine.getSensitivityName()}（增益${gain}x，阈值$threshold）"
@@ -957,7 +845,6 @@ class MainActivity : AppCompatActivity() {
         binding.tvServiceState.text = if (running) getString(R.string.state_running) else getString(R.string.state_stopped)
         binding.btnToggleService.text = if (running) getString(R.string.btn_stop_service) else getString(R.string.btn_start_service)
         binding.btnBackground.isEnabled = running
-        // 更新 TTS 状态
         updateTtsState()
         binding.tvVoiceState.text = when (VoiceAssistantService.currentState) {
             VoiceAssistantService.State.IDLE -> if (running) getString(R.string.voice_state_idle) else getString(R.string.voice_state_none)
@@ -965,14 +852,9 @@ class MainActivity : AppCompatActivity() {
             VoiceAssistantService.State.PROCESSING -> getString(R.string.state_processing)
             VoiceAssistantService.State.SPEAKING -> getString(R.string.state_speaking)
         }
-        // 刷新最近意图结果
         val lastIntent = VoiceAssistantService.lastIntentResult
         binding.tvLastIntent.text = lastIntent
 
-        // 刷新录音 RMS 峰值（车机上看不到日志，峰值更有意义）
-        // 显示本次录音的峰值，下次录音开始时重置
-        // 注意：这里的 RMS 是增益后的值，不是原始音频的 RMS
-        // 合理范围：5000~10000 最佳，10000~15000 可接受但偏高，>15000 削顶风险
         val rms = VoiceAssistantService.peakRms
         val rmsStatus = when {
             rms == 0 -> "待机"
@@ -985,10 +867,6 @@ class MainActivity : AppCompatActivity() {
         binding.tvRms.text = "录音峰值: $rms ($rmsStatus)"
     }
 
-    /**
-     * 只检测一次 TTS 引擎可用性（在 onCreate 中调用）
-     * 创建临时 TextToSpeech 实例，通过 onInit 回调判断是否可用
-     */
     private fun checkTtsOnce() {
         if (ttsChecked) return
         try {
@@ -1010,10 +888,8 @@ class MainActivity : AppCompatActivity() {
                     ttsEngineName = ""
                     android.util.Log.w("MainActivity", "TTS检测失败：status=$status")
                 }
-                // 检测完成后释放临时实例
                 ttsChecker?.shutdown()
                 ttsChecker = null
-                // 刷新UI显示
                 runOnUiThread { updateTtsState() }
             }
         } catch (e: Exception) {
@@ -1023,10 +899,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * 更新 TTS 状态显示（根据 checkTtsOnce 的检测结果）
-     * 有 TTS 引擎时用语音提示"在呢，您请说"，没有时自动降级为哔哔声
-     */
     private fun updateTtsState() {
         if (!ttsChecked) {
             binding.tvTtsState.text = getString(R.string.tts_checking)
@@ -1045,14 +917,8 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * TTS 按钮点击事件：
-     * - TTS 可用时：打开系统 TTS 设置页面
-     * TTS 不可用时：跳转到应用商店搜索推荐的离线 TTS 引擎（讯飞语音+）
-     */
     private fun openTtsSettings() {
         if (ttsAvailable) {
-            // TTS 可用：打开系统 TTS 设置页面，用户可以切换引擎/调整语速
             try {
                 val intent = Intent("com.android.settings.TTS_SETTINGS")
                 intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -1061,16 +927,13 @@ class MainActivity : AppCompatActivity() {
                 toast(getString(R.string.toast_tts_settings_failed))
             }
         } else {
-            // TTS 不可用：跳转到应用商店搜索推荐的离线 TTS 引擎
             try {
-                // 优先搜索讯飞语音+（国内最稳定的离线中文TTS）
                 val intent = Intent(Intent.ACTION_VIEW,
                     android.net.Uri.parse("market://search?q=讯飞语音+ TTS 离线"))
                 startActivity(intent)
                 toast("请在应用商店搜索并安装「讯飞语音+」，安装后在系统设置中设为默认TTS引擎")
             } catch (e: Exception) {
                 try {
-                    // 备用：打开浏览器搜索讯飞语音+下载
                     val intent = Intent(Intent.ACTION_VIEW,
                         android.net.Uri.parse("https://lcjly.cn/car/讯飞语记v8.4.1459.apk"))
                     startActivity(intent)
@@ -1102,7 +965,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // ---------- 权限及设置跳转 ----------
     private fun canDrawOverlays(): Boolean {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             Settings.canDrawOverlays(this)
@@ -1121,63 +983,46 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * 打开系统自启动设置页面。
-     * 尝试跳转到各个厂商的自启动管理页面，如果都失败则跳转到应用详情页。
-     */
     private fun openAutoStartSettings() {
-        // 各个厂商的自启动管理页面 Intent（按优先级排序）
         val autoStartIntents = listOf(
-            // ===== 手机厂商 =====
-            // 小米/红米
             Intent().apply {
                 component = android.content.ComponentName(
                     "com.miui.securitycenter",
                     "com.miui.permcenter.autostart.AutoStartManagementActivity"
                 )
             },
-            // 华为/荣耀
             Intent().apply {
                 component = android.content.ComponentName(
                     "com.huawei.systemmanager",
                     "com.huawei.systemmanager.optimize.process.ProtectActivity"
                 )
             },
-            // OPPO
             Intent().apply {
                 component = android.content.ComponentName(
                     "com.coloros.safecenter",
                     "com.coloros.safecenter.permission.startup.StartupAppListActivity"
                 )
             },
-            // vivo
             Intent().apply {
                 component = android.content.ComponentName(
                     "com.iqoo.secure",
                     "com.iqoo.secure.ui.phoneoptimize.AddWhiteListActivity"
                 )
             },
-            // 三星
             Intent().apply {
                 component = android.content.ComponentName(
                     "com.samsung.android.sm",
                     "com.samsung.android.sm.ui.ram.AutoRunActivity"
                 )
             },
-            // ===== 通用 Android / 车机系统 =====
-            // 通用：应用详情页（大多数系统都有）
             Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
                 data = Uri.parse("package:$packageName")
             },
-            // 通用：电池优化设置（设置电池为"不受限"可以防止系统杀后台）
             Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS),
-            // 通用：特殊应用访问
             Intent(Settings.ACTION_APPLICATION_SETTINGS),
-            // 通用：所有应用列表
             Intent(Settings.ACTION_MANAGE_APPLICATIONS_SETTINGS)
         )
 
-        // 尝试跳转到各个自启动管理页面
         for (intent in autoStartIntents) {
             try {
                 intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -1190,7 +1035,6 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // 都失败了，显示详细的手动操作指引
         val message = getString(R.string.dialog_auto_start_message)
         androidx.appcompat.app.AlertDialog.Builder(this)
             .setTitle(R.string.dialog_auto_start_title)
@@ -1231,13 +1075,17 @@ class MainActivity : AppCompatActivity() {
 
     // ---------- 日志与权限 ----------
     private fun log(msg: String) {
-        val time = SimpleDateFormat("HH:mm:ss", Locale.CHINA).format(Date())
-        binding.tvLog.append("[$time] $msg\n")
-        binding.scrollLog.post { binding.scrollLog.fullScroll(android.view.View.FOCUS_DOWN) }
-        // ★ 同时写入 LogUtils 文件日志，这样在日志查看页也能看到（方便排查U盘导入导出问题）
+        // ★ 写文件日志：任何线程都可以调用（LogUtils 内部有锁，线程安全）
         try {
             com.xisohi.car.voiceassistant.core.LogUtils.i("MainActivity", msg)
         } catch (_: Exception) {}
+
+        // ★ 操作 UI：必须切回主线程
+        runOnUiThread {
+            val time = SimpleDateFormat("HH:mm:ss", Locale.CHINA).format(Date())
+            binding.tvLog.append("[$time] $msg\n")
+            binding.scrollLog.post { binding.scrollLog.fullScroll(android.view.View.FOCUS_DOWN) }
+        }
     }
 
     private fun ensurePermissions() {
@@ -1250,30 +1098,21 @@ class MainActivity : AppCompatActivity() {
         if (Build.VERSION.SDK_INT >= 33) needed.add(Manifest.permission.POST_NOTIFICATIONS)
         if (Build.VERSION.SDK_INT >= 31) needed.add(Manifest.permission.BLUETOOTH_CONNECT)
 
-        // 存储权限：车机（Android 10，鼎微/全志方案）访问 U 盘需要存储权限
-        // 之前错误地认为"直接用 File API 访问 U 盘不需要权限"，实际测试会 Permission denied
         if (Build.VERSION.SDK_INT <= 29) {
-            // Android 10 及以下：申请 READ/WRITE_EXTERNAL_STORAGE
             needed.add(Manifest.permission.READ_EXTERNAL_STORAGE)
             needed.add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
         }
-        // Android 11+：需要 MANAGE_EXTERNAL_STORAGE（在 checkAndRequestManageExternalStorage 里单独处理）
 
         val missing = needed.filter { !hasPermission(it) }
         if (missing.isNotEmpty()) {
             permissionLauncher.launch(missing.toTypedArray())
         }
 
-        // Android 11+ 检查"所有文件访问权限"，没有则引导用户开启
         if (Build.VERSION.SDK_INT >= 30) {
             checkAndRequestManageExternalStorage()
         }
     }
 
-    /**
-     * Android 11+ 检查并请求"所有文件访问权限"（MANAGE_EXTERNAL_STORAGE）
-     * 这个权限不能用 requestPermissions 申请，必须引导用户去设置页面手动开启
-     */
     private fun checkAndRequestManageExternalStorage() {
         if (Build.VERSION.SDK_INT < 30) return
         try {
@@ -1288,7 +1127,6 @@ class MainActivity : AppCompatActivity() {
                             intent.data = android.net.Uri.parse("package:$packageName")
                             startActivity(intent)
                         } catch (e: Exception) {
-                            // 某些车机系统可能不支持这个 Intent，回退到通用设置页
                             try {
                                 val intent = android.content.Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
                                 startActivity(intent)
