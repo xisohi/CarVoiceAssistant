@@ -55,7 +55,10 @@ class BootReceiver : BroadcastReceiver() {
             // ★ 鼎微/全志车机特有广播（从固件解包发现）
             "com.unisound.intent.action.ACC_ON",       // 点火开机
             "com.unisound.intent.action.DO_WAKEUP",    // 车机唤醒
-            "com.unisound.intent.action.DO_SHOW"        // 车机显示
+            "com.unisound.intent.action.DO_SHOW",      // 车机显示
+            // ★ 电源相关（车机点火/熄火）
+            Intent.ACTION_POWER_CONNECTED,             // 电源连接（点火）
+            "android.intent.action.ACTION_POWER_CONNECTED"
         )
         val isBootAction = action in bootActions
         if (!isBootAction) return
@@ -81,8 +84,14 @@ class BootReceiver : BroadcastReceiver() {
         }
 
         // 开机广播：延迟启动，等待系统完全就绪（车机系统启动较慢）
-        val delayMs = 8000L
-        LogUtils.d(TAG, "开机广播，延迟${delayMs}ms后启动服务...")
+        val delayMs = if (action == Intent.ACTION_POWER_CONNECTED) {
+            // 点火唤醒不用等太久，3秒就够了
+            3000L
+        } else {
+            // 冷启动要等久一点
+            8000L
+        }
+        LogUtils.d(TAG, "广播 $action，延迟${delayMs}ms后启动服务...")
 
         Handler(Looper.getMainLooper()).postDelayed({
             tryStartServices(context, 0)
