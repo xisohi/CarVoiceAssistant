@@ -30,6 +30,8 @@ class MediaSkill(private val context: Context) {
     fun execute(intent: VoiceIntent): ExecutionResult = when (intent.action) {
         // "播放音乐"：如果播放器没打开，先打开再播放；如果已打开，直接播放
         "media.play" -> ensurePlayerAndPlay()
+        // "播放XXX"：用 MusicFree 直接搜索并播放
+        "media.search_play" -> searchAndPlay(intent.params["keyword"] ?: "")
         // 暂停/下一首/上一首时，取消待执行的自动播放任务
         // 场景：用户说"播放音乐"→ 打开播放器 + 延迟4秒发播放键；4秒内用户说"暂停"
         // 如果不取消，4秒后播放键还会发，导致暂停后又自动播放
@@ -178,6 +180,52 @@ class MediaSkill(private val context: Context) {
         val index = parseSongIndex(indexStr)
         if (index <= 0) return ExecutionResult(false, "请说第几首，比如第三首")
         return ExecutionResult(false, "请手动在播放器中选择第${indexStr}首歌曲")
+    }
+
+    /**
+     * 搜索并播放歌曲（MusicFree 专用）
+     * 格式: musicfree://play?keyword=<URL编码的关键词>
+     */
+    private fun searchAndPlay(keyword: String): ExecutionResult {
+        if (keyword.isBlank()) {
+            return ExecutionResult(false, "请说要播放的歌曲名称")
+        }
+        
+        // ★ 优化关键词：把"的"换成空格，方便 MusicFree 搜索
+        // "周传雄的黄昏" → "周传雄 黄昏"
+        val optimizedKeyword = keyword.replace("的", " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+        android.util.Log.d("MediaSkill", "搜索播放: 原关键词='$keyword', 优化后='$optimizedKeyword'")
+        
+        try {
+            // ★ 关键修复1：URLEncoder 把空格编成 +，但 MusicFree 的 decodeURIComponent 不认 +
+            // 必须把 + 替换成 %20
+            val encodedKeyword = java.net.URLEncoder
+                .encode(optimizedKeyword, "UTF-8")
+                .replace("+", "%20")
+            
+            val uri = android.net.Uri.parse("musicfree://play?keyword=$encodedKeyword")
+            val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, uri).apply {
+                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                setPackage("fun.upup.musicfree")
+            }
+            
+            // ★ 关键修复2：不用 resolveActivity（Android 11+ 有包可见性限制会误判）
+            // 直接 startActivity，用 try-catch 判断
+            context.startActivity(intent)
+            musicPlayerManager.setActivePlayer("fun.upup.musicfree")
+            
+            android.util.Log.i("MediaSkill", "已调用 MusicFree 搜索: $optimizedKeyword")
+            return ExecutionResult(true, "正在搜索：$optimizedKeyword")
+            
+        } catch (e: android.content.ActivityNotFoundException) {
+            android.util.Log.w("MediaSkill", "MusicFree 未安装", e)
+            return ExecutionResult(false, "未安装 MusicFree，无法搜索播放")
+        } catch (e: Exception) {
+            android.util.Log.e("MediaSkill", "搜索播放失败", e)
+            return ExecutionResult(false, "搜索播放失败：${e.message ?: "未知错误"}")
+        }
     }
 
     /** 解析歌曲序号（支持"3"、"第三首"、"两首"等） */

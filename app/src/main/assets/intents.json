@@ -149,6 +149,28 @@
       ]
     },
     {
+      "id": "media.search_play",
+      "action": "media.search_play",
+      "slots": [
+        "keyword"
+      ],
+      "grammar": [
+        "播放周杰伦的晴天",
+        "放周传雄的黄昏",
+        "我想听稻香",
+        "找一首成都",
+        "搜索歌曲告白气球"
+      ],
+      "patterns": [
+        {
+          "re": "(播放|放|听|唱|来一首|找一首|搜索)\\s*(?<keyword>[\\u4e00-\\u9fa5A-Za-z0-9\\s]{1,30}?)(的歌|的音乐|的歌曲|这首歌)$"
+        },
+        {
+          "re": "(播放|放|听|唱|来一首|找一首|搜索)\\s*(?<keyword>[\\u4e00-\\u9fa5A-Za-z0-9\\s]{2,30})"
+        }
+      ]
+    },
+    {
       "id": "media.pause",
       "action": "media.pause",
       "slots": [],

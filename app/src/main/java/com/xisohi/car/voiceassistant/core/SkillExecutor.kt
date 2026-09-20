@@ -78,7 +78,7 @@ class SkillExecutor(private val context: Context) {
             "phone.call" ->
                 phoneSkill.execute(intent)
             // 媒体（转发给 MediaSkill）
-            "media.play", "media.pause", "media.next", "media.prev" ->
+            "media.play", "media.pause", "media.next", "media.prev", "media.search_play" ->
                 mediaSkill.execute(intent)
             // 导航（转发给 NavigationSkill）
             "nav.to", "nav.home", "nav.company", "nav.nearby" ->
