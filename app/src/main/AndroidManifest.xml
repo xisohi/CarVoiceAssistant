@@ -121,6 +121,10 @@
                 <action android:name="android.intent.action.ACTION_BOOT_COMPLETED" />
                 <action android:name="com.android.systemui.BOOT_COMPLETED" />
                 <action android:name="android.intent.action.BOOT_COMPLETED_FINISHED" />
+                <!-- ★ 鼎微/全志车机特有广播（从固件解包发现） -->
+                <action android:name="com.unisound.intent.action.ACC_ON" />
+                <action android:name="com.unisound.intent.action.DO_WAKEUP" />
+                <action android:name="com.unisound.intent.action.DO_SHOW" />
                 <!-- 注意：Android 8.0+ 大部分隐式广播被禁止静态注册接收
                      （CONNECTIVITY_CHANGE、MEDIA_MOUNTED、HEADSET_PLUG 等都收不到）
                      服务被杀后的兜底由 AutoStartWorker（WorkManager，每15分钟检查）负责 -->

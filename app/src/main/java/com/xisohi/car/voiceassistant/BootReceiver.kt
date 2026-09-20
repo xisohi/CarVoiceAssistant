@@ -51,7 +51,11 @@ class BootReceiver : BroadcastReceiver() {
             "com.htc.intent.action.QUICKBOOT_POWERON",
             "android.intent.action.ACTION_BOOT_COMPLETED",
             "com.android.systemui.BOOT_COMPLETED",
-            "android.intent.action.BOOT_COMPLETED_FINISHED"
+            "android.intent.action.BOOT_COMPLETED_FINISHED",
+            // ★ 鼎微/全志车机特有广播（从固件解包发现）
+            "com.unisound.intent.action.ACC_ON",       // 点火开机
+            "com.unisound.intent.action.DO_WAKEUP",    // 车机唤醒
+            "com.unisound.intent.action.DO_SHOW"        // 车机显示
         )
         val isBootAction = action in bootActions
         if (!isBootAction) return
