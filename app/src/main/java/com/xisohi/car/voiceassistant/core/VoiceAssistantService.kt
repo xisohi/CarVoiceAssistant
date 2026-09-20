@@ -59,7 +59,7 @@ class VoiceAssistantService : Service() {
         private const val CHANNEL_ID = "voice_assistant"
         private const val NOTIF_ID = 1
         private const val MAX_RECORD_MS = 20_000L  // 最长录音 20 秒（给用户足够时间说话）
-        private const val MIN_RECORD_MS = 2_000L    // 最短录音 2 秒（避免短暂停顿被误判为端点）
+        private const val MIN_RECORD_MS = 800L     // 最短录音 800ms（和静音判定一致）
         private const val MAX_SILENCE_MS = 2000L     // 连续静音超过 2000ms 才认为用户说完了（避免说话中间间隙误判）
         private const val WAIT_SPEECH_TIMEOUT_MS = 8_000L  // 用户开口前的等待上限（8秒没有效声音就自动退出，避免无限循环"没有听清"）
         private const val EXTERNAL_NAV_PAUSE_MS = 30_000L   // 拉起支持语音选择的导航后，暂停唤醒监听的时长（给导航让出麦克风）
@@ -82,7 +82,7 @@ class VoiceAssistantService : Service() {
         // 公式：adaptiveThreshold = ambientRms * NOISE_MULTIPLIER，并限制在 [MIN, MAX] 区间
         // 注意：车机环境通常很安静（环境噪音 RMS 50-150），下限不能设太高，
         // 否则正常说话的轻音（辅音、轻声）会被误判为静音，导致录音只录前半段。
-        private const val SILENCE_RMS_MIN = 150f      // 绝对下限（安静停车环境，之前500太高导致轻音被误判）
+        private const val SILENCE_RMS_MIN = 300f      // 绝对下限（提高到300，避免底噪尖峰导致静音尾巴过长）
         private const val SILENCE_RMS_MAX = 1200f     // 绝对上限（防止噪音过大导致阈值过高）
         private const val NOISE_MULTIPLIER = 2.0f     // 环境噪音倍数（稍微提高，让安静环境下阈值更合理）
         private const val NOISE_WARMUP_MS = 100L      // 丢弃前 100ms（录音启动爆音）
@@ -998,7 +998,7 @@ class VoiceAssistantService : Service() {
             var lastPartial = ""
             var lastPartialUpdateMs = 0L
             var silenceDuration = 0L
-            var nonSilenceFrameCount = 0  // ★ 连续非静音帧计数（用于端点检测防抖）
+            var consecutiveSilenceFrames = 0  // ★ 连续静音帧数（用于端点检测）
             var hasSpeechStarted = false
             var speechFrameCount = 0
             var finalText = ""
@@ -1080,28 +1080,34 @@ class VoiceAssistantService : Service() {
                     }
 
                     // 基于 RMS 的端点检测
-                    // ★ 改进：连续非静音帧确认（避免偶尔的底噪尖峰重置静音时长）
                     val recordDuration = SystemClock.elapsedRealtime() - startMs
-                    if (!isSilence) {
-                        nonSilenceFrameCount++
-                    } else {
-                        nonSilenceFrameCount = maxOf(0, nonSilenceFrameCount - 1)
-                    }
-                    
-                    if (hasSpeechStarted && isSilence) {
-                        silenceDuration += (n * 1000L / SpeechRecognizer.SAMPLE_RATE.toInt())
-                        // ★ 降低动态静音时间：有结果 1500ms，无结果 1000ms
-                        val dynamicSilenceMs = if (lastPartial.isNotEmpty()) 1500L else 1000L
-                        if (silenceDuration >= dynamicSilenceMs && recordDuration >= MIN_RECORD_MS) {
-                            android.util.Log.d("VoiceService",
-                                "连续静音${silenceDuration}ms，确认用户说完了，结束录音 (RMS=${rms.toInt()}, 阈值=${adaptiveSilenceThreshold.toInt()})")
+
+                    if (hasSpeechStarted) {
+                        if (isSilence) {
+                            // 连续静音帧计数
+                            consecutiveSilenceFrames++
+                            silenceDuration = consecutiveSilenceFrames * (n * 1000L / SpeechRecognizer.SAMPLE_RATE.toInt())
+
+                            // VAD 诊断日志（每 500ms 一次）
+                            if (recordDuration % 500 < 32) {
+                                android.util.Log.d("VoiceService",
+                                    "VAD诊断: duration=${recordDuration}ms, silence=${silenceDuration}ms, frames=${consecutiveSilenceFrames}, rms=${rms.toInt()}, 阈值=${adaptiveSilenceThreshold.toInt()}")
+                            }
+
+                            // 动态静音阈值：有结果 800ms，无结果 600ms
+                            val dynamicSilenceMs = if (lastPartial.isNotEmpty()) 800L else 600L
+                            if (silenceDuration >= dynamicSilenceMs && recordDuration >= MIN_RECORD_MS) {
+                                android.util.Log.d("VoiceService",
+                                    "连续静音${silenceDuration}ms（${consecutiveSilenceFrames}帧），结束录音 (RMS=${rms.toInt()}, 阈值=${adaptiveSilenceThreshold.toInt()})")
                                 sendRecognitionLog("⏹️ 结束录音 (静音${silenceDuration}ms, RMS=${rms.toInt()})")
-                            shouldStopRecording.set(true)
-                            break@loop
+                                shouldStopRecording.set(true)
+                                break@loop
+                            }
+                        } else {
+                            // 任何一帧非静音，重置连续静音计数
+                            consecutiveSilenceFrames = 0
+                            silenceDuration = 0
                         }
-                    } else if (nonSilenceFrameCount >= 3) {
-                        // ★ 只有连续 3 帧非静音，才认为真的在说话，重置静音时长
-                        silenceDuration = 0
                     }
 
                     // 超时保护
