@@ -125,6 +125,8 @@
                 <action android:name="com.unisound.intent.action.ACC_ON" />
                 <action android:name="com.unisound.intent.action.DO_WAKEUP" />
                 <action android:name="com.unisound.intent.action.DO_SHOW" />
+                <!-- ★ 电源相关（车机点火/熄火） -->
+                <action android:name="android.intent.action.ACTION_POWER_CONNECTED" />
                 <!-- 注意：Android 8.0+ 大部分隐式广播被禁止静态注册接收
                      （CONNECTIVITY_CHANGE、MEDIA_MOUNTED、HEADSET_PLUG 等都收不到）
                      服务被杀后的兜底由 AutoStartWorker（WorkManager，每15分钟检查）负责 -->
