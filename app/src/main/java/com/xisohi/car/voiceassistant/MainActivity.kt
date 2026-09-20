@@ -408,23 +408,8 @@ class MainActivity : AppCompatActivity() {
                 }
             }.start()
         }
-
         binding.btnImportBaiduConfig.setOnClickListener {
-            try {
-                filePickerLauncher.launch(arrayOf("application/json", "*/*"))
-                log("打开文件选择器，选择百度配置文件")
-            } catch (e: Exception) {
-                log("系统文件选择器不可用：${e.message}，尝试扫描U盘")
-                // ★ 必须在后台线程执行！StorageManager 遍历 USB 存储卷涉及跨进程 binder 调用，
-                // 在主线程执行会卡住导致 ANR，应用被系统杀死
-                Thread {
-                    try {
-                        scanUsbAndImport()
-                    } catch (e2: Exception) {
-                        log("U盘扫描异常: ${e2.javaClass.simpleName}: ${e2.message}")
-                    }
-                }.start()
-            }
+            showImportGuide()
         }
     }
 
@@ -1147,6 +1132,71 @@ class MainActivity : AppCompatActivity() {
 
     private fun hasPermission(p: String): Boolean =
         ContextCompat.checkSelfPermission(this, p) == PackageManager.PERMISSION_GRANTED
+
+
+    /**
+     * 导入指南：引导用户用车机文件管理器复制文件
+     */
+    private fun showImportGuide() {
+        val filesDir = getExternalFilesDir(null)?.absolutePath ?: "内部存储/Android/data/$packageName/files"
+        
+        val message = """
+            请按以下步骤导入百度配置文件：
+            
+            1. 打开车机自带的「文件管理器」
+            2. 找到 U 盘里的配置文件（.json）
+            3. 复制该文件
+            4. 粘贴到以下目录：
+               $filesDir
+            
+            5. 粘贴完成后，回到本页面
+            6. 配置会自动加载，点「测试连接」验证
+            
+            💡 配置文件默认文件名：baidu_config.json
+        """.trimIndent()
+        
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("导入百度配置文件")
+            .setMessage(message)
+            .setPositiveButton("知道了") { _, _ ->
+                toast("请用车机文件管理器复制文件到指定目录")
+                log("用户查看导入指南，目录: $filesDir")
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    /**
+     * 导出指南：引导用户用车机文件管理器导出日志
+     */
+    private fun showExportGuide() {
+        val filesDir = getExternalFilesDir(null)?.absolutePath ?: "内部存储/Android/data/$packageName/files"
+        val logsDir = "$filesDir/logs"
+        
+        val message = """
+            请按以下步骤导出日志：
+            
+            1. 打开车机自带的「文件管理器」
+            2. 找到以下目录：
+               $logsDir
+            
+            3. 找到最新的日志文件（.txt）
+            4. 复制该文件
+            5. 粘贴到 U 盘
+            
+            💡 日志文件按日期命名，如：2026-09-20.txt
+        """.trimIndent()
+        
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("导出日志")
+            .setMessage(message)
+            .setPositiveButton("知道了") { _, _ ->
+                toast("请用车机文件管理器复制日志文件到 U 盘")
+                log("用户查看导出指南，目录: $logsDir")
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
 
     private fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
 }
