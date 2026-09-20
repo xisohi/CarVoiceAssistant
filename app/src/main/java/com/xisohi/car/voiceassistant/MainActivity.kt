@@ -626,12 +626,16 @@ class MainActivity : AppCompatActivity() {
                 log("U盘扫描完成：未找到 .json 文件")
             }
             jsonFiles.size == 1 -> {
-                log("U盘只找到一个配置文件，直接导入: ${jsonFiles[0].name}")
-                importBaiduConfigFromFile(jsonFiles[0])
+                runOnUiThread {
+                    log("U盘只找到一个配置文件，直接导入: ${jsonFiles[0].name}")
+                    importBaiduConfigFromFile(jsonFiles[0])
+                }
             }
             else -> {
-                log("U盘找到 ${jsonFiles.size} 个配置文件，弹出选择对话框")
-                showFileSelectDialog(jsonFiles)
+                runOnUiThread {
+                    log("U盘找到 ${jsonFiles.size} 个配置文件，弹出选择对话框")
+                    showFileSelectDialog(jsonFiles)
+                }
             }
         }
     }
@@ -707,11 +711,13 @@ class MainActivity : AppCompatActivity() {
                 return
             }
 
-            binding.etBaiduAppId.setText(appId)
-            binding.etBaiduApiKey.setText(apiKey)
-            binding.etBaiduSecretKey.setText(secretKey)
-            baiduAsrManager.saveConfig(appId, apiKey, secretKey)
-            updateBaiduStatus()
+            runOnUiThread {
+                binding.etBaiduAppId.setText(appId)
+                binding.etBaiduApiKey.setText(apiKey)
+                binding.etBaiduSecretKey.setText(secretKey)
+                baiduAsrManager.saveConfig(appId, apiKey, secretKey)
+                updateBaiduStatus()
+            }
 
             toast("配置导入成功！请点测试连接验证配置")
             log("配置导入成功（状态=未验证，请点测试连接）")
@@ -1147,5 +1153,9 @@ class MainActivity : AppCompatActivity() {
     private fun hasPermission(p: String): Boolean =
         ContextCompat.checkSelfPermission(this, p) == PackageManager.PERMISSION_GRANTED
 
-    private fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+    private fun toast(msg: String) {
+        runOnUiThread {
+            Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+        }
+    }
 }
