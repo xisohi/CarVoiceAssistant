@@ -18,6 +18,7 @@ class MusicPlayerManager(private val context: Context) {
     // 音乐播放器优先级列表（从高到低）
     private val musicPlayerPackages = listOf(
         "fun.upup.musicfree",          // MusicFree（开源，支持自动搜索播放）
+        "com.tw.music",                // 鼎微车机音乐播放器
         "com.netease.cloudmusic.iot",  // 网易云音乐车机版（IoT）
         "com.tencent.qqmusiccar",      // QQ音乐车机版
         "com.kugou.android.auto",      // 酷狗音乐车机版
