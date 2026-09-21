@@ -121,10 +121,16 @@
                 <action android:name="android.intent.action.ACTION_BOOT_COMPLETED" />
                 <action android:name="com.android.systemui.BOOT_COMPLETED" />
                 <action android:name="android.intent.action.BOOT_COMPLETED_FINISHED" />
-                <!-- ★ 鼎微/全志车机特有广播（从固件解包发现） -->
+                <!-- ★ 鼎微/全志车机特有广播（从360 APK解包发现） -->
                 <action android:name="com.unisound.intent.action.ACC_ON" />
                 <action android:name="com.unisound.intent.action.DO_WAKEUP" />
                 <action android:name="com.unisound.intent.action.DO_SHOW" />
+                <!-- ★ 360 验证过的唤醒广播 -->
+                <action android:name="com.unisound.intent.action.Baios_WAKEUP" />
+                <action android:name="com.unisound.intent.action.Baios_SHUTDOWN" />
+                <action android:name="com.unisound.intent.action.DO_SHUTDOWN" />
+                <action android:name="com.unisound.intent.action.DO_HIDE" />
+                <action android:name="com.unisound.intent.action.DO_SLEEP" />
                 <!-- ★ 屏幕亮/唤醒相关（点火唤醒最常用） -->
                 <action android:name="android.intent.action.SCREEN_ON" />
                 <action android:name="android.intent.action.SCREEN_OFF" />

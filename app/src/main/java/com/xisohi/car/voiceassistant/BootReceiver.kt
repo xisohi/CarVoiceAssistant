@@ -54,14 +54,16 @@ class BootReceiver : BroadcastReceiver() {
             "android.intent.action.ACTION_BOOT_COMPLETED",
             "com.android.systemui.BOOT_COMPLETED",
             "android.intent.action.BOOT_COMPLETED_FINISHED",
-            // ★ 鼎微/全志车机特有广播（从固件解包发现）
+            // ★ 鼎微/全志车机特有广播（从360 APK解包验证）
             "com.unisound.intent.action.ACC_ON",       // 点火开机
             "com.unisound.intent.action.DO_WAKEUP",    // 车机唤醒
             "com.unisound.intent.action.DO_SHOW",      // 车机显示
-            "com.unisound.intent.action.DO_WAKEUP",
+            // ★ 360 验证过的广播
+            "com.unisound.intent.action.Baios_WAKEUP",  // ★ 这个才是唤醒的！
+            "com.unisound.intent.action.Baios_SHUTDOWN",
+            "com.unisound.intent.action.DO_SHUTDOWN",
             "com.unisound.intent.action.DO_HIDE",
             "com.unisound.intent.action.DO_SLEEP",
-            "com.unisound.intent.action.DO_SHUTDOWN",
             // ★ 电源/点火相关
             Intent.ACTION_POWER_CONNECTED,             // 电源连接（点火）
             "android.intent.action.ACTION_POWER_CONNECTED",
