@@ -960,7 +960,7 @@ class VoiceAssistantService : Service() {
             // ★★★ 方案3：生产者-消费者模式，录音线程和识别线程分离 ★★★
             // 录音线程（生产者）：只做 record.read() + 入队，不做任何处理，避免阻塞导致丢帧
             // 识别线程（消费者，当前协程）：从队列取音频 + 所有处理（降噪/增益/Vosk识别/UI更新/端点检测）
-            val audioQueue = java.util.concurrent.LinkedBlockingQueue<AudioFrame>(300)  // 约10秒缓冲
+            val audioQueue = java.util.concurrent.LinkedBlockingQueue<AudioFrame>(100)  // 约3秒缓冲
             val recordingFinished = java.util.concurrent.atomic.AtomicBoolean(false)
 
             // ★ 录音线程（生产者）：只做录音和入队，极轻量，不会阻塞
@@ -1095,12 +1095,13 @@ class VoiceAssistantService : Service() {
                             }
 
                             // 动态静音阈值：有结果 800ms，无结果 600ms
-                            val dynamicSilenceMs = if (lastPartial.isNotEmpty()) 800L else 600L
+                            val dynamicSilenceMs = if (lastPartial.isNotEmpty()) 600L else 400L
                             if (silenceDuration >= dynamicSilenceMs && recordDuration >= MIN_RECORD_MS) {
                                 android.util.Log.d("VoiceService",
                                     "连续静音${silenceDuration}ms（${consecutiveSilenceFrames}帧），结束录音 (RMS=${rms.toInt()}, 阈值=${adaptiveSilenceThreshold.toInt()})")
                                 sendRecognitionLog("⏹️ 结束录音 (静音${silenceDuration}ms, RMS=${rms.toInt()})")
                                 shouldStopRecording.set(true)
+                                audioQueue.clear()   // ★ 清空队列，消除积压的尾巴
                                 break@loop
                             }
                         } else {
@@ -1116,6 +1117,7 @@ class VoiceAssistantService : Service() {
                         android.util.Log.d("VoiceService",
                             "录音超时（${if (hasSpeechStarted) "已开口" else "未检测到语音"}，${recordDuration}ms）")
                         shouldStopRecording.set(true)
+                        audioQueue.clear()   // ★ 超时也清空队列
                         break@loop
                     }
                 }
@@ -1139,10 +1141,11 @@ class VoiceAssistantService : Service() {
                     val n = frame.length
                     System.arraycopy(frame.data, 0, shortBuf, 0, n)
                     recNoiseReducer.process(shortBuf, n, enableRnNoise = false)
+                    // ★ 先应用增益，再保存和识别（这样保存的录音文件声音就大了）
+                    applyGain(shortBuf, n)
                     val baiduBytes = ByteArray(n * 2)
                     shortsToBytes(shortBuf, n, baiduBytes)
                     audioBuffer.write(baiduBytes)
-                    applyGain(shortBuf, n)
                     shortsToBytes(shortBuf, n, byteBuf)
                     recognizer.feed(byteBuf, n * 2)
                 }
@@ -1153,7 +1156,10 @@ class VoiceAssistantService : Service() {
                 // 保存本次录音为 WAV 文件
                 try {
                     val saveLabel = finalText.ifEmpty { "未识别" }
-                    AudioSaver.saveRecording(audioBuffer.toByteArray(), saveLabel)
+                    // ★ 裁剪尾部静音，只保留到最后一个非静音帧
+                    val rawAudio = audioBuffer.toByteArray()
+                    val trimmedAudio = trimTrailingSilence(rawAudio, adaptiveSilenceThreshold.toInt(), 512)
+                    AudioSaver.saveRecording(trimmedAudio, saveLabel)
                 } catch (e: Exception) {
                     android.util.Log.w("VoiceService", "保存录音失败: ${e.message}")
                 }
@@ -1168,6 +1174,40 @@ class VoiceAssistantService : Service() {
             }
             withContext(Dispatchers.Main) { handleText(finalText) }
         }
+    }
+
+    /**
+     * 裁剪音频尾部的静音（只保留到最后一个非静音帧）
+     */
+    private fun trimTrailingSilence(pcm: ByteArray, threshold: Int, frameSize: Int = 512): ByteArray {
+        val frameBytes = frameSize * 2  // 每帧 frameSize samples * 2 bytes
+        val totalFrames = pcm.size / frameBytes
+        if (totalFrames <= 0) return pcm
+
+        // 从最后一帧往前扫，找到最后一个非静音帧
+        var lastNonSilentFrame = totalFrames - 1
+        for (i in totalFrames - 1 downTo 0) {
+            val offset = i * frameBytes
+            var sum = 0L
+            for (j in 0 until frameBytes step 2) {
+                val lo = pcm[offset + j].toInt() and 0xFF
+                val hi = pcm[offset + j + 1].toInt() and 0xFF
+                val sample = ((hi shl 8) or lo).toShort().toInt()
+                sum += sample.toLong() * sample
+            }
+            val rms = kotlin.math.sqrt(sum.toDouble() / (frameBytes / 2))
+            if (rms > threshold) {
+                lastNonSilentFrame = i
+                break
+            }
+        }
+
+        // 保留到最后一个非静音帧 + 3 帧（约 96ms）余量
+        val keepFrames = (lastNonSilentFrame + 1 + 3).coerceAtMost(totalFrames)
+        val trimmedSize = keepFrames * frameBytes
+        android.util.Log.d("VoiceService",
+            "裁剪尾部静音: 原 ${pcm.size} bytes, 裁剪后 $trimmedSize bytes")
+        return pcm.copyOfRange(0, trimmedSize)
     }
 
     /**
