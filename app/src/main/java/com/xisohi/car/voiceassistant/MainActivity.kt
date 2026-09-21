@@ -470,13 +470,19 @@ class MainActivity : AppCompatActivity() {
                     val result = m.invoke(volume) as? java.io.File
                     log("    反射成功, dir=${result?.absolutePath}")
                     result
-                } catch (e: Exception) {
+                } catch (e: Throwable) {
                     log("    反射失败: ${e.message}，尝试公开 API（API 30+）")
                     try {
-                        val d = volume.directory
-                        log("    公开 API 成功, dir=${d?.absolutePath}")
-                        d
-                    } catch (e2: Exception) {
+                        // ★ volume.directory 是 API 30+ 方法，Android 10 上会抛 NoSuchMethodError（Error 不是 Exception）
+                        if (android.os.Build.VERSION.SDK_INT >= 30) {
+                            val d = volume.directory
+                            log("    公开 API 成功, dir=${d?.absolutePath}")
+                            d
+                        } else {
+                            log("    API < 30，跳过公开 API")
+                            null
+                        }
+                    } catch (e2: Throwable) {
                         log("    公开 API 也失败: ${e2.message}")
                         null
                     }
@@ -514,7 +520,7 @@ class MainActivity : AppCompatActivity() {
                     log("    ✅ 加入扫描列表: ${dir.absolutePath}")
                 }
             }
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             log("StorageManager 枚举存储卷失败: ${e.message}")
         }
 

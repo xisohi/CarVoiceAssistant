@@ -155,11 +155,16 @@ class LogViewerActivity : AppCompatActivity() {
                 val dir = try {
                     val getDirectoryMethod = volume.javaClass.getMethod("getDirectory")
                     getDirectoryMethod.invoke(volume) as? java.io.File
-                } catch (e: Exception) {
+                } catch (e: Throwable) {
                     // 反射 getDirectory() 失败，尝试用公开 API（API 30+）
                     try {
-                        volume.directory
-                    } catch (e2: Exception) {
+                        // ★ volume.directory 是 API 30+ 方法，Android 10 上会抛 NoSuchMethodError（Error 不是 Exception）
+                        if (android.os.Build.VERSION.SDK_INT >= 30) {
+                            volume.directory
+                        } else {
+                            null
+                        }
+                    } catch (e2: Throwable) {
                         null
                     }
                 }
@@ -205,7 +210,7 @@ class LogViewerActivity : AppCompatActivity() {
                 LogUtils.i("LogViewer", "✅ StorageManager找到U盘: $usbName, path=${dir.absolutePath}")
                 break
             }
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             LogUtils.w("LogViewer", "StorageManager获取存储卷失败: ${e.message}")
         }
 
