@@ -1156,10 +1156,8 @@ class VoiceAssistantService : Service() {
                 // 保存本次录音为 WAV 文件
                 try {
                     val saveLabel = finalText.ifEmpty { "未识别" }
-                    // ★ 裁剪尾部静音，只保留到最后一个非静音帧
-                    val rawAudio = audioBuffer.toByteArray()
-                    val trimmedAudio = trimTrailingSilence(rawAudio, adaptiveSilenceThreshold.toInt(), 512)
-                    AudioSaver.saveRecording(trimmedAudio, saveLabel)
+                    // ★ 保存的就是识别器实际收到的完整音频（和识别器完全一致）
+                    AudioSaver.saveRecording(audioBuffer.toByteArray(), saveLabel)
                 } catch (e: Exception) {
                     android.util.Log.w("VoiceService", "保存录音失败: ${e.message}")
                 }
