@@ -125,8 +125,31 @@
                 <action android:name="com.unisound.intent.action.ACC_ON" />
                 <action android:name="com.unisound.intent.action.DO_WAKEUP" />
                 <action android:name="com.unisound.intent.action.DO_SHOW" />
-                <!-- ★ 电源相关（车机点火/熄火） -->
+                <!-- ★ 屏幕亮/唤醒相关（点火唤醒最常用） -->
+                <action android:name="android.intent.action.SCREEN_ON" />
+                <action android:name="android.intent.action.SCREEN_OFF" />
+                <action android:name="android.intent.action.USER_PRESENT" />
+                <action android:name="android.intent.action.CLOSE_SYSTEM_DIALOGS" />
+                <!-- ★ 开机阶段相关 -->
+                <action android:name="android.intent.action.PRE_BOOT_COMPLETED" />
+                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
+                <action android:name="android.intent.action.ACTION_SHUTDOWN" />
+                <!-- ★ 电源/点火相关 -->
                 <action android:name="android.intent.action.ACTION_POWER_CONNECTED" />
+                <action android:name="android.intent.action.POWER_CONNECTED" />
+                <action android:name="android.intent.action.ACTION_POWER_DISCONNECTED" />
+                <action android:name="android.intent.action.POWER_DISCONNECTED" />
+                <action android:name="android.intent.action.BATTERY_CHANGED" />
+                <action android:name="android.intent.action.CHARGING" />
+                <action android:name="android.intent.action.DISCHARGING" />
+                <action android:name="android.os.action.POWER_SAVE_MODE_CHANGED" />
+                <!-- ★ 车机模式相关 -->
+                <action android:name="android.app.action.ENTER_CAR_MODE" />
+                <action android:name="android.app.action.EXIT_CAR_MODE" />
+                <!-- ★ USB/U盘相关 -->
+                <action android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED" />
+                <action android:name="android.hardware.usb.action.USB_DEVICE_DETACHED" />
+                <action android:name="android.hardware.usb.action.USB_ACCESSORY_ATTACHED" />
                 <!-- 注意：Android 8.0+ 大部分隐式广播被禁止静态注册接收
                      （CONNECTIVITY_CHANGE、MEDIA_MOUNTED、HEADSET_PLUG 等都收不到）
                      服务被杀后的兜底由 AutoStartWorker（WorkManager，每15分钟检查）负责 -->

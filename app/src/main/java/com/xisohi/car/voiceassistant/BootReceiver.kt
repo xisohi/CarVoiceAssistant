@@ -41,12 +41,14 @@ class BootReceiver : BroadcastReceiver() {
         LogUtils.logBroadcast(action)
         LogUtils.d(TAG, "收到广播: $action")
 
-        // 开机相关广播（直接触发）
+        // 开机/唤醒相关广播（直接触发）
         val bootActions = listOf(
+            // 完整重启/开机
             Intent.ACTION_BOOT_COMPLETED,
             Intent.ACTION_USER_PRESENT,
             "android.intent.action.QUICKBOOT_POWERON",
             "android.intent.action.LOCKED_BOOT_COMPLETED",
+            "android.intent.action.PRE_BOOT_COMPLETED",
             "android.intent.action.REBOOT",
             "com.htc.intent.action.QUICKBOOT_POWERON",
             "android.intent.action.ACTION_BOOT_COMPLETED",
@@ -56,9 +58,31 @@ class BootReceiver : BroadcastReceiver() {
             "com.unisound.intent.action.ACC_ON",       // 点火开机
             "com.unisound.intent.action.DO_WAKEUP",    // 车机唤醒
             "com.unisound.intent.action.DO_SHOW",      // 车机显示
-            // ★ 电源相关（车机点火/熄火）
+            "com.unisound.intent.action.DO_WAKEUP",
+            "com.unisound.intent.action.DO_HIDE",
+            "com.unisound.intent.action.DO_SLEEP",
+            "com.unisound.intent.action.DO_SHUTDOWN",
+            // ★ 电源/点火相关
             Intent.ACTION_POWER_CONNECTED,             // 电源连接（点火）
-            "android.intent.action.ACTION_POWER_CONNECTED"
+            "android.intent.action.ACTION_POWER_CONNECTED",
+            "android.intent.action.POWER_CONNECTED",
+            "android.intent.action.ACTION_POWER_DISCONNECTED",
+            "android.intent.action.POWER_DISCONNECTED",
+            "android.intent.action.BATTERY_CHANGED",
+            "android.intent.action.CHARGING",
+            "android.intent.action.DISCHARGING",
+            "android.os.action.POWER_SAVE_MODE_CHANGED",
+            // ★ 屏幕亮/唤醒相关（点火唤醒最常用）
+            "android.intent.action.SCREEN_ON",         // 屏幕亮（点火唤醒时屏幕肯定亮）
+            "android.intent.action.SCREEN_OFF",
+            "android.intent.action.CLOSE_SYSTEM_DIALOGS",
+            // ★ 车机模式相关
+            "android.app.action.ENTER_CAR_MODE",
+            "android.app.action.EXIT_CAR_MODE",
+            // ★ USB/U盘相关
+            "android.hardware.usb.action.USB_DEVICE_ATTACHED",
+            "android.hardware.usb.action.USB_DEVICE_DETACHED",
+            "android.hardware.usb.action.USB_ACCESSORY_ATTACHED"
         )
         val isBootAction = action in bootActions
         if (!isBootAction) return
@@ -83,13 +107,16 @@ class BootReceiver : BroadcastReceiver() {
             return
         }
 
-        // 开机广播：延迟启动，等待系统完全就绪（车机系统启动较慢）
-        val delayMs = if (action == Intent.ACTION_POWER_CONNECTED) {
-            // 点火唤醒不用等太久，3秒就够了
-            3000L
-        } else {
+        // 开机/唤醒广播：延迟启动，等待系统完全就绪（车机系统启动较慢）
+        val delayMs = when {
+            // 屏幕亮/唤醒不用等太久，2秒就够了
+            action == "android.intent.action.SCREEN_ON" ||
+            action == "android.intent.action.USER_PRESENT" ||
+            action == "com.unisound.intent.action.DO_WAKEUP" ||
+            action == "com.unisound.intent.action.ACC_ON" ||
+            action == Intent.ACTION_POWER_CONNECTED -> 2000L
             // 冷启动要等久一点
-            8000L
+            else -> 8000L
         }
         LogUtils.d(TAG, "广播 $action，延迟${delayMs}ms后启动服务...")
 
