@@ -1095,7 +1095,7 @@ class VoiceAssistantService : Service() {
                             }
 
                             // 动态静音阈值：有结果 800ms，无结果 600ms
-                            val dynamicSilenceMs = if (lastPartial.isNotEmpty()) 600L else 400L
+                            val dynamicSilenceMs = if (lastPartial.isNotEmpty()) 800L else 600L
                             if (silenceDuration >= dynamicSilenceMs && recordDuration >= MIN_RECORD_MS) {
                                 android.util.Log.d("VoiceService",
                                     "连续静音${silenceDuration}ms（${consecutiveSilenceFrames}帧），结束录音 (RMS=${rms.toInt()}, 阈值=${adaptiveSilenceThreshold.toInt()})")
