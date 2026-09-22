@@ -28,6 +28,11 @@
 - **导出 U 盘**：支持导出日志和配置到 U 盘，方便调试
 - **开机自启**：WorkManager + BootReceiver 双重兜底，确保车机开机后自动启动语音服务
 
+### 已知可收到的广播
+
+- **收到广播**: android.hardware.usb.action.USB_DEVICE_DETACHED
+- **收到广播**: android.hardware.usb.action.USB_DEVICE_DETACHED
+
 ## 技术选型
 
 | 模块 | 方案 | 说明 |

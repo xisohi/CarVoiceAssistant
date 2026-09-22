@@ -113,6 +113,35 @@ class VoiceAssistantService : Service() {
         var currentRms: Int = 0
             private set
 
+        // ============================================================
+        // 车机唤醒广播接收器（动态注册，不受 Android 8.0+ 静态广播限制）
+        // 熄火点火时，蓝牙等系统应用会发送这些广播，我们收到后拉起 App
+        // ============================================================
+        private var carWakeupReceiver: android.content.BroadcastReceiver? = null
+
+        // 需要监听的唤醒广播 Action 列表
+        private val WAKEUP_ACTIONS = listOf(
+            // 标准蓝牙广播（点火时蓝牙重新连接，肯定会触发）
+            "android.bluetooth.adapter.action.STATE_CHANGED",
+            "android.bluetooth.a2dp.profile.action.CONNECTION_STATE_CHANGED",
+            "android.bluetooth.headset.profile.action.CONNECTION_STATE_CHANGED",
+            // 屏幕点亮（熄火点火时屏幕会亮）
+            android.content.Intent.ACTION_SCREEN_ON,
+            // 电源连接（ACC 点火时可能触发）
+            android.content.Intent.ACTION_POWER_CONNECTED,
+            // 用户解锁
+            android.content.Intent.ACTION_USER_PRESENT,
+            // 鼎微/云知声系广播（静态注册被系统阻止，动态注册可以收到）
+            "com.unisound.intent.action.ACC_ON",
+            "com.unisound.intent.action.Baios_WAKEUP",
+            "com.unisound.intent.action.DO_WAKEUP",
+            // 鼎微 T5Q 专属广播
+            "com.dingwei.action.ACC_ON",
+            "com.dingwei.car.action.ACC_ON",
+            "com.dingwei.system.action.WAKE_UP_FINISHED",
+            "com.dingwei.t5q.voice.action.WAKE_UP"
+        )
+
         // 本次录音的 RMS 峰值（设置页显示这个值，车机上看不到日志，峰值更有意义）
         // 下次录音开始时重置为0
         @Volatile
@@ -247,6 +276,9 @@ class VoiceAssistantService : Service() {
 
         // 注册电话状态监听：通话中暂停唤醒监听，避免麦克风冲突和误唤醒
         phoneStateMonitor.start()
+
+        // 注册车机唤醒广播接收器（动态注册，熄火点火时通过蓝牙等广播拉起 App）
+        registerCarWakeupReceiver()
 
         currentState = State.IDLE
         createChannel()
@@ -1612,6 +1644,8 @@ class VoiceAssistantService : Service() {
         phoneStateMonitor.stop()
         // 注销网络变化监听
         networkMonitor.stop()
+        // 注销车机唤醒广播接收器
+        unregisterCarWakeupReceiver()
         // 释放百度语音识别引擎（EventManager + factory），避免服务反复启停时 SDK 资源累积泄漏
         // 注意：只释放引擎，保留配置（appId/apiKey/secretKey），下次 init() 直接复用
         baiduAsrManager.releaseEngine()
@@ -1643,6 +1677,97 @@ class VoiceAssistantService : Service() {
             val s = shortData[i].toInt()
             out[i * 2] = (s and 0xFF).toByte()
             out[i * 2 + 1] = ((s shr 8) and 0xFF).toByte()
+        }
+    }
+
+    // ============================================================
+    // 车机唤醒广播接收器相关方法
+    // ============================================================
+
+    /**
+     * 注册车机唤醒广播接收器
+     * 动态注册不受 Android 8.0+ 静态广播黑名单限制
+     * 熄火点火时，蓝牙等系统应用会发送这些广播，我们收到后拉起 App
+     */
+    private fun registerCarWakeupReceiver() {
+        if (carWakeupReceiver != null) {
+            android.util.Log.w("VoiceService", "车机唤醒广播接收器已注册，跳过")
+            return
+        }
+
+        carWakeupReceiver = object : android.content.BroadcastReceiver() {
+            override fun onReceive(context: android.content.Context?, intent: android.content.Intent?) {
+                val action = intent?.action ?: return
+                android.util.Log.i("VoiceService", "收到车机唤醒广播: $action")
+
+                // 收到唤醒广播后，检查 App 是否在前台，不在就启动
+                if (!isAppForeground()) {
+                    android.util.Log.i("VoiceService", "App 不在前台，通过唤醒广播拉起")
+                    launchMainActivity()
+                }
+            }
+        }
+
+        val filter = android.content.IntentFilter().apply {
+            WAKEUP_ACTIONS.forEach { addAction(it) }
+            priority = android.content.IntentFilter.SYSTEM_HIGH_PRIORITY
+        }
+
+        try {
+            registerReceiver(carWakeupReceiver, filter)
+            android.util.Log.i("VoiceService", "车机唤醒广播接收器注册成功，共 ${WAKEUP_ACTIONS.size} 个 Action")
+        } catch (e: Exception) {
+            android.util.Log.e("VoiceService", "注册车机唤醒广播接收器失败: ${e.message}")
+            carWakeupReceiver = null
+        }
+    }
+
+    /**
+     * 注销车机唤醒广播接收器
+     */
+    private fun unregisterCarWakeupReceiver() {
+        carWakeupReceiver?.let { receiver ->
+            try {
+                unregisterReceiver(receiver)
+                android.util.Log.i("VoiceService", "车机唤醒广播接收器已注销")
+            } catch (e: Exception) {
+                android.util.Log.w("VoiceService", "注销车机唤醒广播接收器失败: ${e.message}")
+            }
+        }
+        carWakeupReceiver = null
+    }
+
+    /**
+     * 判断 App 是否在前台
+     */
+    private fun isAppForeground(): Boolean {
+        return try {
+            val am = getSystemService(android.content.Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+            val runningApp = am.runningAppProcesses?.firstOrNull { it.processName == packageName }
+            runningApp?.importance == android.app.ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    /**
+     * 拉起主界面（通过唤醒广播触发时调用）
+     */
+    private fun launchMainActivity() {
+        try {
+            val intent = packageManager.getLaunchIntentForPackage(packageName)?.apply {
+                addFlags(
+                    android.content.Intent.FLAG_ACTIVITY_NEW_TASK or
+                            android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
+                            android.content.Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED
+                )
+            }
+            if (intent != null) {
+                startActivity(intent)
+                android.util.Log.i("VoiceService", "已通过唤醒广播拉起主界面")
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("VoiceService", "拉起主界面失败: ${e.message}")
         }
     }
 }
