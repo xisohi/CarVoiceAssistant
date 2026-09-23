@@ -103,62 +103,18 @@
                 android:value="floating window for voice assistant" />
         </service>
 
-        <!-- 开机自启接收器（针对鼎微/全志车机优化） -->
+        <!-- 开机自启接收器：只保留系统允许静态注册的广播
+             ACC_ON、DO_WAKEUP 等隐式广播在 Android 8+ 静态注册收不到，
+             全部放到 VoiceAssistantService 里动态注册 -->
         <receiver
             android:name=".BootReceiver"
             android:exported="true"
             android:enabled="true">
             <intent-filter android:priority="1000">
-                <!-- 标准开机广播 -->
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
                 <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
-                <action android:name="android.intent.action.REBOOT" />
                 <action android:name="android.intent.action.USER_PRESENT" />
-                <!-- 快速开机广播（部分厂商使用） -->
-                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
-                <action android:name="com.htc.intent.action.QUICKBOOT_POWERON" />
-                <!-- 车机系统特有广播（鼎微/全志/MTK等车机方案） -->
-                <action android:name="android.intent.action.ACTION_BOOT_COMPLETED" />
-                <action android:name="com.android.systemui.BOOT_COMPLETED" />
-                <action android:name="android.intent.action.BOOT_COMPLETED_FINISHED" />
-                <!-- ★ 鼎微/全志车机特有广播（从360 APK解包发现） -->
-                <action android:name="com.unisound.intent.action.ACC_ON" />
-                <action android:name="com.unisound.intent.action.DO_WAKEUP" />
-                <action android:name="com.unisound.intent.action.DO_SHOW" />
-                <!-- ★ 360 验证过的唤醒广播 -->
-                <action android:name="com.unisound.intent.action.Baios_WAKEUP" />
-                <action android:name="com.unisound.intent.action.Baios_SHUTDOWN" />
-                <action android:name="com.unisound.intent.action.DO_SHUTDOWN" />
-                <action android:name="com.unisound.intent.action.DO_HIDE" />
-                <action android:name="com.unisound.intent.action.DO_SLEEP" />
-                <!-- ★ 屏幕亮/唤醒相关（点火唤醒最常用） -->
-                <action android:name="android.intent.action.SCREEN_ON" />
-                <action android:name="android.intent.action.SCREEN_OFF" />
-                <action android:name="android.intent.action.USER_PRESENT" />
-                <action android:name="android.intent.action.CLOSE_SYSTEM_DIALOGS" />
-                <!-- ★ 开机阶段相关 -->
-                <action android:name="android.intent.action.PRE_BOOT_COMPLETED" />
-                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
                 <action android:name="android.intent.action.ACTION_SHUTDOWN" />
-                <!-- ★ 电源/点火相关 -->
-                <action android:name="android.intent.action.ACTION_POWER_CONNECTED" />
-                <action android:name="android.intent.action.POWER_CONNECTED" />
-                <action android:name="android.intent.action.ACTION_POWER_DISCONNECTED" />
-                <action android:name="android.intent.action.POWER_DISCONNECTED" />
-                <action android:name="android.intent.action.BATTERY_CHANGED" />
-                <action android:name="android.intent.action.CHARGING" />
-                <action android:name="android.intent.action.DISCHARGING" />
-                <action android:name="android.os.action.POWER_SAVE_MODE_CHANGED" />
-                <!-- ★ 车机模式相关 -->
-                <action android:name="android.app.action.ENTER_CAR_MODE" />
-                <action android:name="android.app.action.EXIT_CAR_MODE" />
-                <!-- ★ USB/U盘相关 -->
-                <action android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED" />
-                <action android:name="android.hardware.usb.action.USB_DEVICE_DETACHED" />
-                <action android:name="android.hardware.usb.action.USB_ACCESSORY_ATTACHED" />
-                <!-- 注意：Android 8.0+ 大部分隐式广播被禁止静态注册接收
-                     （CONNECTIVITY_CHANGE、MEDIA_MOUNTED、HEADSET_PLUG 等都收不到）
-                     服务被杀后的兜底由 AutoStartWorker（WorkManager，每15分钟检查）负责 -->
             </intent-filter>
         </receiver>
 

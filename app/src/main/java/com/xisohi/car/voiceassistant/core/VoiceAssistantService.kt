@@ -1701,10 +1701,21 @@ class VoiceAssistantService : Service() {
                 val action = intent?.action ?: return
                 android.util.Log.i("VoiceService", "收到车机唤醒广播: $action")
 
-                // 收到唤醒广播后，检查 App 是否在前台，不在就启动
-                if (!isAppForeground()) {
-                    android.util.Log.i("VoiceService", "App 不在前台，通过唤醒广播拉起")
-                    launchMainActivity()
+                // 只启动服务，不启动 Activity（Android 10+ 禁止后台启动 Activity）
+                // 服务启动后会自己判断是否需要拉起主界面
+                if (!isRunning) {
+                    android.util.Log.i("VoiceService", "服务未运行，通过唤醒广播启动服务")
+                    try {
+                        val serviceIntent = android.content.Intent(context, VoiceAssistantService::class.java)
+                        serviceIntent.action = ACTION_START
+                        if (android.os.Build.VERSION.SDK_INT >= 26) {
+                            context?.startForegroundService(serviceIntent)
+                        } else {
+                            context?.startService(serviceIntent)
+                        }
+                    } catch (e: Exception) {
+                        android.util.Log.e("VoiceService", "唤醒广播启动服务失败: ${e.message}")
+                    }
                 }
             }
         }
