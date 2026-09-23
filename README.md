@@ -31,7 +31,10 @@
 ### 已知可收到的广播
 
 - **收到广播**: android.hardware.usb.action.USB_DEVICE_DETACHED
-- **收到广播**: android.hardware.usb.action.USB_DEVICE_DETACHED
+- **收到广播**: com.unisound.intent.action.ACC_ON
+- **收到广播**: com.unisound.intent.action.DO_WAKEUP
+- **收到广播**: android.intent.action.USER_PRESENT
+- **收到广播**: android.intent.action.BOOT_COMPLETED
 
 ## 技术选型
 
