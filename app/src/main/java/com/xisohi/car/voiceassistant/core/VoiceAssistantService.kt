@@ -120,6 +120,7 @@ class VoiceAssistantService : Service() {
         private var carWakeupReceiver: android.content.BroadcastReceiver? = null
 
         // 需要监听的唤醒广播 Action 列表
+        // 已通过系统日志验证：熄火时发送 DO_SHUTDOWN/ACC_OFF/DO_SLEEP，点火时发送 USER_PRESENT/DO_WAKEUP/DO_WAKEUP_DOFUN/ACC_ON
         private val WAKEUP_ACTIONS = listOf(
             // 标准蓝牙广播（点火时蓝牙重新连接，肯定会触发）
             "android.bluetooth.adapter.action.STATE_CHANGED",
@@ -129,17 +130,13 @@ class VoiceAssistantService : Service() {
             android.content.Intent.ACTION_SCREEN_ON,
             // 电源连接（ACC 点火时可能触发）
             android.content.Intent.ACTION_POWER_CONNECTED,
-            // 用户解锁
+            // 用户解锁（点火时确认存在）
             android.content.Intent.ACTION_USER_PRESENT,
-            // 鼎微/云知声系广播（静态注册被系统阻止，动态注册可以收到）
-            "com.unisound.intent.action.ACC_ON",
-            "com.unisound.intent.action.Baios_WAKEUP",
-            "com.unisound.intent.action.DO_WAKEUP",
-            // 鼎微 T5Q 专属广播
-            "com.dingwei.action.ACC_ON",
-            "com.dingwei.car.action.ACC_ON",
-            "com.dingwei.system.action.WAKE_UP_FINISHED",
-            "com.dingwei.t5q.voice.action.WAKE_UP"
+            // 云知声系广播（静态注册被系统阻止，动态注册可以收到）
+            "com.unisound.intent.action.ACC_ON",          // 点火时确认存在
+            "com.unisound.intent.action.DO_WAKEUP",        // 点火时确认存在
+            "com.unisound.intent.action.DO_WAKEUP_DOFUN",  // 点火时确认存在（新增）
+            "com.unisound.intent.action.Baios_WAKEUP"      // 360 用的唤醒广播，保留备用
         )
 
         // 本次录音的 RMS 峰值（设置页显示这个值，车机上看不到日志，峰值更有意义）
