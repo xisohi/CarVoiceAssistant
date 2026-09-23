@@ -1232,11 +1232,15 @@ class VoiceAssistantService : Service() {
             }
         }
 
-        // 保留到最后一个非静音帧 + 3 帧（约 96ms）余量
-        val keepFrames = (lastNonSilentFrame + 1 + 3).coerceAtMost(totalFrames)
+        // 保留到最后一个非静音帧 + 15 帧（约 480ms）余量，避免裁掉结尾有效音频
+        val keepFrames = (lastNonSilentFrame + 1 + 15).coerceAtMost(totalFrames)
         val trimmedSize = keepFrames * frameBytes
+        val sampleRate = 16000  // 采样率
+        val originalSec = pcm.size.toFloat() / (sampleRate * 2)
+        val trimmedSec = trimmedSize.toFloat() / (sampleRate * 2)
+        val cutSec = originalSec - trimmedSec
         android.util.Log.d("VoiceService",
-            "裁剪尾部静音: 原 ${pcm.size} bytes, 裁剪后 $trimmedSize bytes")
+            "裁剪尾部静音: 原 %.2fs(${pcm.size}bytes) -> 裁剪后 %.2fs($trimmedSize bytes), 裁掉 %.2fs".format(originalSec, trimmedSec, cutSec))
         return pcm.copyOfRange(0, trimmedSize)
     }
 
