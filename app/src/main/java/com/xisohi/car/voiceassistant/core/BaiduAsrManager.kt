@@ -414,6 +414,7 @@ class BaiduAsrManager private constructor(private val context: Context) {
         }
         if (isRecognizing) {
             Log.w(TAG, "正在识别中，忽略重复调用")
+            callback(null)  // 通知上层启动失败，避免上层白等15秒超时
             return
         }
 

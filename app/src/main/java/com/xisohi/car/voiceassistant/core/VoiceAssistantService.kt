@@ -204,6 +204,7 @@ class VoiceAssistantService : Service() {
     private val ONLINE_RECOGNITION_TIMEOUT_MS = 15_000L  // 在线识别超时15秒（网络不通时百度可能一直不返回）
     // 在线识别超时定时器（用于取消超时回调）
     private var onlineTimeoutRunnable: Runnable? = null
+    private var recognitionSessionId = 0L  // 识别会话ID，防止旧协程误清新job
     // 标记在线识别是否已经收到结果（避免超时和回调同时触发）
     private var onlineResultReceived = false
     // 网络监控器（网络状态监听、连通性检测、缓存管理）
@@ -835,6 +836,9 @@ class VoiceAssistantService : Service() {
      * 和百度官方 Demo 完全一致。
      */
     private fun startRecognitionOnline() {
+        // ★ 先取消上一次的超时定时器，避免连续调用导致旧超时误触发
+        onlineTimeoutRunnable?.let { mainHandler.removeCallbacks(it) }
+        onlineTimeoutRunnable = null
         // 停止唤醒监听，释放麦克风给百度 SDK
         stopWakeListening()
         currentState = State.LISTENING
@@ -905,6 +909,7 @@ class VoiceAssistantService : Service() {
      * 用于无网络或百度未配置时的降级方案。
      */
     private fun startRecognitionOffline() {
+        val mySessionId = ++recognitionSessionId  // 本次识别会话ID
         // 重置本次识别的开口标志
         hasSpeechStartedThisSession = false
         // 重置本次录音的 RMS 峰值（设置页显示峰值，下次录音开始时重置）
@@ -1209,7 +1214,12 @@ class VoiceAssistantService : Service() {
                 record.release()
                 recNoiseReducer.release()
                 try { recognizer.release() } catch (_: Exception) {}
-                withContext(Dispatchers.Main) { recognitionJob = null }
+                withContext(Dispatchers.Main) {
+                    // 只清理自己的 job，避免快速连续调用时误清新job
+                    if (recognitionSessionId == mySessionId) {
+                        recognitionJob = null
+                    }
+                }
             }
             withContext(Dispatchers.Main) { handleText(finalText) }
         }
