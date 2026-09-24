@@ -602,6 +602,10 @@ class VoiceAssistantService : Service() {
             try {
                 while (isWakeListening && !isInterrupted()) {
                     val read = record.read(audioBuffer, 0, frameSize, AudioRecord.READ_BLOCKING)
+                    if (read < 0) {
+                        android.util.Log.e("WakeAudioThread", "AudioRecord.read() 错误: $read，退出循环")
+                        break
+                    }
                     if (read == frameSize) {
                         // 应用降噪处理（高通滤波，去除低频发动机噪音）
                         noiseReducer.process(audioBuffer, read)
@@ -670,7 +674,7 @@ class VoiceAssistantService : Service() {
             restoreMediaVolume()
             // 立即切换悬浮窗为聆听状态（视觉提示，不用等TTS播报完）
             currentState = State.LISTENING
-                        isWakePromptSpeaking = true
+            isWakePromptSpeaking = true
             ttsEngine.speak(getString(R.string.tts_wake_prompt))
             LogUtils.d("VoiceService", "唤醒提示：TTS播报'在呢，您请说'，播报完成后开始录音")
         } else {
@@ -973,7 +977,7 @@ class VoiceAssistantService : Service() {
                 .coerceIn(SILENCE_RMS_MIN, SILENCE_RMS_MAX)
             android.util.Log.d("VoiceService",
                 "环境噪音 RMS=${ambientRms.toInt()}（原始，未增益）, 自适应静音阈值=${adaptiveSilenceThreshold.toInt()}")
-                sendRecognitionLog("📊 环境噪音RMS=${ambientRms.toInt()}, 阈值=${adaptiveSilenceThreshold.toInt()}")
+            sendRecognitionLog("📊 环境噪音RMS=${ambientRms.toInt()}, 阈值=${adaptiveSilenceThreshold.toInt()}")
             // =========================================
 
             // ★★★ 方案3：生产者-消费者模式，录音线程和识别线程分离 ★★★
@@ -1302,7 +1306,7 @@ class VoiceAssistantService : Service() {
                 LogUtils.i("VoiceService", "唤醒后8秒未检测到有效语音，自动退出到待机状态")
                 FloatViewService.updateSubtitle("")
                 currentState = State.IDLE
-                                resumeWake()
+                resumeWake()
                 return
             }
 
@@ -1315,7 +1319,7 @@ class VoiceAssistantService : Service() {
                 LogUtils.i("VoiceService", "连续${MAX_NO_SPEECH_RETRY}次未识别到有效内容，自动退出到待机状态")
                 FloatViewService.updateSubtitle("")
                 currentState = State.IDLE
-                                resumeWake()
+                resumeWake()
                 return
             }
 
