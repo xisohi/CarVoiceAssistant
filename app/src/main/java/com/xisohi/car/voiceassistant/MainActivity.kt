@@ -247,6 +247,9 @@ class MainActivity : AppCompatActivity() {
         handler.removeCallbacks(stateRefresher)
         ttsChecker?.shutdown()
         ttsChecker = null
+        try {
+            unregisterReceiver(recognitionLogReceiver)
+        } catch (_: Exception) {}
     }
 
     // ===== 手动调节 threshold/gain =====
@@ -344,7 +347,7 @@ class MainActivity : AppCompatActivity() {
                 toast("App ID、API Key 和 Secret Key 都不能为空")
                 return@setOnClickListener
             }
-            log("保存百度配置：appId=$appId, apiKey=${apiKey.take(4)}...${apiKey.takeLast(4)}, secretKey=${secretKey.take(4)}...${secretKey.takeLast(4)}")
+            log("保存百度配置：appId=$appId, apiKey len=${apiKey.length}, secretKey len=${secretKey.length}")
             baiduAsrManager.saveConfig(appId, apiKey, secretKey)
             val success = baiduAsrManager.init()
             if (success) {
@@ -805,6 +808,7 @@ class MainActivity : AppCompatActivity() {
         val gain = WakeWordEngine.getAudioGain()
         val name = WakeWordEngine.getSensitivityName()
         updateManualUI(threshold, gain)
+        updateAsrGainUI(WakeWordEngine.getAsrGain())  // 同步识别增益滑块
         updatePresetButtonState(level)
         toast("已填充「$name」预设（增益${gain}x，阈值$threshold），可微调后点击应用")
         log("预设「$name」已填充到滑块：threshold=$threshold, gain=${gain}x")

@@ -68,7 +68,10 @@ public class WakeWordEngine {
     /** 获取当前灵敏度档位 */
     public static int getSensitivity() { return sensitivityLevel; }
     /** 获取当前灵敏度名称 */
-    public static String getSensitivityName() { return LEVEL_NAMES[sensitivityLevel]; }
+    public static String getSensitivityName() {
+        if (sensitivityLevel < 0 || sensitivityLevel >= LEVEL_NAMES.length) return "自定义";
+        return LEVEL_NAMES[sensitivityLevel];
+    }
 
     // Audio parameters (constant)
     static final int SAMPLE_RATE = 16000;
@@ -146,8 +149,10 @@ public class WakeWordEngine {
     private String errorMessage = null;
     private int debugLogCount = 0;
     private static final int DEBUG_LOG_MAX = 50;
-    private long engineStartTime = System.currentTimeMillis();
-    private static final long STARTUP_SKIP_MS = 3000;  // skip first 3s to avoid cold-start FP
+    // 冷启动防误唤醒：跳过前 N 帧（每帧约10ms，300帧≈3秒）
+    // 使用实例字段，每次创建 WakeWordEngine 时重置，确保服务重启后防误唤醒仍生效
+    private static final int STARTUP_SKIP_FRAMES = 300;
+    private int framesProcessed = 0;
 
     // ===== 唤醒灵敏度测试日志 =====
     /** 测试日志回调接口 */
@@ -224,7 +229,8 @@ public class WakeWordEngine {
     public static void setGainAndThreshold(float gain, float threshold) {
         audioGain = gain;
         detectionThreshold = threshold;
-        Log.i(TAG, "唤醒参数已更新: gain=" + gain + ", threshold=" + threshold);
+        sensitivityLevel = -1;  // 自定义档位，区别于预设的低/中/高
+        Log.i(TAG, "唤醒参数已更新(自定义): gain=" + gain + ", threshold=" + threshold);
     }
 
     public WakeWordEngine(Context context) {
@@ -369,8 +375,11 @@ public class WakeWordEngine {
             }
 
             // 4. Prepare classifier input
-            // Skip first 3s to avoid cold-start false triggers
-            if (System.currentTimeMillis() - engineStartTime < STARTUP_SKIP_MS) return null;
+            // Skip first N frames to avoid cold-start false triggers
+            if (framesProcessed < STARTUP_SKIP_FRAMES) {
+                framesProcessed++;
+                return null;
+            }
 
             int melStart = Math.max(0, frames - dscnnMelTime);
             float[][][] dscnnInput = new float[1][dscnnMelTime][N_MELS];

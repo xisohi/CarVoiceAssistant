@@ -64,18 +64,6 @@ class VoiceAssistantService : Service() {
         private const val WAIT_SPEECH_TIMEOUT_MS = 8_000L  // 用户开口前的等待上限（8秒没有效声音就自动退出，避免无限循环"没有听清"）
         private const val EXTERNAL_NAV_PAUSE_MS = 30_000L   // 拉起支持语音选择的导航后，暂停唤醒监听的时长（给导航让出麦克风）
 
-        // ============================================================
-        // 【百度语音识别增益调整位置】
-        // 百度语音识别没有 AGC 自动增益和降噪功能（经官方文档确认），
-        // 音量过小会导致 ERROR_SPEECH_QUALITY 错误或识别率下降，需要本地放大。
-        //
-        // 调整建议：
-        //   2.0f = 保守，几乎不会削顶，识别率略有提升
-        //   2.5f = 推荐，信噪比明显提升，大部分场景不会削顶（当前值）
-        //   3.0f = 较激进，大声说话可能轻微削顶，识别率更好
-        //   4.0f+ = 不建议，容易削顶失真
-        // ============================================================
-        private const val BAIDU_GAIN = 2.5f          // 百度在线识别用的轻量增益（修改这里调整百度识别音量）
 
         // ===== 自适应静音阈值参数 =====
         // 不再使用固定阈值，改为启动时采样环境噪音动态计算
@@ -452,7 +440,6 @@ class VoiceAssistantService : Service() {
         externalNavPauseRunnable = null
         currentState = State.IDLE
 
-        externalNavPauseRunnable?.let { mainHandler.removeCallbacks(it) }
         externalNavPauseRunnable = Runnable {
             LogUtils.i("VoiceService", "外部导航暂停时间到，恢复唤醒监听")
             externalNavPauseRunnable = null
@@ -636,8 +623,9 @@ class VoiceAssistantService : Service() {
                                     onWakeWord()
                                 }
                             }
-                            // 防抖：暂停处理一会儿
-                            Thread.sleep(1000)
+                            // 唤醒后直接退出循环，让线程自然结束
+                            // （不要 sleep，否则 onWakeWord→stopWakeListening→join 会阻塞主线程最多2秒）
+                            break
                         }
                     }
                 }
@@ -647,6 +635,12 @@ class VoiceAssistantService : Service() {
                 try { record.stop() } catch (_: Exception) {}
                 record.release()
                 noiseReducer.release()
+                // 线程退出时重置监听状态，避免唤醒被丢弃（状态非IDLE）后
+                // isWakeListening 仍为 true 导致下次无法重启监听
+                if (wakeAudioThread === this) {
+                    isWakeListening = false
+                    wakeAudioThread = null
+                }
                 android.util.Log.d("WakeAudioThread", "录音线程结束")
             }
         }
@@ -1218,67 +1212,12 @@ class VoiceAssistantService : Service() {
     }
 
     /**
-     * 裁剪音频尾部的静音（只保留到最后一个非静音帧）
-     */
-    private fun trimTrailingSilence(pcm: ByteArray, threshold: Int, frameSize: Int = 512): ByteArray {
-        val frameBytes = frameSize * 2  // 每帧 frameSize samples * 2 bytes
-        val totalFrames = pcm.size / frameBytes
-        if (totalFrames <= 0) return pcm
-
-        // 从最后一帧往前扫，找到最后一个非静音帧
-        var lastNonSilentFrame = totalFrames - 1
-        for (i in totalFrames - 1 downTo 0) {
-            val offset = i * frameBytes
-            var sum = 0L
-            for (j in 0 until frameBytes step 2) {
-                val lo = pcm[offset + j].toInt() and 0xFF
-                val hi = pcm[offset + j + 1].toInt() and 0xFF
-                val sample = ((hi shl 8) or lo).toShort().toInt()
-                sum += sample.toLong() * sample
-            }
-            val rms = kotlin.math.sqrt(sum.toDouble() / (frameBytes / 2))
-            if (rms > threshold) {
-                lastNonSilentFrame = i
-                break
-            }
-        }
-
-        // 保留到最后一个非静音帧 + 15 帧（约 480ms）余量，避免裁掉结尾有效音频
-        val keepFrames = (lastNonSilentFrame + 1 + 15).coerceAtMost(totalFrames)
-        val trimmedSize = keepFrames * frameBytes
-        val sampleRate = 16000  // 采样率
-        val originalSec = pcm.size.toFloat() / (sampleRate * 2)
-        val trimmedSec = trimmedSize.toFloat() / (sampleRate * 2)
-        val cutSec = originalSec - trimmedSec
-        android.util.Log.d("VoiceService",
-            "裁剪尾部静音: 原 %.2fs(${pcm.size}bytes) -> 裁剪后 %.2fs($trimmedSize bytes), 裁掉 %.2fs".format(originalSec, trimmedSec, cutSec))
-        return pcm.copyOfRange(0, trimmedSize)
-    }
-
-    /**
      * 对 PCM 音频数据应用增益放大（识别阶段专用）
      * 使用独立的 asrGain（默认 1.5x），比唤醒增益（默认 4.5x）保守，
      * 避免近场说话时波形削顶失真，反而降低 Vosk 识别率。
      */
     private fun applyGain(buffer: ShortArray, length: Int) {
         val gain = WakeWordEngine.getAsrGain()
-        if (gain <= 1.0f) return  // 增益为 1.0 时不需要处理
-        for (i in 0 until length) {
-            val amplified = buffer[i] * gain
-            // 防止溢出，截断到 short 范围
-            buffer[i] = when {
-                amplified > Short.MAX_VALUE -> Short.MAX_VALUE
-                amplified < Short.MIN_VALUE -> Short.MIN_VALUE
-                else -> amplified.toInt().toShort()
-            }
-        }
-    }
-
-    /**
-     * 对 PCM 音频数据应用指定增益值（用于百度在线识别）
-     * @param gain 增益倍数，如 2.5f 表示放大 2.5 倍
-     */
-    private fun applyGainWithValue(buffer: ShortArray, length: Int, gain: Float) {
         if (gain <= 1.0f) return  // 增益为 1.0 时不需要处理
         for (i in 0 until length) {
             val amplified = buffer[i] * gain

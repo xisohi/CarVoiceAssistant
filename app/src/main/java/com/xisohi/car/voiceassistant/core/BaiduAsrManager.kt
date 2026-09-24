@@ -284,10 +284,9 @@ class BaiduAsrManager private constructor(private val context: Context) {
             val apiKey = getApiKey()
             val secretKey = getSecretKey()
 
-            // 打印 Key 的前几位和后几位（不打印完整 Key）
+            // 只打印 Key 长度，不打印任何字符片段（日志会写入文件，避免泄露）
             Log.d(TAG, "鉴权信息: appId=$appId, " +
-                    "apiKey=${apiKey.take(4)}...${apiKey.takeLast(4)} (len=${apiKey.length}), " +
-                    "secretKey=${secretKey.take(4)}...${secretKey.takeLast(4)} (len=${secretKey.length})")
+                    "apiKey len=${apiKey.length}, secretKey len=${secretKey.length}")
 
             // 用 AipeEventManagerFactory，动态传用户填的 Key
             // 不再依赖 AndroidManifest.xml 的 meta-data，实现"谁用谁填自己的 Key"
@@ -344,24 +343,37 @@ class BaiduAsrManager private constructor(private val context: Context) {
     fun releaseEngine() {
         try {
             handler.removeCallbacks(timeoutRunnable)
-            // ★ 先发送 asr.exit，让百度SDK正常退出，释放麦克风资源
-            // 如果不发 asr.exit 直接置 null，百度SDK内部线程/录音资源可能没释放，
-            // 导致后续 AudioRecord.start() 返回 -38（麦克风被占用）
-            if (isRecognizing) {
+            val wasRecognizing = isRecognizing
+            val oldManager = asrManager
+            // 立即标记为未初始化，防止新的识别开始
+            isInitialized = false
+            isRecognizing = false
+            recognitionCallback = null
+
+            if (wasRecognizing && oldManager != null) {
                 try {
-                    asrManager?.send("asr.exit", null, null, 0, 0)
+                    oldManager.send("asr.exit", null, null, 0, 0)
                     Log.d(TAG, "已发送 asr.exit，通知百度SDK退出")
                 } catch (e: Exception) {
                     Log.w(TAG, "发送 asr.exit 失败（忽略）: ${e.message}")
                 }
+                // 延迟 150ms 再 unregisterListener 和释放引用，给百度SDK异步处理 asr.exit 的时间
+                // 用局部变量 oldManager 保存引用，避免覆盖新创建的引擎
+                handler.postDelayed({
+                    // 只在没有新引擎创建时才清理旧引擎，避免误注销新引擎的监听
+                    if (asrManager === oldManager) {
+                        try { oldManager.unregisterListener(eventListener) } catch (_: Exception) {}
+                        asrManager = null
+                        factory = null
+                        Log.d(TAG, "百度语音识别引擎延迟释放完成")
+                    }
+                }, 150)
+            } else {
+                oldManager?.unregisterListener(eventListener)
+                asrManager = null
+                factory = null
             }
-            asrManager?.unregisterListener(eventListener)
-            asrManager = null
-            factory = null  // 释放 factory 引用（注意：不要调用 factory.close()，百度SDK没有这个方法）
-            isInitialized = false
-            isRecognizing = false
-            recognitionCallback = null
-            Log.d(TAG, "百度语音识别引擎已释放（配置保留，下次 init() 复用）")
+            Log.d(TAG, "百度语音识别引擎释放中（配置保留，下次 init() 复用）")
         } catch (e: Exception) {
             Log.e(TAG, "释放百度语音识别引擎失败: ${e.message}", e)
         }
@@ -379,85 +391,11 @@ class BaiduAsrManager private constructor(private val context: Context) {
 
     // ==================== 语音识别 ====================
 
-    fun recognizeFile(audioFile: File, callback: (String?) -> Unit) {
-        if (!audioFile.exists()) {
-            Log.e(TAG, "音频文件不存在: ${audioFile.absolutePath}")
-            callback(null)
-            return
-        }
-        if (!isInitialized) {
-            if (!init()) {
-                callback(null)
-                return
-            }
-        }
-        if (isRecognizing) {
-            Log.w(TAG, "正在识别中，忽略重复调用")
-            return
-        }
-
-        recognitionCallback = callback
-        isRecognizing = true
-
-        try {
-            val appId = getAppId()
-            val apiKey = getApiKey()
-            val secretKey = getSecretKey()
-
-            // 识别参数
-            // ASR_START 参数中再传一次鉴权信息（双保险，主鉴权在 AipeEventManagerFactory.setAkSk）
-            val params = JSONObject().apply {
-                // 鉴权信息（动态覆盖 meta-data）
-                put("appid", appId)
-                put("appkey", apiKey)
-                put("secretkey", secretKey)
-
-                // 基础参数
-                put("accept-audio-data", false)
-                put("accept-audio-volume", true)
-                put("disable-punctuation", false)
-
-                // 识别模型：3.5.0+ SDK 使用 language 代替 pid
-                // put("pid", 1537)  // 旧版参数，3.5.0+ 已废弃
-                put("language", "cmn-Hans-CN")  // 中文普通话
-
-                // 音频格式
-                put("format", "pcm")
-                put("rate", 16000)
-                put("channel", 1)
-
-                // 外部音频文件（infile 模式）
-                put("infile", audioFile.absolutePath)
-                put("outfile", "")
-
-                // VAD 设置
-                put("vad", "dnn")
-            }
-
-            Log.i(TAG, "识别参数: ${params.toString()}")
-
-            // 重置最终结果
-            lastFinalResult = null
-            asrManager?.send("asr.start", params.toString(), null, 0, 0)
-            Log.i(TAG, "百度语音识别已启动，文件: ${audioFile.name}, 大小: ${audioFile.length()} bytes")
-
-            // 启动超时机制
-            handler.removeCallbacks(timeoutRunnable)
-            handler.postDelayed(timeoutRunnable, RECOGNIZE_TIMEOUT_MS)
-        } catch (e: Exception) {
-            Log.e(TAG, "启动百度语音识别失败: ${e.message}", e)
-            isRecognizing = false
-            recognitionCallback = null
-            callback(null)
-        }
-    }
-
     /**
      * 启动流式语音识别（边录边识别 + 百度内置 DNN VAD）
      *
-     * 和 recognizeFile() 的区别：
-     * - recognizeFile()：先录完整段音频保存为文件，再一次性上传识别
-     * - startStreamingRecognition()：边录边传，百度 SDK 实时识别，内置 DNN VAD 自动检测说话开始/结束
+     * 流式识别：边录边传，百度 SDK 实时识别，内置 DNN VAD 自动检测说话开始/结束
+     * 使用流程：
      *
      * 使用流程：
      * 1. 调用本方法启动识别（内部会重置 BaiduAudioStream）

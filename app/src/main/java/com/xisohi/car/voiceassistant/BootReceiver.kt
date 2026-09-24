@@ -35,8 +35,7 @@ class BootReceiver : BroadcastReceiver() {
         val bootActions = listOf(
             Intent.ACTION_BOOT_COMPLETED,
             Intent.ACTION_LOCKED_BOOT_COMPLETED,
-            Intent.ACTION_USER_PRESENT,
-            Intent.ACTION_SHUTDOWN
+            Intent.ACTION_USER_PRESENT
         )
         if (action !in bootActions) return
 
@@ -44,12 +43,6 @@ class BootReceiver : BroadcastReceiver() {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         if (!prefs.getBoolean(KEY_AUTO_START, true)) {
             LogUtils.d(TAG, "自启开关已关闭，跳过")
-            return
-        }
-
-        // 关机广播不启动服务
-        if (action == Intent.ACTION_SHUTDOWN) {
-            LogUtils.d(TAG, "收到关机广播，不启动服务")
             return
         }
 
