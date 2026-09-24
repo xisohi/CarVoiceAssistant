@@ -122,10 +122,6 @@ class VoiceAssistantService : Service() {
         // 需要监听的唤醒广播 Action 列表
         // 已通过系统日志验证：熄火时发送 DO_SHUTDOWN/ACC_OFF/DO_SLEEP，点火时发送 USER_PRESENT/DO_WAKEUP/DO_WAKEUP_DOFUN/ACC_ON
         private val WAKEUP_ACTIONS = listOf(
-            // 标准蓝牙广播（点火时蓝牙重新连接，肯定会触发）
-            "android.bluetooth.adapter.action.STATE_CHANGED",
-            "android.bluetooth.a2dp.profile.action.CONNECTION_STATE_CHANGED",
-            "android.bluetooth.headset.profile.action.CONNECTION_STATE_CHANGED",
             // 屏幕点亮（熄火点火时屏幕会亮）
             android.content.Intent.ACTION_SCREEN_ON,
             // 电源连接（ACC 点火时可能触发）
