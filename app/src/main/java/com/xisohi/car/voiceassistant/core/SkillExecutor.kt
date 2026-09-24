@@ -24,6 +24,7 @@ import com.xisohi.car.voiceassistant.core.skill.TimeHelpSkill
 import com.xisohi.car.voiceassistant.core.skill.PhoneSkill
 import com.xisohi.car.voiceassistant.core.skill.VolumeSkill
 import com.xisohi.car.voiceassistant.core.skill.WeatherSkill
+import com.xisohi.car.voiceassistant.core.skill.OilPriceSkill
 import java.net.URLEncoder
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -55,6 +56,7 @@ class SkillExecutor(private val context: Context) {
     private val phoneSkill = PhoneSkill(context)
     private val timeHelpSkill = TimeHelpSkill()
     private val weatherSkill = WeatherSkill(context)
+    private val oilPriceSkill = OilPriceSkill(context)
     private val navigationSkill = NavigationSkill(context)
     private val mediaSkill = MediaSkill(context)
     private val bluetoothWifiSkill = BluetoothWifiSkill(context)
@@ -93,6 +95,8 @@ class SkillExecutor(private val context: Context) {
             "ask.time", "ask.help" -> timeHelpSkill.execute(intent)
             // 天气（转发给 WeatherSkill）
             "ask.weather" -> weatherSkill.execute(intent)
+            // 油价（转发给 OilPriceSkill）
+            "ask.oil_price" -> oilPriceSkill.execute(intent)
             // 打开应用（转发给 AppLaunchSkill）
             "app.open" -> appLaunchSkill.execute(intent)
             else -> ExecutionResult(false, "这个指令我还不支持")
@@ -108,6 +112,12 @@ class SkillExecutor(private val context: Context) {
     fun getTimeIndex(text: String?): Int = weatherSkill.getTimeIndex(text)
     fun isOnlyTimeWord(word: String?): Boolean = weatherSkill.isOnlyTimeWord(word)
     fun extractCity(word: String?): String? = weatherSkill.extractCity(word)
+
+    // ===== 油价查询（转发给 OilPriceSkill） =====
+    fun queryOilPrice(province: String? = null): String =
+        oilPriceSkill.queryOilPrice(province)
+
+    fun extractProvince(text: String?): String? = oilPriceSkill.extractProvince(text)
 
     fun setActiveMusicPlayer(packageName: String) =
         mediaSkill.setActivePlayer(packageName)  // 只设置活跃，不自动播放

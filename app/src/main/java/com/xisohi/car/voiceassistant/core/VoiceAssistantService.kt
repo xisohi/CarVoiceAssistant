@@ -1561,6 +1561,53 @@ class VoiceAssistantService : Service() {
             return
         }
 
+        // 油价查询（需要网络请求，在后台线程执行）
+        if (intent.action == "ask.oil_price") {
+            // 从意图参数中提取省份名（用户说"安徽油价"时）
+            val rawProvince = intent.params["province"]
+            val specifiedProvince = when {
+                rawProvince.isNullOrBlank() -> null
+                else -> skillExecutor.extractProvince(rawProvince)
+            }
+
+            // 先播报"正在查询"，让用户知道正在处理
+            val searchingText = if (!specifiedProvince.isNullOrBlank()) {
+                "正在查询${specifiedProvince}今日油价，请稍候"
+            } else {
+                "正在查询今日油价，请稍候"
+            }
+            FloatViewService.updateSubtitle("⛽ $searchingText")
+            ttsEngine.speak(searchingText)
+
+            // 在后台线程执行网络请求
+            Thread {
+                try {
+                    val oilResult = skillExecutor.queryOilPrice(specifiedProvince)
+                    LogUtils.i("VoiceService", "油价查询结果: $oilResult")
+
+                    mainHandler.post {
+                        FloatViewService.updateSubtitle("⛽ $oilResult")
+                        ttsEngine.speak(oilResult)
+                        lastIntentResult = "油价: $oilResult"
+                        if (!ttsEngine.isReady) {
+                            currentState = State.IDLE
+                            resumeWake()
+                        }
+                    }
+                } catch (e: Exception) {
+                    LogUtils.w("VoiceService", "油价查询异常: ${e.message}")
+                    mainHandler.post {
+                        val errorText = "油价查询失败，请检查网络连接"
+                        FloatViewService.updateSubtitle("❌ $errorText")
+                        ttsEngine.speak(errorText)
+                        currentState = State.IDLE
+                        resumeWake()
+                    }
+                }
+            }.start()
+            return
+        }
+
         // ★ 导航意图特殊处理：先 TTS 播报，播报完再拉起导航
         // 原因：如果先拉起导航再 TTS 播报，导航的语音和我们的 TTS 会同时响，声音重叠
         if (intent.action == "nav.to" || intent.action == "nav.home" || intent.action == "nav.company" || intent.action == "nav.nearby") {
