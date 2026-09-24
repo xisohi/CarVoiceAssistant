@@ -989,7 +989,7 @@ class VoiceAssistantService : Service() {
             // ★★★ 方案3：生产者-消费者模式，录音线程和识别线程分离 ★★★
             // 录音线程（生产者）：只做 record.read() + 入队，不做任何处理，避免阻塞导致丢帧
             // 识别线程（消费者，当前协程）：从队列取音频 + 所有处理（降噪/增益/Vosk识别/UI更新/端点检测）
-            val audioQueue = java.util.concurrent.LinkedBlockingQueue<AudioFrame>(100)  // 约3秒缓冲
+            val audioQueue = java.util.concurrent.LinkedBlockingQueue<AudioFrame>(300)  // 约10秒缓冲，避免丢帧
             val recordingFinished = java.util.concurrent.atomic.AtomicBoolean(false)
 
             // ★ 录音线程（生产者）：只做录音和入队，极轻量，不会阻塞
@@ -1055,16 +1055,16 @@ class VoiceAssistantService : Service() {
                     // 应用降噪处理（高通滤波 + RNNoise）
                     recNoiseReducer.process(shortBuf, n, enableRnNoise = false)
 
-                    // 保存原始音频用于诊断（不加增益）
-                    val baiduBytes = ByteArray(n * 2)
-                    shortsToBytes(shortBuf, n, baiduBytes)
-                    audioBuffer.write(baiduBytes)
-
                     // ★ 端点检测用原始 RMS（先算 RMS，再增益）
                     val originalRms = SpeechRecognizer.calculateRms(shortBuf, n)
                     
                     // 给 Vosk 离线识别的音频：应用 asrGain
                     applyGain(shortBuf, n)
+
+                    // ★ 保存加增益后的音频（和喂给识别器的完全一致）
+                    val baiduBytes = ByteArray(n * 2)
+                    shortsToBytes(shortBuf, n, baiduBytes)
+                    audioBuffer.write(baiduBytes)
 
                     // 计算 RMS 能量（增益后，用于显示和峰值统计）
                     val rms = SpeechRecognizer.calculateRms(shortBuf, n)
@@ -1130,7 +1130,7 @@ class VoiceAssistantService : Service() {
                                     "连续静音${silenceDuration}ms（${consecutiveSilenceFrames}帧），结束录音 (RMS=${rms.toInt()}, 阈值=${adaptiveSilenceThreshold.toInt()})")
                                 sendRecognitionLog("⏹️ 结束录音 (静音${silenceDuration}ms, RMS=${rms.toInt()})")
                                 shouldStopRecording.set(true)
-                                audioQueue.clear()   // ★ 清空队列，消除积压的尾巴
+                                // audioQueue.clear()  // 不清空队列，确保剩余帧也被处理和保存
                                 break@loop
                             }
                         } else {
@@ -1146,7 +1146,7 @@ class VoiceAssistantService : Service() {
                         android.util.Log.d("VoiceService",
                             "录音超时（${if (hasSpeechStarted) "已开口" else "未检测到语音"}，${recordDuration}ms）")
                         shouldStopRecording.set(true)
-                        audioQueue.clear()   // ★ 超时也清空队列
+                        // audioQueue.clear()  // 不清空队列，确保剩余帧也被处理和保存
                         break@loop
                     }
                 }
@@ -1163,20 +1163,38 @@ class VoiceAssistantService : Service() {
                     recordingJob.cancel()
                 }
 
-                // 处理队列里剩余的音频帧（如果有）
+                // 处理队列里剩余的音频帧（遇到连续静音就停止，避免长尾巴）
+                var remainingSilenceFrames = 0
+                var remainingProcessedFrames = 0
                 while (true) {
                     val frame = audioQueue.poll() ?: break
                     if (frame.length <= 0) break
                     val n = frame.length
                     System.arraycopy(frame.data, 0, shortBuf, 0, n)
                     recNoiseReducer.process(shortBuf, n, enableRnNoise = false)
-                    // ★ 先应用增益，再保存和识别（这样保存的录音文件声音就大了）
+
+                    // ★ 前5帧强制处理（保留约160ms余量），之后遇到连续3帧静音就停止
+                    if (remainingProcessedFrames >= 5) {
+                        val frameRms = SpeechRecognizer.calculateRms(shortBuf, n)
+                        if (frameRms < adaptiveSilenceThreshold) {
+                            remainingSilenceFrames++
+                            if (remainingSilenceFrames >= 3) {
+                                android.util.Log.d("VoiceService", "处理剩余帧时遇到连续静音，停止（已处理${remainingProcessedFrames}帧，丢弃队列剩余${audioQueue.size}帧）")
+                                break
+                            }
+                        } else {
+                            remainingSilenceFrames = 0
+                        }
+                    }
+
+                    // 应用增益（保存和识别都用加增益后的）
                     applyGain(shortBuf, n)
                     val baiduBytes = ByteArray(n * 2)
                     shortsToBytes(shortBuf, n, baiduBytes)
                     audioBuffer.write(baiduBytes)
                     shortsToBytes(shortBuf, n, byteBuf)
                     recognizer.feed(byteBuf, n * 2)
+                    remainingProcessedFrames++
                 }
 
                 finalText = recognizer.finish()
