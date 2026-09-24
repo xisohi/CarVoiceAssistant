@@ -149,9 +149,10 @@ public class WakeWordEngine {
     private String errorMessage = null;
     private int debugLogCount = 0;
     private static final int DEBUG_LOG_MAX = 50;
-    // 冷启动防误唤醒：跳过前 N 帧（每帧约10ms，300帧≈3秒）
+    // 冷启动防误唤醒：跳过前 N 帧
+    // 注意：audioSamplesNeeded=16080，16kHz 下每帧约 1 秒，所以 3 帧≈3 秒
     // 使用实例字段，每次创建 WakeWordEngine 时重置，确保服务重启后防误唤醒仍生效
-    private static final int STARTUP_SKIP_FRAMES = 300;
+    private static final int STARTUP_SKIP_FRAMES = 3;
     private int framesProcessed = 0;
 
     // ===== 唤醒灵敏度测试日志 =====

@@ -626,6 +626,11 @@ class VoiceAssistantService : Service() {
                             mainHandler.post {
                                 if (currentState == VoiceAssistantService.State.IDLE) {
                                     onWakeWord()
+                                } else {
+                                    // 唤醒被丢弃：当前正在 TTS/识别中，不重启监听。
+                                    // 线程 break 后 finally 会重置 isWakeListening=false。
+                                    // 当前流程走完后，resumeWake() 会自动重启监听。
+                                    android.util.Log.d("WakeAudioThread", "唤醒被丢弃（当前状态=${currentState}），等当前流程结束后自动恢复监听")
                                 }
                             }
                             // 唤醒后直接退出循环，让线程自然结束
@@ -640,8 +645,9 @@ class VoiceAssistantService : Service() {
                 try { record.stop() } catch (_: Exception) {}
                 record.release()
                 noiseReducer.release()
-                // 线程退出时重置监听状态，避免唤醒被丢弃（状态非IDLE）后
-                // isWakeListening 仍为 true 导致下次无法重启监听
+                // 线程退出时重置监听状态：
+                // - 正常唤醒：onWakeWord→stopWakeListening 已清理，此处 if 为 false 不重复
+                // - 唤醒被丢弃：此处负责清理，resumeWake 后续会重启
                 if (wakeAudioThread === this) {
                     isWakeListening = false
                     wakeAudioThread = null
