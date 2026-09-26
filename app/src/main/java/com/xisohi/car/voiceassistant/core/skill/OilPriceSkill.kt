@@ -244,11 +244,11 @@ class OilPriceSkill(private val context: Context) {
             val avg = calculateAverage(prices)
             if (avg != null) {
                 if (mappedProvince.isNullOrBlank()) {
-                    // 没指定省份或定位失败：直接播报全国均价
-                    "全国均价：${formatPriceText(avg)}"
+                    // 没指定省份或定位失败：直接播报全国均价（avg.province 已是"全国均价"）
+                    formatPriceText(avg)
                 } else {
                     // 指定了省份但找不到（如冷门地名）：说明原因后播报全国均价
-                    "未找到${mappedProvince}的油价数据，全国均价：${formatPriceText(avg)}"
+                    "未找到${mappedProvince}的油价数据，${formatPriceText(avg)}"
                 }
             } else {
                 "暂未获取到油价数据，请稍后再试"
