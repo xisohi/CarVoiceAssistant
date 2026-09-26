@@ -689,38 +689,5 @@
                     android:layout_marginTop="1dp" />
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
-        <!-- ============ 日志卡 ============ -->
-        <com.google.android.material.card.MaterialCardView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            app:cardCornerRadius="5dp"
-            app:contentPadding="3dp">
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical">
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="运行日志"
-                    android:textSize="9sp"
-                    android:textColor="#6B7280" />
-                <ScrollView
-                    android:id="@+id/scrollLog"
-                    android:layout_width="match_parent"
-                    android:layout_height="72dp"
-                    android:layout_marginTop="2dp"
-                    android:background="#F4F5F7"
-                    android:padding="3dp">
-                    <TextView
-                        android:id="@+id/tvLog"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:textSize="9sp"
-                        android:typeface="monospace"
-                        android:textColor="#1A1B1C" />
-                </ScrollView>
-            </LinearLayout>
-        </com.google.android.material.card.MaterialCardView>
     </LinearLayout>
 </ScrollView>

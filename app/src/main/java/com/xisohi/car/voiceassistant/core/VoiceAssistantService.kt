@@ -53,9 +53,6 @@ class VoiceAssistantService : Service() {
         const val ACTION_START = "com.xisohi.car.voiceassistant.action.START"
         const val ACTION_STOP = "com.xisohi.car.voiceassistant.action.STOP"
         const val ACTION_WAKE_TRIGGER = "com.xisohi.car.voiceassistant.action.WAKE_TRIGGER"
-        // 识别结果广播 Action（用于通知 MainActivity 显示到运行日志）
-        const val ACTION_RECOGNITION_LOG = "com.xisohi.car.voiceassistant.ACTION_RECOGNITION_LOG"
-        const val EXTRA_LOG_MESSAGE = "log_message"
         private const val CHANNEL_ID = "voice_assistant"
         private const val NOTIF_ID = 1
         private const val MAX_RECORD_MS = 20_000L  // 最长录音 20 秒（给用户足够时间说话）
@@ -1630,23 +1627,10 @@ class VoiceAssistantService : Service() {
 
 
     /**
-     * 发送识别日志，同时写入文件和发送广播
-     * - 写入 LogUtils 文件：LogViewerActivity（查看日志页面）可以查看和导出
-     * - 发送广播：MainActivity 实时显示到设置页的运行日志
+     * 记录识别日志到文件（日志查看页面可以查看和导出）
      */
     private fun sendRecognitionLog(message: String) {
-        // 写入文件日志（查看日志页面可以查看和导出到U盘）
         LogUtils.i("Recognition", message)
-        // 发送广播（设置页实时显示）
-        try {
-            val intent = Intent(ACTION_RECOGNITION_LOG).apply {
-                setPackage(packageName)
-                putExtra(EXTRA_LOG_MESSAGE, message)
-            }
-            sendBroadcast(intent)
-        } catch (e: Exception) {
-            LogUtils.w("VoiceService", "发送识别日志广播失败: ${e.message}")
-        }
     }
 
 

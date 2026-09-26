@@ -49,14 +49,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private lateinit var baiduAsrManager: BaiduAsrManager
 
-    // 识别结果广播接收器：接收 VoiceAssistantService 发送的识别结果，显示到运行日志
-    private val recognitionLogReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context?, intent: Intent?) {
-            val message = intent?.getStringExtra(VoiceAssistantService.EXTRA_LOG_MESSAGE) ?: return
-            log(message)
-        }
-    }
-
     // TTS 检测（只检测一次，避免每500ms创建销毁TTS实例的性能问题）
     private var ttsChecker: TextToSpeech? = null
     private var ttsChecked = false
@@ -116,14 +108,6 @@ class MainActivity : AppCompatActivity() {
             }
         } catch (e: Exception) {
             log("查询 SAF 可用性失败: ${e.message}")
-        }
-
-        // 注册识别结果广播接收器（实时显示识别结果到运行日志）
-        val filter = IntentFilter(VoiceAssistantService.ACTION_RECOGNITION_LOG)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(recognitionLogReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
-        } else {
-            registerReceiver(recognitionLogReceiver, filter)
         }
 
         // 返回后台运行按钮：只关闭页面，不停止服务
@@ -247,9 +231,6 @@ class MainActivity : AppCompatActivity() {
         handler.removeCallbacks(stateRefresher)
         ttsChecker?.shutdown()
         ttsChecker = null
-        try {
-            unregisterReceiver(recognitionLogReceiver)
-        } catch (_: Exception) {}
     }
 
     // ===== 手动调节 threshold/gain =====
@@ -1090,17 +1071,10 @@ class MainActivity : AppCompatActivity() {
 
     // ---------- 日志与权限 ----------
     private fun log(msg: String) {
-        // ★ 写文件日志：任何线程都可以调用（LogUtils 内部有锁，线程安全）
+        // 写文件日志：日志查看页面可以查看和导出
         try {
             com.xisohi.car.voiceassistant.core.LogUtils.i("MainActivity", msg)
         } catch (_: Exception) {}
-
-        // ★ 操作 UI：必须切回主线程
-        runOnUiThread {
-            val time = SimpleDateFormat("HH:mm:ss", Locale.CHINA).format(Date())
-            binding.tvLog.append("[$time] $msg\n")
-            binding.scrollLog.post { binding.scrollLog.fullScroll(android.view.View.FOCUS_DOWN) }
-        }
     }
 
     private fun ensurePermissions() {
