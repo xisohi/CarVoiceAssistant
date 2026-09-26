@@ -48,6 +48,7 @@ object LogUtils {
     /**
      * 调试日志
      */
+    @JvmStatic
     fun d(tag: String, message: String) {
         android.util.Log.d(tag, message)
         writeToFile("D", tag, message)
@@ -56,6 +57,7 @@ object LogUtils {
     /**
      * 信息日志
      */
+    @JvmStatic
     fun i(tag: String, message: String) {
         android.util.Log.i(tag, message)
         writeToFile("I", tag, message)
@@ -64,6 +66,7 @@ object LogUtils {
     /**
      * 警告日志
      */
+    @JvmStatic
     fun w(tag: String, message: String) {
         android.util.Log.w(tag, message)
         writeToFile("W", tag, message)
@@ -72,6 +75,7 @@ object LogUtils {
     /**
      * 错误日志
      */
+    @JvmStatic
     fun e(tag: String, message: String, throwable: Throwable? = null) {
         android.util.Log.e(tag, message, throwable)
         writeToFile("E", tag, message)

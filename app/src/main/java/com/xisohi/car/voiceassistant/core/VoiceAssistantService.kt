@@ -211,13 +211,13 @@ class VoiceAssistantService : Service() {
     private val phoneStateMonitor = PhoneStateMonitor(this, object : PhoneStateMonitor.Callback {
         override fun onCallStarted() {
             if (isWakeListening) {
-                android.util.Log.d("VoiceService", "电话中，暂停唤醒监听")
+                LogUtils.d("VoiceService", "电话中，暂停唤醒监听")
                 stopWakeListening()
             }
         }
         override fun onCallEnded() {
             if (!isWakeListening) {
-                android.util.Log.d("VoiceService", "电话结束，恢复唤醒监听")
+                LogUtils.d("VoiceService", "电话结束，恢复唤醒监听")
                 startWakeListening()
             }
         }
@@ -265,18 +265,18 @@ class VoiceAssistantService : Service() {
         // 初始化官方 WakeWordEngine（构造函数自动加载 model_info.json）
         wakeWordEngine = WakeWordEngine(this)
         if (!wakeWordEngine.isLoaded) {
-            android.util.Log.e("VoiceService", "唤醒引擎加载失败: ${wakeWordEngine.errorMessage}")
+            LogUtils.e("VoiceService", "唤醒引擎加载失败: ${wakeWordEngine.errorMessage}")
         }
         // 读取保存的灵敏度配置
         val prefs = getSharedPreferences("voice_assistant_prefs", MODE_PRIVATE)
         val savedSens = prefs.getInt("wake_sensitivity", 1)
         WakeWordEngine.setSensitivity(savedSens)
-        android.util.Log.i("VoiceService", "唤醒灵敏度: ${WakeWordEngine.getSensitivityName()} (增益=${WakeWordEngine.getAudioGain()}, 阈值=${WakeWordEngine.getDetectionThreshold()})")
+        LogUtils.i("VoiceService", "唤醒灵敏度: ${WakeWordEngine.getSensitivityName()} (增益=${WakeWordEngine.getAudioGain()}, 阈值=${WakeWordEngine.getDetectionThreshold()})")
 
         // 读取保存的识别增益（asrGain），避免服务重启后用户设置丢失
         val savedAsrGain = prefs.getFloat("asr_gain_override", 8.0f)
         WakeWordEngine.setAsrGain(savedAsrGain)
-        android.util.Log.i("VoiceService", "识别增益: ${WakeWordEngine.getAsrGain()}")
+        LogUtils.i("VoiceService", "识别增益: ${WakeWordEngine.getAsrGain()}")
 
         // 初始化录音保存工具（保存最近10条录音，方便回听判断录音质量）
         AudioSaver.init(this)
@@ -284,9 +284,9 @@ class VoiceAssistantService : Service() {
         // 初始化百度语音识别管理器（有网络且配置了 Key 时优先使用百度，识别率更高）
         baiduAsrManager = BaiduAsrManager.getInstance(this)
         if (baiduAsrManager.isConfigured()) {
-            android.util.Log.i("VoiceService", "百度语音已配置，有网络时优先使用百度识别")
+            LogUtils.i("VoiceService", "百度语音已配置，有网络时优先使用百度识别")
         } else {
-            android.util.Log.i("VoiceService", "百度语音未配置，使用离线 Vosk 识别")
+            LogUtils.i("VoiceService", "百度语音未配置，使用离线 Vosk 识别")
         }
 
         // 预加载 Vosk 语音识别模型（后台线程，不阻塞服务启动）
@@ -296,12 +296,12 @@ class VoiceAssistantService : Service() {
                 val modelDir = ModelManager.findAsrModelDir(this@VoiceAssistantService)
                 if (modelDir != null) {
                     SpeechRecognizer.preload(modelDir)
-                    android.util.Log.i("VoiceService", "Vosk 模型预加载完成: ${modelDir.name}")
+                    LogUtils.i("VoiceService", "Vosk 模型预加载完成: ${modelDir.name}")
                 } else {
-                    android.util.Log.w("VoiceService", "Vosk 模型目录未找到，跳过预加载")
+                    LogUtils.w("VoiceService", "Vosk 模型目录未找到，跳过预加载")
                 }
             } catch (e: Exception) {
-                android.util.Log.e("VoiceService", "Vosk 模型预加载失败", e)
+                LogUtils.e("VoiceService", "Vosk 模型预加载失败", e)
             }
         }
 
@@ -324,7 +324,7 @@ class VoiceAssistantService : Service() {
                     // 如果是唤醒提示音（"在呢，您请说"）刚说完，开始录音识别用户指令
                     if (isWakePromptSpeaking) {
                         isWakePromptSpeaking = false
-                        android.util.Log.d("VoiceService", "唤醒提示音播报完成，开始录音识别")
+                        LogUtils.d("VoiceService", "唤醒提示音播报完成，开始录音识别")
                         // 延迟 50ms 再开始录音，确保 TTS 完全停止，不被录进语音指令
                         // 录音时其他声音降到0（静音），提高识别准确率
                         mainHandler.postDelayed({
@@ -336,7 +336,7 @@ class VoiceAssistantService : Service() {
                     // 如果是"没听懂，请重说"刚说完，直接重新监听（不需要唤醒词）
                     if (isRetryListening) {
                         isRetryListening = false
-                        android.util.Log.d("VoiceService", "没听懂提示音播报完成，重新开始录音识别")
+                        LogUtils.d("VoiceService", "没听懂提示音播报完成，重新开始录音识别")
                         // 延迟 50ms 再开始录音，确保 TTS 完全停止
                         // 录音时其他声音降到0（静音），提高识别准确率
                         mainHandler.postDelayed({
@@ -392,10 +392,10 @@ class VoiceAssistantService : Service() {
         currentState = State.IDLE
         resumeWake()
         try {
-            android.util.Log.d("VoiceAssistant", "启动悬浮窗服务...")
+            LogUtils.d("VoiceAssistant", "启动悬浮窗服务...")
             FloatViewService.start(this)
         } catch (e: Exception) {
-            android.util.Log.w("VoiceAssistant", "启动悬浮窗服务失败: ${e.message}")
+            LogUtils.w("VoiceAssistant", "启动悬浮窗服务失败: ${e.message}")
         }
         return START_STICKY
     }
@@ -512,17 +512,19 @@ class VoiceAssistantService : Service() {
     }
 
     private fun startWakeListening() {
+        LogUtils.i("WakeState", "startWakeListening: isWakeListening=$isWakeListening, state=$currentState")
         if (isWakeListening) return
         if (!wakeWordEngine.isLoaded) {
-            android.util.Log.e("VoiceService", "唤醒引擎未加载，无法启动")
+            LogUtils.e("VoiceService", "唤醒引擎未加载，无法启动")
             return
         }
         isWakeListening = true
         wakeAudioThread = WakeAudioThread().apply { start() }
-        android.util.Log.d("VoiceService", "唤醒监听已启动")
+        LogUtils.d("VoiceService", "唤醒监听已启动")
     }
 
     private fun stopWakeListening() {
+        LogUtils.i("WakeState", "stopWakeListening: isWakeListening=$isWakeListening, state=$currentState")
         isWakeListening = false
         val thread = wakeAudioThread
         thread?.interrupt()
@@ -532,18 +534,20 @@ class VoiceAssistantService : Service() {
         } catch (_: InterruptedException) {
         }
         wakeAudioThread = null
-        android.util.Log.d("VoiceService", "唤醒监听已停止")
+        LogUtils.d("VoiceService", "唤醒监听已停止")
     }
 
     // 唤醒音频采集与推理线程
     private inner class WakeAudioThread : Thread("WakeAudioThread") {
         override fun run() {
+            // 重置冷启动跳过计数，跳过麦克风刚启动时的爆音
+            wakeWordEngine.resetSkipCounter()
             val sampleRate = 16000
             val channelConfig = AudioFormat.CHANNEL_IN_MONO
             val audioFormat = AudioFormat.ENCODING_PCM_16BIT
             val minBufSize = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioFormat)
             if (minBufSize <= 0) {
-                android.util.Log.e("WakeAudioThread", "无效的音频参数")
+                LogUtils.e("WakeAudioThread", "无效的音频参数")
                 return
             }
 
@@ -555,7 +559,7 @@ class VoiceAssistantService : Service() {
                 maxOf(minBufSize * 8, 256_000)  // minBuf*8，最小256KB（约8秒缓冲），避免车机CPU慢导致ring buffer溢出丢帧
             )
             if (record.state != AudioRecord.STATE_INITIALIZED) {
-                android.util.Log.e("WakeAudioThread", "AudioRecord 初始化失败")
+                LogUtils.e("WakeAudioThread", "AudioRecord 初始化失败")
                 return
             }
 
@@ -565,7 +569,7 @@ class VoiceAssistantService : Service() {
             // 官方引擎需要的帧大小（由 engine.audioSamplesNeeded 获取）
             val frameSize = wakeWordEngine.audioSamplesNeeded
             if (frameSize <= 0) {
-                android.util.Log.e("WakeAudioThread", "无效的帧大小")
+                LogUtils.e("WakeAudioThread", "无效的帧大小")
                 record.release()
                 return
             }
@@ -582,26 +586,26 @@ class VoiceAssistantService : Service() {
                         startSuccess = true
                         break
                     } else {
-                        android.util.Log.w("WakeAudioThread", "startRecording() 失败 (state=${record.recordingState})，第 $retry 次重试...")
+                        LogUtils.w("WakeAudioThread", "startRecording() 失败 (state=${record.recordingState})，第 $retry 次重试...")
                         Thread.sleep(200)
                     }
                 } catch (e: Exception) {
-                    android.util.Log.w("WakeAudioThread", "startRecording() 异常: ${e.message}，第 $retry 次重试...")
+                    LogUtils.w("WakeAudioThread", "startRecording() 异常: ${e.message}，第 $retry 次重试...")
                     Thread.sleep(200)
                 }
             }
             if (!startSuccess) {
-                android.util.Log.e("WakeAudioThread", "AudioRecord 启动失败（重试3次均失败），麦克风可能被其他应用占用")
+                LogUtils.e("WakeAudioThread", "AudioRecord 启动失败（重试3次均失败），麦克风可能被其他应用占用")
                 record.release()
                 return
             }
-            android.util.Log.d("WakeAudioThread", "开始录音，帧大小=$frameSize")
+            LogUtils.d("WakeAudioThread", "开始录音，帧大小=$frameSize")
 
             try {
                 while (isWakeListening && !isInterrupted()) {
                     val read = record.read(audioBuffer, 0, frameSize, AudioRecord.READ_BLOCKING)
                     if (read < 0) {
-                        android.util.Log.e("WakeAudioThread", "AudioRecord.read() 错误: $read，退出循环")
+                        LogUtils.e("WakeAudioThread", "AudioRecord.read() 错误: $read，退出循环")
                         break
                     }
                     if (read == frameSize) {
@@ -611,14 +615,14 @@ class VoiceAssistantService : Service() {
                         val result = try {
                             wakeWordEngine.process(audioBuffer)
                         } catch (e: IllegalStateException) {
-                            android.util.Log.w("WakeAudioThread", "session 已关闭，停止处理: ${e.message}")
+                            LogUtils.w("WakeAudioThread", "session 已关闭，停止处理: ${e.message}")
                             break
                         } catch (e: Exception) {
-                            android.util.Log.w("WakeAudioThread", "处理异常: ${e.message}")
+                            LogUtils.w("WakeAudioThread", "处理异常: ${e.message}")
                             continue
                         }
                         if (result != null && result.wakeWord != null) {
-                            android.util.Log.i("WakeAudioThread", "唤醒词检测到: ${result.wakeWord} (${result.probability})")
+                            LogUtils.i("WakeAudioThread", "唤醒词检测到: ${result.wakeWord} (${result.probability})")
                             // 触发唤醒回调
                             mainHandler.post {
                                 if (currentState == VoiceAssistantService.State.IDLE) {
@@ -627,7 +631,7 @@ class VoiceAssistantService : Service() {
                                     // 唤醒被丢弃：当前正在 TTS/识别中，不重启监听。
                                     // 线程 break 后 finally 会重置 isWakeListening=false。
                                     // 当前流程走完后，resumeWake() 会自动重启监听。
-                                    android.util.Log.d("WakeAudioThread", "唤醒被丢弃（当前状态=${currentState}），等当前流程结束后自动恢复监听")
+                                    LogUtils.d("WakeAudioThread", "唤醒被丢弃（当前状态=${currentState}），等当前流程结束后自动恢复监听")
                                 }
                             }
                             // 唤醒后直接退出循环，让线程自然结束
@@ -649,7 +653,7 @@ class VoiceAssistantService : Service() {
                     isWakeListening = false
                     wakeAudioThread = null
                 }
-                android.util.Log.d("WakeAudioThread", "录音线程结束")
+                LogUtils.d("WakeAudioThread", "录音线程结束")
             }
         }
     }
@@ -660,6 +664,7 @@ class VoiceAssistantService : Service() {
 
     // ---------- 唤醒触发 ----------
     private fun onWakeWord() {
+        LogUtils.i("WakeState", "onWakeWord: state=$currentState, isWakeListening=$isWakeListening")
         if (currentState != State.IDLE) return
         // 每次唤醒都重置连续没说话的计数
         noSpeechRetryCount = 0
@@ -683,7 +688,7 @@ class VoiceAssistantService : Service() {
             LogUtils.d("VoiceService", "唤醒提示：TTS播报'在呢，您请说'，播报完成后开始录音")
         } else {
             // TTS 不可用：兜底用哔哔声提示音
-            android.util.Log.w("VoiceService", "TTS不可用，使用哔哔声作为唤醒提示")
+            LogUtils.w("VoiceService", "TTS不可用，使用哔哔声作为唤醒提示")
             // 恢复系统音量到原始值，保证哔哔声够大
             restoreMediaVolume()
             playWakeBeep()
@@ -707,7 +712,7 @@ class VoiceAssistantService : Service() {
             val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
             val currentVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
             val maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-            android.util.Log.d("VoiceService", "媒体音量: $currentVolume/$maxVolume")
+            LogUtils.d("VoiceService", "媒体音量: $currentVolume/$maxVolume")
 
             // 如果媒体音量为0，临时调到30%，确保能听到提示音
             var restoredVolume = -1
@@ -715,7 +720,7 @@ class VoiceAssistantService : Service() {
                 restoredVolume = currentVolume
                 val tempVolume = (maxVolume * 0.3).toInt().coerceAtLeast(1)
                 audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, tempVolume, 0)
-                android.util.Log.d("VoiceService", "媒体音量为0，临时调到: $tempVolume")
+                LogUtils.d("VoiceService", "媒体音量为0，临时调到: $tempVolume")
             }
 
             if (toneGenerator == null) {
@@ -736,12 +741,12 @@ class VoiceAssistantService : Service() {
                 mainHandler.postDelayed({
                     try {
                         audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, restoredVolume, 0)
-                        android.util.Log.d("VoiceService", "恢复媒体音量: $restoredVolume")
+                        LogUtils.d("VoiceService", "恢复媒体音量: $restoredVolume")
                     } catch (_: Exception) {}
                 }, 800)
             }
         } catch (e: Exception) {
-            android.util.Log.w("VoiceService", "播放提示音失败: ${e.message}")
+            LogUtils.w("VoiceService", "播放提示音失败: ${e.message}")
         }
     }
 
@@ -777,7 +782,7 @@ class VoiceAssistantService : Service() {
         // 连续在线失败超过阈值时，暂时降级为离线（避免每次都要等在线超时/失败）
         // 适用于：Key错误、网络不通（WiFi已连接但无外网）等场景
         if (consecutiveOnlineFailures >= MAX_CONSECUTIVE_ONLINE_FAILURES) {
-            android.util.Log.w("VoiceService", "连续在线识别失败 ${consecutiveOnlineFailures} 次，暂时降级为离线识别（下次启动应用后恢复）")
+            LogUtils.w("VoiceService", "连续在线识别失败 ${consecutiveOnlineFailures} 次，暂时降级为离线识别（下次启动应用后恢复）")
             sendRecognitionLog("⚠️ 连续在线失败${consecutiveOnlineFailures}次，暂时使用离线识别")
             startRecognitionOffline()
             return
@@ -798,17 +803,17 @@ class VoiceAssistantService : Service() {
         } else {
             when {
                 !baiduAsrManager.isConfigured() -> {
-                    android.util.Log.d("VoiceService", "百度语音未配置，使用 Vosk 离线识别")
+                    LogUtils.d("VoiceService", "百度语音未配置，使用 Vosk 离线识别")
                 }
                 !hasNetwork -> {
-                    android.util.Log.d("VoiceService", "无网络连接，使用 Vosk 离线识别")
+                    LogUtils.d("VoiceService", "无网络连接，使用 Vosk 离线识别")
                 }
                 !canReachInternet -> {
-                    android.util.Log.w("VoiceService", "网络已连接但无法访问外网，使用 Vosk 离线识别")
+                    LogUtils.w("VoiceService", "网络已连接但无法访问外网，使用 Vosk 离线识别")
                     sendRecognitionLog("⚠️ 网络不通，使用离线识别")
                 }
                 configStatus == BaiduAsrManager.CONFIG_STATUS_ERROR -> {
-                    android.util.Log.w("VoiceService", "百度配置验证失败（请在设置页重新测试连接），使用 Vosk 离线识别")
+                    LogUtils.w("VoiceService", "百度配置验证失败（请在设置页重新测试连接），使用 Vosk 离线识别")
                     sendRecognitionLog("⚠️ 配置错误，使用离线识别")
                 }
             }
@@ -845,7 +850,7 @@ class VoiceAssistantService : Service() {
         // 停止唤醒监听，释放麦克风给百度 SDK
         stopWakeListening()
         currentState = State.LISTENING
-        android.util.Log.i("VoiceService", "启动百度在线识别（百度自录）")
+        LogUtils.i("VoiceService", "启动百度在线识别（百度自录）")
         sendRecognitionLog("🌐 百度在线识别启动（百度自录）")
 
         // 重置结果接收标志
@@ -854,7 +859,7 @@ class VoiceAssistantService : Service() {
         // ★ 超时保护：网络不通时百度 SDK 可能一直不返回回调，15秒后自动回退离线
         val timeoutRunnable = Runnable {
             if (!onlineResultReceived) {
-                android.util.Log.w("VoiceService", "百度在线识别超时（${ONLINE_RECOGNITION_TIMEOUT_MS}ms未返回），自动回退到离线识别")
+                LogUtils.w("VoiceService", "百度在线识别超时（${ONLINE_RECOGNITION_TIMEOUT_MS}ms未返回），自动回退到离线识别")
                 sendRecognitionLog("⚠️ 在线识别超时，自动回退到离线识别")
                 handleOnlineFailure()
             }
@@ -873,13 +878,13 @@ class VoiceAssistantService : Service() {
                 onlineTimeoutRunnable = null
 
                 if (!result.isNullOrEmpty()) {
-                    android.util.Log.i("VoiceService", "百度在线识别成功: '$result'")
+                    LogUtils.i("VoiceService", "百度在线识别成功: '$result'")
                     sendRecognitionLog("✅ 百度识别: $result")
                     // 在线识别成功，重置连续失败计数
                     consecutiveOnlineFailures = 0
                     handleText(result)
                 } else {
-                    android.util.Log.w("VoiceService", "百度在线识别失败或结果为空，自动回退到离线识别")
+                    LogUtils.w("VoiceService", "百度在线识别失败或结果为空，自动回退到离线识别")
                     sendRecognitionLog("⚠️ 百度识别失败，自动回退到离线识别")
                     handleOnlineFailure()
                 }
@@ -893,7 +898,7 @@ class VoiceAssistantService : Service() {
     private fun handleOnlineFailure() {
         // 增加连续失败计数
         consecutiveOnlineFailures++
-        android.util.Log.w("VoiceService", "连续在线失败次数: $consecutiveOnlineFailures / $MAX_CONSECUTIVE_ONLINE_FAILURES")
+        LogUtils.w("VoiceService", "连续在线失败次数: $consecutiveOnlineFailures / $MAX_CONSECUTIVE_ONLINE_FAILURES")
         // ★ 标记：本次是在线失败回退离线，防止离线失败后又重试在线导致无限循环
         isFallbackFromOnline = true
         // ★ 不播报"在线识别失败"，静默降级
@@ -901,7 +906,7 @@ class VoiceAssistantService : Service() {
         // 直接走离线识别，用户感知是"多等了几秒"，而不是"被系统告知失败"
         // 延迟800ms，给百度SDK释放麦克风的时间
         val delayMs = 800L
-        android.util.Log.d("VoiceService", "延迟 ${delayMs}ms 后启动离线识别（静默降级）")
+        LogUtils.d("VoiceService", "延迟 ${delayMs}ms 后启动离线识别（静默降级）")
         mainHandler.postDelayed({
             startRecognitionOffline()
         }, delayMs)
@@ -954,7 +959,7 @@ class VoiceAssistantService : Service() {
             currentState = State.LISTENING
             lastPartialText = ""
             record.startRecording()
-            android.util.Log.d("VoiceService", "开始录音识别")
+            LogUtils.d("VoiceService", "开始录音识别")
             sendRecognitionLog("🎙️ 开始录音识别")
 
             // ===== 环境噪音采样，动态设定静音阈值 =====
@@ -983,7 +988,7 @@ class VoiceAssistantService : Service() {
             }
             val adaptiveSilenceThreshold = (ambientRms * NOISE_MULTIPLIER)
                 .coerceIn(SILENCE_RMS_MIN, SILENCE_RMS_MAX)
-            android.util.Log.d("VoiceService",
+            LogUtils.d("VoiceService",
                 "环境噪音 RMS=${ambientRms.toInt()}（原始，未增益）, 自适应静音阈值=${adaptiveSilenceThreshold.toInt()}")
             sendRecognitionLog("📊 环境噪音RMS=${ambientRms.toInt()}, 阈值=${adaptiveSilenceThreshold.toInt()}")
             // =========================================
@@ -1010,11 +1015,11 @@ class VoiceAssistantService : Service() {
                         // 用 offer() + 100ms 超时，避免队列满时永久阻塞（理论死锁风险）
                         // 队列容量300帧（约10秒），实际很难满；如果真满了，丢弃这一帧并打日志
                         if (!audioQueue.offer(AudioFrame(dataCopy, n), 100, java.util.concurrent.TimeUnit.MILLISECONDS)) {
-                            android.util.Log.w("VoiceService", "音频队列满，丢弃一帧（${n} samples）")
+                            LogUtils.w("VoiceService", "音频队列满，丢弃一帧（${n} samples）")
                         }
                     }
                 } catch (e: Exception) {
-                    android.util.Log.w("VoiceService", "录音线程异常: ${e.message}")
+                    LogUtils.w("VoiceService", "录音线程异常: ${e.message}")
                 } finally {
                     recordingFinished.set(true)
                     // 放入结束帧，唤醒识别线程
@@ -1084,7 +1089,7 @@ class VoiceAssistantService : Service() {
                             if (speechFrameCount >= 3) {
                                 hasSpeechStarted = true
                                 hasSpeechStartedThisSession = true
-                                android.util.Log.d("VoiceService", "检测到用户开口 (连续${speechFrameCount}帧非静音, RMS=${rms.toInt()})")
+                                LogUtils.d("VoiceService", "检测到用户开口 (连续${speechFrameCount}帧非静音, RMS=${rms.toInt()})")
                                 sendRecognitionLog("🗣️ 检测到开口 (连续${speechFrameCount}帧, RMS=${rms.toInt()})")
                             }
                         } else {
@@ -1100,7 +1105,7 @@ class VoiceAssistantService : Service() {
                     if (!partial.isNullOrEmpty() && partial != lastPartial) {
                         lastPartial = partial
                         lastPartialText = partial
-                        android.util.Log.d("VoiceService", "识别中: '$partial' (RMS=${rms.toInt()}, 静音=$isSilence)")
+                        LogUtils.d("VoiceService", "识别中: '$partial' (RMS=${rms.toInt()}, 静音=$isSilence)")
                         val nowMs = SystemClock.elapsedRealtime()
                         if (nowMs - lastPartialUpdateMs >= 100) {
                             lastPartialUpdateMs = nowMs
@@ -1121,14 +1126,14 @@ class VoiceAssistantService : Service() {
 
                             // VAD 诊断日志（每 500ms 一次）
                             if (recordDuration % 500 < 32) {
-                                android.util.Log.d("VoiceService",
+                                LogUtils.d("VoiceService",
                                     "VAD诊断: duration=${recordDuration}ms, silence=${silenceDuration}ms, frames=${consecutiveSilenceFrames}, rms=${rms.toInt()}, 阈值=${adaptiveSilenceThreshold.toInt()}")
                             }
 
                             // 动态静音阈值：有结果 800ms，无结果 600ms
                             val dynamicSilenceMs = if (lastPartial.isNotEmpty()) 800L else 600L
                             if (silenceDuration >= dynamicSilenceMs && recordDuration >= MIN_RECORD_MS) {
-                                android.util.Log.d("VoiceService",
+                                LogUtils.d("VoiceService",
                                     "连续静音${silenceDuration}ms（${consecutiveSilenceFrames}帧），结束录音 (RMS=${rms.toInt()}, 阈值=${adaptiveSilenceThreshold.toInt()})")
                                 sendRecognitionLog("⏹️ 结束录音 (静音${silenceDuration}ms, RMS=${rms.toInt()})")
                                 shouldStopRecording.set(true)
@@ -1145,7 +1150,7 @@ class VoiceAssistantService : Service() {
                     // 超时保护
                     val timeoutLimit = if (hasSpeechStarted) MAX_RECORD_MS else WAIT_SPEECH_TIMEOUT_MS
                     if (recordDuration > timeoutLimit) {
-                        android.util.Log.d("VoiceService",
+                        LogUtils.d("VoiceService",
                             "录音超时（${if (hasSpeechStarted) "已开口" else "未检测到语音"}，${recordDuration}ms）")
                         shouldStopRecording.set(true)
                         // audioQueue.clear()  // 不清空队列，确保剩余帧也被处理和保存
@@ -1181,7 +1186,7 @@ class VoiceAssistantService : Service() {
                         if (frameRms < adaptiveSilenceThreshold) {
                             remainingSilenceFrames++
                             if (remainingSilenceFrames >= 3) {
-                                android.util.Log.d("VoiceService", "处理剩余帧时遇到连续静音，停止（已处理${remainingProcessedFrames}帧，丢弃队列剩余${audioQueue.size}帧）")
+                                LogUtils.d("VoiceService", "处理剩余帧时遇到连续静音，停止（已处理${remainingProcessedFrames}帧，丢弃队列剩余${audioQueue.size}帧）")
                                 break
                             }
                         } else {
@@ -1200,7 +1205,7 @@ class VoiceAssistantService : Service() {
                 }
 
                 finalText = recognizer.finish()
-                android.util.Log.d("VoiceService", "Vosk 识别文本: '$finalText'")
+                LogUtils.d("VoiceService", "Vosk 识别文本: '$finalText'")
 
                 // 保存本次录音为 WAV 文件
                 try {
@@ -1208,10 +1213,10 @@ class VoiceAssistantService : Service() {
                     // ★ 保存的就是识别器实际收到的完整音频（和识别器完全一致）
                     AudioSaver.saveRecording(audioBuffer.toByteArray(), saveLabel)
                 } catch (e: Exception) {
-                    android.util.Log.w("VoiceService", "保存录音失败: ${e.message}")
+                    LogUtils.w("VoiceService", "保存录音失败: ${e.message}")
                 }
 
-                android.util.Log.d("VoiceService", "最终识别文本（Vosk离线）: '$finalText'")
+                LogUtils.d("VoiceService", "最终识别文本（Vosk离线）: '$finalText'")
             } finally {
                 try { record.stop() } catch (_: Exception) {}
                 record.release()
@@ -1340,7 +1345,7 @@ class VoiceAssistantService : Service() {
             // ★ 如果本次是"在线失败回退离线"的场景，离线也没听清时直接恢复唤醒监听，不再重试
             // 防止无限循环：在线失败→回退离线→离线没听清→又startRecognition()→又选在线→又失败...
             if (isFallbackFromOnline) {
-                android.util.Log.d("VoiceService", "在线失败回退离线后仍未识别到内容，直接恢复唤醒监听（避免无限循环）")
+                LogUtils.d("VoiceService", "在线失败回退离线后仍未识别到内容，直接恢复唤醒监听（避免无限循环）")
                 isFallbackFromOnline = false
                 currentState = State.IDLE
                 resumeWake()
@@ -1361,7 +1366,7 @@ class VoiceAssistantService : Service() {
                 // 防止TTS引擎内部错误导致 onSpeakDone 不回调，服务卡在 PROCESSING 状态
                 mainHandler.postDelayed({
                     if (isRetryListening) {
-                        android.util.Log.w("VoiceService", "TTS播报超时（5秒未收到onSpeakDone），自动恢复唤醒监听")
+                        LogUtils.w("VoiceService", "TTS播报超时（5秒未收到onSpeakDone），自动恢复唤醒监听")
                         isRetryListening = false
                         currentState = State.IDLE
                         resumeWake()
@@ -1403,7 +1408,7 @@ class VoiceAssistantService : Service() {
             // ★ 如果本次是"在线失败回退离线"的场景，离线也没听懂时直接恢复唤醒监听，不再重试
             // 防止无限循环：在线失败→回退离线→离线没听懂→又startRecognition()→又选在线→又失败...
             if (isFallbackFromOnline) {
-                android.util.Log.d("VoiceService", "在线失败回退离线后仍未匹配到意图，直接恢复唤醒监听（避免无限循环）")
+                LogUtils.d("VoiceService", "在线失败回退离线后仍未匹配到意图，直接恢复唤醒监听（避免无限循环）")
                 isFallbackFromOnline = false
                 currentState = State.IDLE
                 resumeWake()
@@ -1415,7 +1420,7 @@ class VoiceAssistantService : Service() {
             if (!ttsEngine.isReady) {
                 // TTS不可用时，直接重新监听
                 isRetryListening = false
-                android.util.Log.d("VoiceService", "TTS不可用，直接重新开始录音识别")
+                LogUtils.d("VoiceService", "TTS不可用，直接重新开始录音识别")
                 mainHandler.postDelayed({
                     startRecognition()
                 }, 300)
@@ -1696,19 +1701,19 @@ class VoiceAssistantService : Service() {
      */
     private fun registerCarWakeupReceiver() {
         if (carWakeupReceiver != null) {
-            android.util.Log.w("VoiceService", "车机唤醒广播接收器已注册，跳过")
+            LogUtils.w("VoiceService", "车机唤醒广播接收器已注册，跳过")
             return
         }
 
         carWakeupReceiver = object : android.content.BroadcastReceiver() {
             override fun onReceive(context: android.content.Context?, intent: android.content.Intent?) {
                 val action = intent?.action ?: return
-                android.util.Log.i("VoiceService", "收到车机唤醒广播: $action")
+                LogUtils.i("VoiceService", "收到车机唤醒广播: $action")
 
                 // 只启动服务，不启动 Activity（Android 10+ 禁止后台启动 Activity）
                 // 服务启动后会自己判断是否需要拉起主界面
                 if (!isRunning) {
-                    android.util.Log.i("VoiceService", "服务未运行，通过唤醒广播启动服务")
+                    LogUtils.i("VoiceService", "服务未运行，通过唤醒广播启动服务")
                     try {
                         val serviceIntent = android.content.Intent(context, VoiceAssistantService::class.java)
                         serviceIntent.action = ACTION_START
@@ -1718,7 +1723,7 @@ class VoiceAssistantService : Service() {
                             context?.startService(serviceIntent)
                         }
                     } catch (e: Exception) {
-                        android.util.Log.e("VoiceService", "唤醒广播启动服务失败: ${e.message}")
+                        LogUtils.e("VoiceService", "唤醒广播启动服务失败: ${e.message}")
                     }
                 }
             }
@@ -1731,9 +1736,9 @@ class VoiceAssistantService : Service() {
 
         try {
             registerReceiver(carWakeupReceiver, filter)
-            android.util.Log.i("VoiceService", "车机唤醒广播接收器注册成功，共 ${WAKEUP_ACTIONS.size} 个 Action")
+            LogUtils.i("VoiceService", "车机唤醒广播接收器注册成功，共 ${WAKEUP_ACTIONS.size} 个 Action")
         } catch (e: Exception) {
-            android.util.Log.e("VoiceService", "注册车机唤醒广播接收器失败: ${e.message}")
+            LogUtils.e("VoiceService", "注册车机唤醒广播接收器失败: ${e.message}")
             carWakeupReceiver = null
         }
     }
@@ -1745,9 +1750,9 @@ class VoiceAssistantService : Service() {
         carWakeupReceiver?.let { receiver ->
             try {
                 unregisterReceiver(receiver)
-                android.util.Log.i("VoiceService", "车机唤醒广播接收器已注销")
+                LogUtils.i("VoiceService", "车机唤醒广播接收器已注销")
             } catch (e: Exception) {
-                android.util.Log.w("VoiceService", "注销车机唤醒广播接收器失败: ${e.message}")
+                LogUtils.w("VoiceService", "注销车机唤醒广播接收器失败: ${e.message}")
             }
         }
         carWakeupReceiver = null
@@ -1780,10 +1785,10 @@ class VoiceAssistantService : Service() {
             }
             if (intent != null) {
                 startActivity(intent)
-                android.util.Log.i("VoiceService", "已通过唤醒广播拉起主界面")
+                LogUtils.i("VoiceService", "已通过唤醒广播拉起主界面")
             }
         } catch (e: Exception) {
-            android.util.Log.e("VoiceService", "拉起主界面失败: ${e.message}")
+            LogUtils.e("VoiceService", "拉起主界面失败: ${e.message}")
         }
     }
 }

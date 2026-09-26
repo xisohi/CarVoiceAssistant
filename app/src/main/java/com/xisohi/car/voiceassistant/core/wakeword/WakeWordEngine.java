@@ -3,6 +3,7 @@ package com.xisohi.car.voiceassistant.core.wakeword;
 import android.content.Context;
 import android.content.res.AssetManager;
 import android.util.Log;
+import com.xisohi.car.voiceassistant.core.LogUtils;
 
 import ai.onnxruntime.OnnxTensor;
 import ai.onnxruntime.OrtEnvironment;
@@ -45,7 +46,7 @@ public class WakeWordEngine {
     private static float asrGain = 8.0f;
 
     /** 唤醒检测阈值：sigmoid 概率超过此值即判定为唤醒。降低可提高灵敏度。 */
-    private static float detectionThreshold = 0.008f;
+    private static float detectionThreshold = 0.025f;
 
     /** 灵敏度档位：0=低, 1=中(默认), 2=高 */
     private static int sensitivityLevel = 1;
@@ -53,7 +54,7 @@ public class WakeWordEngine {
     // 低：保守（误唤醒少）；中：平衡（推荐日常使用）；高：灵敏（适合行驶中/小声）
     // 以中档 threshold=0.008, gain=4.5x 为基准（车机环境优化，更灵敏）
     private static final float[] GAIN_BY_LEVEL = {3.5f, 4.5f, 5.5f};
-    private static final float[] THRESHOLD_BY_LEVEL = {0.02f, 0.008f, 0.001f};
+    private static final float[] THRESHOLD_BY_LEVEL = {0.05f, 0.025f, 0.005f};
     private static final String[] LEVEL_NAMES = {"低", "中", "高"};
 
     /** 设置灵敏度档位（0=低, 1=中, 2=高） */
@@ -62,7 +63,7 @@ public class WakeWordEngine {
         sensitivityLevel = level;
         audioGain = GAIN_BY_LEVEL[level];
         detectionThreshold = THRESHOLD_BY_LEVEL[level];
-        Log.i(TAG, "灵敏度设置为: " + LEVEL_NAMES[level]
+        LogUtils.i(TAG, "灵敏度设置为: " + LEVEL_NAMES[level]
                 + " (增益=" + audioGain + ", 阈值=" + detectionThreshold + ")");
     }
     /** 获取当前灵敏度档位 */
@@ -154,6 +155,10 @@ public class WakeWordEngine {
     // 使用实例字段，每次创建 WakeWordEngine 时重置，确保服务重启后防误唤醒仍生效
     private static final int STARTUP_SKIP_FRAMES = 3;
     private int framesProcessed = 0;
+    /** 帧号计数器，用于调试日志时序定位 */
+    private int frameCounter = 0;
+    /** 临时阈值覆盖（播放音乐时提高阈值减少误唤醒，-1 表示不覆盖） */
+    private static float tempThresholdOverride = -1f;
 
     // ===== 唤醒灵敏度测试日志 =====
     /** 测试日志回调接口 */
@@ -216,6 +221,25 @@ public class WakeWordEngine {
      */
     public static float getAsrGain() { return asrGain; }
 
+    /** 重置冷启动跳过计数（每次唤醒线程启动时调用） */
+    public void resetSkipCounter() {
+        framesProcessed = 0;
+        debugLogCount = 0;
+        frameCounter = 0;
+        LogUtils.d(TAG, "冷启动跳过计数已重置");
+    }
+
+    /** 设置临时阈值覆盖（播放音乐时用，传 -1 清除覆盖） */
+    public static void setTempThresholdOverride(float threshold) {
+        tempThresholdOverride = threshold;
+        LogUtils.i(TAG, "临时阈值覆盖: " + (threshold < 0 ? "清除" : threshold));
+    }
+
+    /** 获取实际生效的阈值（临时覆盖优先） */
+    public static float getEffectiveThreshold() {
+        return tempThresholdOverride > 0 ? tempThresholdOverride : detectionThreshold;
+    }
+
     /**
      * 设置识别专用增益
      * 建议范围 5.0~8.0：太小识别不清，太大削顶失真
@@ -223,7 +247,7 @@ public class WakeWordEngine {
      */
     public static void setAsrGain(float gain) {
         asrGain = Math.max(5.0f, Math.min(10.0f, gain));
-        Log.i(TAG, "识别增益设置为: " + asrGain);
+        LogUtils.i(TAG, "识别增益设置为: " + asrGain);
     }
 
     /** 直接设置增益和阈值（用于校准向导应用结果，仅影响唤醒参数） */
@@ -231,7 +255,7 @@ public class WakeWordEngine {
         audioGain = gain;
         detectionThreshold = threshold;
         sensitivityLevel = -1;  // 自定义档位，区别于预设的低/中/高
-        Log.i(TAG, "唤醒参数已更新(自定义): gain=" + gain + ", threshold=" + threshold);
+        LogUtils.i(TAG, "唤醒参数已更新(自定义): gain=" + gain + ", threshold=" + threshold);
     }
 
     public WakeWordEngine(Context context) {
@@ -251,7 +275,7 @@ public class WakeWordEngine {
             JSONObject info = new JSONObject(new String(infoBytes, "UTF-8"));
 
             dscnnMelTime = info.optInt("mel_time", 50);
-            Log.i(TAG, "mel_time=" + dscnnMelTime);
+            LogUtils.i(TAG, "mel_time=" + dscnnMelTime);
 
             // ── New: single multi-keyword model ──
             if (info.has("model_type") && "multi_keyword".equals(info.getString("model_type"))) {
@@ -266,7 +290,7 @@ public class WakeWordEngine {
 
                 wakeWordNames = keywords;
                 multiKwSession = loadModel(context, modelFile);
-                Log.i(TAG, "Multi-keyword mode: " + keywords.length + " keywords in 1 model ("
+                LogUtils.i(TAG, "Multi-keyword mode: " + keywords.length + " keywords in 1 model ("
                         + modelFile + ")");
 
                 // ── Legacy: multi-model ──
@@ -278,7 +302,7 @@ public class WakeWordEngine {
                     String file = m.getString("model_file");
                     int cf = m.optInt("cons_frames", 5);
                     models.add(new ModelSlot(word, file, cf));
-                    Log.i(TAG, "Registered: " + word + " file=" + file + " cons_frames=" + cf);
+                    LogUtils.i(TAG, "Registered: " + word + " file=" + file + " cons_frames=" + cf);
                 }
                 wakeWordNames = new String[models.size()];
                 for (int i = 0; i < models.size(); i++) {
@@ -292,12 +316,12 @@ public class WakeWordEngine {
                 int cf = info.optInt("cons_frames", 5);
                 models.add(new ModelSlot(word, file, cf));
                 wakeWordNames = new String[]{word};
-                Log.i(TAG, "Single model: " + word + " cons_frames=" + cf);
+                LogUtils.i(TAG, "Single model: " + word + " cons_frames=" + cf);
             }
 
             melFramesNeeded = dscnnMelTime;
             audioSamplesNeeded = melFramesNeeded * MEL_HOP_SAMPLES + (int) (SAMPLE_RATE * MEL_WIN_SEC);
-            Log.i(TAG, "melFramesNeeded=" + melFramesNeeded
+            LogUtils.i(TAG, "melFramesNeeded=" + melFramesNeeded
                     + " audioSamplesNeeded=" + audioSamplesNeeded);
 
             // Load mel model + classifier(s)
@@ -309,9 +333,9 @@ public class WakeWordEngine {
             }
 
             loaded = true;
-            Log.i(TAG, "All models loaded (" + (isMultiKeyword ? "multi-kw" : "multi-model") + ")");
+            LogUtils.i(TAG, "All models loaded (" + (isMultiKeyword ? "multi-kw" : "multi-model") + ")");
         } catch (Exception e) {
-            Log.e(TAG, "Failed to load models — check assets/ for model_info.json + .onnx files", e);
+            LogUtils.e(TAG, "Failed to load models — check assets/ for model_info.json + .onnx files", e);
             errorMessage = e.getMessage();
             loaded = false;
         }
@@ -347,6 +371,7 @@ public class WakeWordEngine {
      */
     public DetectionResult process(short[] audio) {
         if (!loaded) return null;
+        frameCounter++;
 
         try {
             // 1. Convert to float（唤醒阶段使用 audioGain，与 asrGain 无关）
@@ -423,9 +448,8 @@ public class WakeWordEngine {
                 }
                 bestConsFrames = multiKwConsFrames;
 
-                // Debug: log top-3 predictions
-                if (debugLogCount < 200) {
-                    debugLogCount++;
+                // Debug: 只在接近触发时打印 top-3（避免日志爆炸）
+                if (bestSigmoid > 0.02f) {
                     // Find top 3
                     int[] topIdx = new int[]{-1, -1, -1};
                     float[] topVal = new float[]{-1, -1, -1};
@@ -438,17 +462,12 @@ public class WakeWordEngine {
                             topVal[1] = v; topIdx[1] = i; }
                         else if (v > topVal[2]) { topVal[2] = v; topIdx[2] = i; }
                     }
-                    melMean = 0;
-                    for (int f = 0; f < dscnnMelTime; f++)
-                        for (int m = 0; m < N_MELS; m++)
-                            melMean += dscnnInput[0][f][m];
-                    melMean /= (dscnnMelTime * N_MELS);
-                    Log.d(TAG, String.format(Locale.US,
-                            "[Multi-KW] top1=%s(%.3f) top2=%s(%.3f) top3=%s(%.3f) melMean=%.1f",
+                    LogUtils.d(TAG, String.format(Locale.US,
+                            "[WakeProb-top3] frame=%d %s(%.4f) %s(%.4f) %s(%.4f)",
+                            frameCounter,
                             keywords[topIdx[0]], topVal[0],
                             topIdx[1] >= 0 ? keywords[topIdx[1]] : "-", topVal[1],
-                            topIdx[2] >= 0 ? keywords[topIdx[2]] : "-", topVal[2],
-                            melMean));
+                            topIdx[2] >= 0 ? keywords[topIdx[2]] : "-", topVal[2]));
                 }
 
             } else {
@@ -481,36 +500,37 @@ public class WakeWordEngine {
                 }
             }
 
-            // Log first 20 inferences (legacy debug)
-            if (!isMultiKeyword && debugLogCount < 20) {
-                debugLogCount++;
-                float melSum = 0, melMin = Float.MAX_VALUE, melMax = -Float.MAX_VALUE;
-                for (int f = 0; f < dscnnMelTime; f++) {
-                    for (int m = 0; m < N_MELS; m++) {
-                        float v = dscnnInput[0][f][m];
-                        melSum += v;
-                        if (v < melMin) melMin = v;
-                        if (v > melMax) melMax = v;
-                    }
-                }
-                melMean = melSum / (dscnnMelTime * N_MELS);
-                Log.d(TAG, String.format(Locale.US,
-                        "[DS-CNN] %d models sig=%.4f word=%s melMean=%.2f melMin=%.2f melMax=%.2f",
-                        models.size(), bestSigmoid, bestWord != null ? bestWord : "-",
-                        melMean, melMin, melMax));
+            // 统一计算 melMean（音频能量水平，判断爆音/噪音）
+            if (melMean == 0f) {
+                for (int f = 0; f < dscnnMelTime; f++)
+                    for (int m = 0; m < N_MELS; m++)
+                        melMean += dscnnInput[0][f][m];
+                melMean /= (dscnnMelTime * N_MELS);
             }
 
-            float bgProb = 1.0f - bestSigmoid;
-            String detected = bestSigmoid > detectionThreshold ? bestWord : null;
+            // 每50帧打印一次音频整体状态（判断环境噪音水平）
+            if (frameCounter % 50 == 0) {
+                float rms = 0;
+                for (short s : audio) rms += s * s;
+                rms = (float) Math.sqrt(rms / audio.length);
+                LogUtils.d(TAG, String.format(Locale.US,
+                        "[WakeFrame] frame=%d rms=%.0f gain=%.1f melMean=%.2f",
+                        frameCounter, rms, audioGain, melMean));
+            }
 
-            // 持续概率日志：只打印概率超过 0.15 的帧，方便调试灵敏度
-            if (bestSigmoid > 0.15f) {
+            float effectiveThreshold = getEffectiveThreshold();
+            float bgProb = 1.0f - bestSigmoid;
+            String detected = bestSigmoid > effectiveThreshold ? bestWord : null;
+
+            // 持续概率日志：只打印概率超过 0.02 的帧（接近触发就打印，方便分析误唤醒）
+            if (bestSigmoid > 0.02f) {
                 String logLine = String.format(Locale.US,
-                        "[WakeProb] word=%s prob=%.3f threshold=%.2f gain=%.1f %s",
+                        "[WakeProb] frame=%d word=%s prob=%.4f threshold=%.4f gain=%.1f melMean=%.2f %s",
+                        frameCounter,
                         bestWord != null ? bestWord : "-",
-                        bestSigmoid, detectionThreshold, audioGain,
+                        bestSigmoid, effectiveThreshold, audioGain, melMean,
                         detected != null ? "TRIGGER" : "");
-                Log.d(TAG, logLine);
+                LogUtils.d(TAG, logLine);
 
                 // 测试日志记录
                 if (testLogging) {
@@ -520,7 +540,7 @@ public class WakeWordEngine {
                             "%s, %s, %.3f, %.2f, %.1f, %s",
                             time,
                             bestWord != null ? bestWord : "-",
-                            bestSigmoid, detectionThreshold, audioGain,
+                            bestSigmoid, effectiveThreshold, audioGain,
                             detected != null ? "YES" : "no");
                     testLogs.add(csvLine);
                     if (testLogListener != null) {
@@ -538,7 +558,7 @@ public class WakeWordEngine {
             return new DetectionResult(detected, bestSigmoid, bgProb, bestConsFrames);
 
         } catch (OrtException e) {
-            Log.e(TAG, "Inference error", e);
+            LogUtils.e(TAG, "Inference error", e);
             return null;
         }
     }
@@ -556,7 +576,7 @@ public class WakeWordEngine {
             // 第二次创建 WakeWordEngine 会拿到已关闭的 env，导致崩溃或推理失败。
             // 全局 env 应该在进程退出时由系统自动清理，不需要手动关闭。
         } catch (OrtException e) {
-            Log.e(TAG, "Error closing sessions", e);
+            LogUtils.e(TAG, "Error closing sessions", e);
         }
     }
 }
