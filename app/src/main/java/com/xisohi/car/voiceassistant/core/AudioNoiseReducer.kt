@@ -3,7 +3,7 @@ package com.xisohi.car.voiceassistant.core
 import android.media.AudioRecord
 import android.media.audiofx.AutomaticGainControl
 import android.media.audiofx.NoiseSuppressor
-import android.util.Log
+import com.xisohi.car.voiceassistant.core.LogUtils
 
 /**
  * 音频降噪处理器
@@ -61,24 +61,35 @@ class AudioNoiseReducer private constructor(
             if (NoiseSuppressor.isAvailable()) {
                 noiseSuppressor = NoiseSuppressor.create(audioSessionId)
                 noiseSuppressor?.enabled = true
-                Log.d(TAG, "NoiseSuppressor 已启用")
+                LogUtils.d(TAG, "NoiseSuppressor 已启用")
             } else {
-                Log.w(TAG, "NoiseSuppressor 不可用（硬件不支持）")
+                LogUtils.w(TAG, "NoiseSuppressor 不可用（硬件不支持）")
             }
         } catch (e: Exception) {
-            Log.w(TAG, "启用 NoiseSuppressor 失败: ${e.message}")
+            LogUtils.w(TAG, "启用 NoiseSuppressor 失败: ${e.message}")
         }
 
         try {
             if (AutomaticGainControl.isAvailable()) {
                 automaticGainControl = AutomaticGainControl.create(audioSessionId)
                 automaticGainControl?.enabled = true
-                Log.d(TAG, "AutomaticGainControl 已启用")
+                LogUtils.d(TAG, "AutomaticGainControl 已启用")
             } else {
-                Log.w(TAG, "AutomaticGainControl 不可用（硬件不支持）")
+                LogUtils.w(TAG, "AutomaticGainControl 不可用（硬件不支持）")
             }
         } catch (e: Exception) {
-            Log.w(TAG, "启用 AutomaticGainControl 失败: ${e.message}")
+            LogUtils.w(TAG, "启用 AutomaticGainControl 失败: ${e.message}")
+        }
+
+        // 查询回声消除（AEC）支持情况——车机播放音乐时 AEC 能消除喇叭回声，减少误唤醒
+        try {
+            if (android.media.audiofx.AcousticEchoCanceler.isAvailable()) {
+                LogUtils.i(TAG, "AcousticEchoCanceler (AEC) 可用：系统支持回声消除")
+            } else {
+                LogUtils.w(TAG, "AcousticEchoCanceler (AEC) 不可用：系统不支持回声消除，播放音乐时可能误唤醒")
+            }
+        } catch (e: Exception) {
+            LogUtils.w(TAG, "查询 AEC 支持情况失败: ${e.message}")
         }
     }
 
@@ -122,9 +133,9 @@ class AudioNoiseReducer private constructor(
         if (!rnnoiseInitialized) {
             rnnoiseInitialized = rnnoiseDenoiser.init()
             if (rnnoiseInitialized) {
-                Log.d(TAG, "RNNoise 深度学习降噪已启用")
+                LogUtils.d(TAG, "RNNoise 深度学习降噪已启用")
             } else {
-                Log.w(TAG, "RNNoise 初始化失败，将跳过深度学习降噪")
+                LogUtils.w(TAG, "RNNoise 初始化失败，将跳过深度学习降噪")
                 return
             }
         }
@@ -161,19 +172,19 @@ class AudioNoiseReducer private constructor(
             noiseSuppressor?.release()
             noiseSuppressor = null
         } catch (e: Exception) {
-            Log.w(TAG, "释放 NoiseSuppressor 失败: ${e.message}")
+            LogUtils.w(TAG, "释放 NoiseSuppressor 失败: ${e.message}")
         }
         try {
             automaticGainControl?.release()
             automaticGainControl = null
         } catch (e: Exception) {
-            Log.w(TAG, "释放 AutomaticGainControl 失败: ${e.message}")
+            LogUtils.w(TAG, "释放 AutomaticGainControl 失败: ${e.message}")
         }
         try {
             rnnoiseDenoiser.release()
         } catch (e: Exception) {
-            Log.w(TAG, "释放 RnNoiseDenoiser 失败: ${e.message}")
+            LogUtils.w(TAG, "释放 RnNoiseDenoiser 失败: ${e.message}")
         }
-        Log.d(TAG, "AudioNoiseReducer 已释放")
+        LogUtils.d(TAG, "AudioNoiseReducer 已释放")
     }
 }
