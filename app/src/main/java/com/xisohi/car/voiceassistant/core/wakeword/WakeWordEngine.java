@@ -159,16 +159,6 @@ public class WakeWordEngine {
     private int framesProcessed = 0;
     /** 帧号计数器，用于调试日志时序定位 */
     private int frameCounter = 0;
-    /** 音乐播放中标志：动态提高阈值防音乐误唤醒 */
-    private volatile boolean musicPlaying = false;
-
-    /** 音乐播放状态变化时调用 */
-    public void setMusicPlaying(boolean playing) {
-        if (musicPlaying != playing) {
-            musicPlaying = playing;
-            LogUtils.i(TAG, "音乐播放状态: " + (playing ? "播放中，阈值x1.8防误唤醒" : "已停止，恢复正常阈值"));
-        }
-    }
     /** 临时阈值覆盖（播放音乐时提高阈值减少误唤醒，-1 表示不覆盖） */
     private static float tempThresholdOverride = -1f;
 
@@ -534,10 +524,6 @@ public class WakeWordEngine {
             // 启动保护期：前30帧（约30秒）麦克风可能有爆音，阈值翻倍减少误唤醒
             if (frameCounter < 30) {
                 effectiveThreshold *= 2.0f;
-            }
-            // 音乐播放中：AEC不可用，阈值提高1.8倍防音乐误唤醒
-            if (musicPlaying) {
-                effectiveThreshold *= 1.8f;
             }
             float bgProb = 1.0f - bestSigmoid;
             String detected = bestSigmoid > effectiveThreshold ? bestWord : null;

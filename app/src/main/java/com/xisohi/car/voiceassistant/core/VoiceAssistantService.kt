@@ -610,9 +610,6 @@ class VoiceAssistantService : Service() {
             }
             LogUtils.d("WakeAudioThread", "开始录音，帧大小=$frameSize")
 
-            var frameCount = 0
-            var lastMusicCheck = -999
-            var musicActive = false
             try {
                 while (isWakeListening && !isInterrupted()) {
                     val read = record.read(audioBuffer, 0, frameSize, AudioRecord.READ_BLOCKING)
@@ -621,19 +618,8 @@ class VoiceAssistantService : Service() {
                         break
                     }
                     if (read == frameSize) {
-                        frameCount++
-                        // 每50帧（约50秒）检测一次音乐播放状态，播放中时提高唤醒阈值
-                        if (frameCount - lastMusicCheck >= 50) {
-                            lastMusicCheck = frameCount
-                            try {
-                                val am = getSystemService(AUDIO_SERVICE) as android.media.AudioManager
-                                val nowPlaying = am.isMusicActive
-                                if (nowPlaying != musicActive) {
-                                    musicActive = nowPlaying
-                                    wakeWordEngine.setMusicPlaying(nowPlaying)
-                                }
-                            } catch (e: Exception) { }
-                        }
+                        // 音乐动态阈值保护已禁用（用户反馈会导致唤不醒）
+                        // 保持固定阈值0.18，误唤醒靠AEC+RNNoise+高通滤波解决
                         // 应用降噪处理（高通滤波，去除低频发动机噪音）
                         noiseReducer.process(audioBuffer, read)
                         // process 可能在 service 销毁时访问已关闭的 session，捕获异常防止线程崩溃
