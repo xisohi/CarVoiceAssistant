@@ -204,6 +204,10 @@ class VoiceAssistantService : Service() {
     private var recognitionSessionId = 0L  // 识别会话ID，防止旧协程误清新job
     // 标记在线识别是否已经收到结果（避免超时和回调同时触发）
     private var onlineResultReceived = false
+    // ★ 离线识别是否正在运行（防止在线失败回调多次触发回退 → 两个 AudioRecord 并发录音，
+    //   第二个 AudioRecord.start() 会失败 status=-38，且会抢麦克风导致识别无效）
+    @Volatile
+    private var offlineRecognitionActive = false
     // 网络监控器（网络状态监听、连通性检测、缓存管理）
     private lateinit var networkMonitor: NetworkMonitor
 
@@ -293,22 +297,22 @@ class VoiceAssistantService : Service() {
         if (baiduAsrManager.isConfigured()) {
             LogUtils.i("VoiceService", "百度语音已配置，有网络时优先使用百度识别")
         } else {
-            LogUtils.i("VoiceService", "百度语音未配置，使用离线 Vosk 识别")
+            LogUtils.i("VoiceService", "百度语音未配置，使用离线 sherpa-onnx 识别")
         }
 
-        // 预加载 Vosk 语音识别模型（后台线程，不阻塞服务启动）
+        // 预加载 sherpa-onnx 语音识别模型（后台线程，不阻塞服务启动）
         // 这样第一次唤醒识别时不需要等 2-3 秒模型加载，车机上从唤醒到录音可从 5 秒降到 1 秒内
         scope.launch(Dispatchers.IO) {
             try {
                 val modelDir = ModelManager.findAsrModelDir(this@VoiceAssistantService)
                 if (modelDir != null) {
                     SpeechRecognizer.preload(modelDir)
-                    LogUtils.i("VoiceService", "Vosk 模型预加载完成: ${modelDir.name}")
+                    LogUtils.i("VoiceService", "sherpa-onnx 模型预加载完成: ${modelDir.name}")
                 } else {
-                    LogUtils.w("VoiceService", "Vosk 模型目录未找到，跳过预加载")
+                    LogUtils.w("VoiceService", "sherpa-onnx 模型目录未找到，跳过预加载")
                 }
             } catch (e: Exception) {
-                LogUtils.e("VoiceService", "Vosk 模型预加载失败", e)
+                LogUtils.e("VoiceService", "sherpa-onnx 模型预加载失败", e)
             }
         }
 
@@ -767,29 +771,43 @@ class VoiceAssistantService : Service() {
     /**
      * 识别入口：根据网络状态自动选择识别路径
      * - 有网络且百度已配置 → 百度在线识别（百度自己开麦录音，避免麦克风冲突）
-     * 无网络或百度未配置 → Vosk 离线识别（我们自己录音 + Vosk 识别）
+     * 无网络或百度未配置 → sherpa-onnx 离线识别（我们自己录音 + sherpa-onnx 识别）
      */
     private fun startRecognition() {
         // 正常启动识别时，重置"在线失败回退离线"标志位
         isFallbackFromOnline = false
-        // ★ 网络连通性检测：缓存有效时直接用（无延迟），缓存无效时不阻塞（假设网络通，后台异步检测）
-        // 缓存失效时机：首次启动、网络变化（开/关热点、进/出隧道）
-        // 为什么不阻塞？因为阻塞主线程会导致ANR（输入事件5秒无响应即ANR）
-        // 首次唤醒假设网络通，走在线识别；如果实际网络不通，在线失败后自动回退离线（已有机制）
-        // 后台异步检测（单URL，2秒超时）完成后更新缓存，后续唤醒用正确的网络状态
+        // ★ 网络连通性决策：不"假设网络通"。
+        // 缓存有效 → 直接用缓存结果（无延迟）；
+        // 缓存无效 → IO 线程同步探测一次（最多2秒，不阻塞主线程），用真实结果决策：
+        //   网络不通 → 直接走离线（不再白等百度在线超时/失败）；
+        //   网络通   → 走在线，失败仍会自动回退离线（已有机制）。
+        // 探测结果写入缓存（"不通"为60秒负缓存），后续唤醒直接复用；
+        // 60秒后负缓存过期重新检测，网络恢复后自动回到在线。
         val hasNetwork = networkMonitor.isAvailable()
-        val canReachInternet = if (networkMonitor.isCacheValid()) {
-            networkMonitor.isReachable()  // 缓存有效，直接用（无延迟）
-        } else {
-            // 缓存无效 → 不阻塞，假设网络通，同时后台异步检测更新缓存
-            if (hasNetwork) {
-                networkMonitor.checkReachableAsync()  // 后台异步检测，不阻塞主线程
-            } else {
-                // 没连网直接标记为不通
-                networkMonitor.markUnavailable()
-            }
-            true  // 假设网络通（走在线识别，失败自动回退离线）
+        if (!hasNetwork) {
+            // 没连网：直接离线，不试在线
+            networkMonitor.markUnavailable()
+            startRecognitionOffline()
+            return
         }
+        if (networkMonitor.isCacheValid()) {
+            decideRecognitionPath(networkMonitor.isReachable())
+            return
+        }
+        // 无有效缓存 → IO 线程同步探测后回到主线程决策
+        scope.launch(Dispatchers.IO) {
+            val canReachInternet = networkMonitor.probeNow()
+            withContext(Dispatchers.Main) {
+                decideRecognitionPath(canReachInternet)
+            }
+        }
+    }
+
+    /**
+     * 根据网络连通性结果决定走在线还是离线识别。
+     * @param canReachInternet 是否能访问外网（已由 NetworkMonitor 探测/缓存得出）
+     */
+    private fun decideRecognitionPath(canReachInternet: Boolean) {
         // 连续在线失败超过阈值时，暂时降级为离线（避免每次都要等在线超时/失败）
         // 适用于：Key错误、网络不通（WiFi已连接但无外网）等场景
         if (consecutiveOnlineFailures >= MAX_CONSECUTIVE_ONLINE_FAILURES) {
@@ -798,33 +816,28 @@ class VoiceAssistantService : Service() {
             startRecognitionOffline()
             return
         }
-        // 网络连通性判断：hasNetwork 和 canReachInternet 已在上面的同步检测中计算完成
-        // 车机场景：WiFi已连接但可能无外网（手机热点没开流量、路由器断网）
         // 配置验证状态（三态）：
         //   ok       = 测试连接通过 → 走在线
         //   error    = 测试连接失败 → 直接走离线（不浪费时间在在线）
         //   untested = 未测试或修改了配置 → 走在线，失败了自动降级（连续失败3次后暂时离线）
         val configStatus = baiduAsrManager.getConfigStatus()
-        // 决定是否走在线：配置已配置 + 有网络 + 能访问外网 + 配置状态不是 error
+        // 决定是否走在线：配置已配置 + 能访问外网 + 配置状态不是 error
         // （untested 和 ok 都可以走在线，untested 失败后会自动降级）
-        val canUseOnline = baiduAsrManager.isConfigured() && hasNetwork && canReachInternet &&
+        val canUseOnline = baiduAsrManager.isConfigured() && canReachInternet &&
                 configStatus != BaiduAsrManager.CONFIG_STATUS_ERROR
         if (canUseOnline) {
             startRecognitionOnline()
         } else {
             when {
                 !baiduAsrManager.isConfigured() -> {
-                    LogUtils.d("VoiceService", "百度语音未配置，使用 Vosk 离线识别")
-                }
-                !hasNetwork -> {
-                    LogUtils.d("VoiceService", "无网络连接，使用 Vosk 离线识别")
+                    LogUtils.d("VoiceService", "百度语音未配置，使用 sherpa-onnx 离线识别")
                 }
                 !canReachInternet -> {
-                    LogUtils.w("VoiceService", "网络已连接但无法访问外网，使用 Vosk 离线识别")
+                    LogUtils.w("VoiceService", "网络已连接但无法访问外网，使用 sherpa-onnx 离线识别")
                     sendRecognitionLog("⚠️ 网络不通，使用离线识别")
                 }
                 configStatus == BaiduAsrManager.CONFIG_STATUS_ERROR -> {
-                    LogUtils.w("VoiceService", "百度配置验证失败（请在设置页重新测试连接），使用 Vosk 离线识别")
+                    LogUtils.w("VoiceService", "百度配置验证失败（请在设置页重新测试连接），使用 sherpa-onnx 离线识别")
                     sendRecognitionLog("⚠️ 配置错误，使用离线识别")
                 }
             }
@@ -870,6 +883,7 @@ class VoiceAssistantService : Service() {
         // ★ 超时保护：网络不通时百度 SDK 可能一直不返回回调，15秒后自动回退离线
         val timeoutRunnable = Runnable {
             if (!onlineResultReceived) {
+                onlineResultReceived = true  // ★ 超时已处理，屏蔽晚到的百度回调，避免重复触发回退
                 LogUtils.w("VoiceService", "百度在线识别超时（${ONLINE_RECOGNITION_TIMEOUT_MS}ms未返回），自动回退到离线识别")
                 sendRecognitionLog("⚠️ 在线识别超时，自动回退到离线识别")
                 handleOnlineFailure()
@@ -924,10 +938,17 @@ class VoiceAssistantService : Service() {
     }
 
     /**
-     * Vosk 离线识别（我们自己录音 + Vosk 识别）
+     * sherpa-onnx 离线识别（我们自己录音 + sherpa-onnx 识别）
      * 用于无网络或百度未配置时的降级方案。
      */
     private fun startRecognitionOffline() {
+        // ★ 防止重复启动：在线失败可能触发多次回退（如超时 + 失败回调先后到达），
+        // 若已有离线识别在运行则忽略，避免两个 AudioRecord 并发录音（第二个 start() 会 -38）
+        if (offlineRecognitionActive) {
+            LogUtils.d("VoiceService", "离线识别已在运行，忽略重复启动")
+            return
+        }
+        offlineRecognitionActive = true
         val mySessionId = ++recognitionSessionId  // 本次识别会话ID
         // 重置本次识别的开口标志
         hasSpeechStartedThisSession = false
@@ -1006,7 +1027,7 @@ class VoiceAssistantService : Service() {
 
             // ★★★ 方案3：生产者-消费者模式，录音线程和识别线程分离 ★★★
             // 录音线程（生产者）：只做 record.read() + 入队，不做任何处理，避免阻塞导致丢帧
-            // 识别线程（消费者，当前协程）：从队列取音频 + 所有处理（降噪/增益/Vosk识别/UI更新/端点检测）
+            // 识别线程（消费者，当前协程）：从队列取音频 + 所有处理（降噪/增益/sherpa-onnx识别/UI更新/端点检测）
             var queueFullCount = 0
             val audioQueue = java.util.concurrent.LinkedBlockingQueue<AudioFrame>(500)  // 约16秒缓冲，车机CPU慢时避免丢帧
             val recordingFinished = java.util.concurrent.atomic.AtomicBoolean(false)
@@ -1081,7 +1102,7 @@ class VoiceAssistantService : Service() {
                     // ★ 端点检测用原始 RMS（先算 RMS，再增益）
                     val originalRms = SpeechRecognizer.calculateRms(shortBuf, n)
                     
-                    // 给 Vosk 离线识别的音频：应用 asrGain
+                    // 给 sherpa-onnx 离线识别的音频：应用 asrGain
                     applyGain(shortBuf, n)
 
                     // ★ 保存加增益后的音频（和喂给识别器的完全一致）
@@ -1221,7 +1242,7 @@ class VoiceAssistantService : Service() {
                 }
 
                 finalText = recognizer.finish()
-                LogUtils.d("VoiceService", "Vosk 识别文本: '$finalText'")
+                LogUtils.d("VoiceService", "sherpa-onnx 识别文本: '$finalText'")
 
                 // 保存本次录音为 WAV 文件
                 try {
@@ -1232,8 +1253,9 @@ class VoiceAssistantService : Service() {
                     LogUtils.w("VoiceService", "保存录音失败: ${e.message}")
                 }
 
-                LogUtils.d("VoiceService", "最终识别文本（Vosk离线）: '$finalText'")
+                LogUtils.d("VoiceService", "最终识别文本（sherpa-onnx离线）: '$finalText'")
             } finally {
+                offlineRecognitionActive = false  // ★ 识别结束，允许下一次离线识别启动
                 try { record.stop() } catch (_: Exception) {}
                 record.release()
                 recNoiseReducer.release()
@@ -1252,7 +1274,7 @@ class VoiceAssistantService : Service() {
     /**
      * 对 PCM 音频数据应用增益放大（识别阶段专用）
      * 使用独立的 asrGain（默认 1.5x），比唤醒增益（默认 4.5x）保守，
-     * 避免近场说话时波形削顶失真，反而降低 Vosk 识别率。
+     * 避免近场说话时波形削顶失真，反而降低 sherpa-onnx 识别率。
      */
     private fun applyGain(buffer: ShortArray, length: Int) {
         val gain = WakeWordEngine.getAsrGain()
@@ -1277,7 +1299,7 @@ class VoiceAssistantService : Service() {
      * 例如："牛围村" -> "牛圩村"（圩和围同音 wéi）
      */
     private fun correctHomophones(text: String): String {
-        // 先去除空格（Vosk 识别结果中词之间有空格，如"导航 到 牛 为 春"）
+        // 先去除空格（sherpa-onnx 识别结果中词之间有空格，如"导航 到 牛 为 春"）
         var result = text.replace(" ", "")
         // 同音字纠正映射表：识别错的词 -> 正确的词
         val corrections = mapOf(
@@ -1664,7 +1686,7 @@ class VoiceAssistantService : Service() {
         // 防止线程还在访问已关闭的 session 导致崩溃
         stopWakeListening()
         wakeWordEngine.close()
-        // 释放缓存的 Vosk Model，避免一直占内存（小模型约120MB，大模型可能1.5GB）
+        // 释放缓存的 sherpa-onnx Model，避免一直占内存（小模型约120MB，大模型可能1.5GB）
         SpeechRecognizer.releaseCachedModel()
         // 注销电话状态监听
         phoneStateMonitor.stop()

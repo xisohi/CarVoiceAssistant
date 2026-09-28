@@ -750,7 +750,7 @@ class MainActivity : AppCompatActivity() {
                         "2. 进入「语音技术」→「应用管理」→「创建应用」\n" +
                         "3. 开通「短语音识别」服务（个人认证免费15万次）\n" +
                         "4. 复制 App ID、API Key、Secret Key 填入下方设置页\n\n" +
-                        "未配置时将使用离线 Vosk 识别（准确率较低）。\n\n" +
+                        "未配置时将使用离线 sherpa-onnx 识别（准确率较低）。\n\n" +
                         "是否现在配置？"
             )
             .setPositiveButton("立即配置") { _, _ ->

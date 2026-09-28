@@ -17,7 +17,7 @@ import kotlin.math.min
  * 2. 和地名词库中的拼音做编辑距离（Levenshtein）相似度匹配
  * 3. 相似度超过阈值就自动替换为正确地名
  *
- * 解决 Vosk 小模型词汇量有限，生僻字（如"圩"）只能识别成同音字的问题
+ * 解决离线识别小模型词汇量有限，生僻字（如"圩"）只能识别成同音字的问题
  */
 class PlaceMatcher(context: Context) {
 

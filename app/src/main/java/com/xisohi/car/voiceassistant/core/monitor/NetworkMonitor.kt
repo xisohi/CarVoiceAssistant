@@ -57,6 +57,15 @@ class NetworkMonitor(
     @Volatile
     private var networkCacheValid = false
 
+    // 缓存写入时间（用于"不通"负缓存的过期判断）
+    @Volatile
+    private var networkCacheTime = 0L
+
+    // "网络不通"负缓存的生效时长（60秒）：
+    // 检测到不通后 60 秒内直接判定离线（不再每次唤醒都假设网络通、白等在线超时）；
+    // 60 秒后负缓存过期、重新检测，网络恢复后自动回到在线。
+    private val NEGATIVE_CACHE_TTL_MS = 60_000L
+
     // 是否正在检测中（避免重复启动检测线程）
     private val networkCheckInProgress = AtomicBoolean(false)
 
@@ -106,9 +115,15 @@ class NetworkMonitor(
 
     /**
      * 缓存是否有效。
-     * true=直接用 isReachable() 的值；false=需要调用 checkReachableAsync() 重新检测。
+     * true=直接用 isReachable() 的值；false=需要调用 checkReachableAsync()/probeNow() 重新检测。
+     * "通"缓存长期有效；"不通"负缓存只在 NEGATIVE_CACHE_TTL_MS 内有效，
+     * 超过后视为失效，允许重新检测（网络可能已恢复）。
      */
-    fun isCacheValid(): Boolean = networkCacheValid
+    fun isCacheValid(): Boolean {
+        if (!networkCacheValid) return false
+        if (networkReachable) return true
+        return System.currentTimeMillis() - networkCacheTime < NEGATIVE_CACHE_TTL_MS
+    }
 
     /**
      * 标记网络不可用（没连网时调用）。
@@ -116,6 +131,7 @@ class NetworkMonitor(
     fun markUnavailable() {
         networkReachable = false
         networkCacheValid = true
+        networkCacheTime = System.currentTimeMillis()
     }
 
     /**
@@ -126,12 +142,32 @@ class NetworkMonitor(
     }
 
     /**
+     * 同步探测网络连通性（供识别启动决策使用）。
+     * 阻塞调用线程最多 PROBE_TIMEOUT_MS（2秒）；探测结果写入缓存：
+     * - 通 → 写"通"缓存（长期有效）
+     * - 不通 → 写"不通"负缓存（60秒有效，期间唤醒直接走离线）
+     * 返回探测结果。
+     */
+    fun probeNow(): Boolean {
+        Log.d(TAG, "同步探测网络连通性...")
+        val reachable = probeNetwork()
+        networkReachable = reachable
+        networkCacheValid = true
+        networkCacheTime = System.currentTimeMillis()
+        if (reachable) {
+            Log.i(TAG, "网络连通性检测: 正常（能访问外网，本次唤醒走在线）")
+        } else {
+            Log.w(TAG, "网络连通性检测: 不通（已缓存60秒，期间唤醒直接走离线）")
+        }
+        return reachable
+    }
+
+    /**
      * 后台异步检测网络连通性（不阻塞主线程，检测完成后更新缓存）。
      *
      * 为什么用异步而不是同步？
      * - 如果同步等待，会阻塞主线程，导致ANR
-     * - 首次唤醒假设网络通，走在线识别；如果实际网络不通，在线失败后自动回退离线
-     * - 检测完成后更新缓存，后续唤醒用正确的网络状态
+     * - 检测完成后更新缓存（通/不通都会写），后续唤醒用正确的网络状态决策
      */
     fun checkReachableAsync() {
         // CAS：如果已经在检测中，直接返回，避免重复启动
@@ -143,15 +179,16 @@ class NetworkMonitor(
             try {
                 Log.d(TAG, "开始异步检测网络连通性...")
                 val reachable = probeNetwork()
+                // ★ 通/不通都写缓存：
+                // "通"长期有效；"不通"为60秒负缓存（isCacheValid 里做过期判断），
+                // 避免每次唤醒都重新假设网络通、白等在线超时，同时 60 秒后自动重新检测。
+                networkReachable = reachable
+                networkCacheValid = true
+                networkCacheTime = System.currentTimeMillis()
                 if (reachable) {
-                    // 只有检测到"通"时才写缓存
-                    // "不通"可能是网络还没就绪（DHCP/DNS没配置好），写缓存会导致误判
-                    networkReachable = true
-                    networkCacheValid = true
                     Log.i(TAG, "网络连通性检测: 正常（能访问外网，下次唤醒走在线）")
                 } else {
-                    // 检测到不通，不写缓存，让下次唤醒重新检测
-                    Log.w(TAG, "网络连通性检测: 不通（不写缓存，下次唤醒重新检测）")
+                    Log.w(TAG, "网络连通性检测: 不通（已缓存60秒，期间唤醒直接走离线）")
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "网络连通性检测异常: ${e.message}（不写缓存）")
@@ -163,7 +200,7 @@ class NetworkMonitor(
 
     /**
      * 同步探测网络连通性（HTTP HEAD 请求）。
-     * 2xx/3xx/4xx 都说明网络通（4xx 是业务错误，不是网络问题），
+     * 2xx/3xx/4xx 都说明网络通（4xx 是业务响应/鉴权拒绝，不是网络问题）；
      * 只有 5xx 或连不上才说明网络有问题。
      */
     private fun probeNetwork(): Boolean {
@@ -175,11 +212,11 @@ class NetworkMonitor(
             conn.readTimeout = PROBE_TIMEOUT_MS
             conn.instanceFollowRedirects = false  // 不跟随重定向，3xx 也算通
             val code = conn.responseCode
-            if (code in 200..499) {
+            if (code < 500) {
                 Log.d(TAG, "网络连通性检测: $PROBE_URL → HTTP $code（网络通）")
                 true
             } else {
-                Log.w(TAG, "网络连通性检测: $PROBE_URL → HTTP $code（网络异常）")
+                Log.w(TAG, "网络连通性检测: $PROBE_URL → HTTP $code（服务端异常）")
                 false
             }
         } catch (e: Exception) {

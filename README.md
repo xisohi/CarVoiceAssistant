@@ -1,10 +1,10 @@
 # 车载语音助手
 
-面向 **32 位安卓车机（Allwinner 全志/鼎微方案，Android 10，armeabi-v7a）** 的语音助手 APP。**有网络时优先使用百度在线语音识别（识别率更高），无网络时自动回退到 Vosk 离线识别**，进出隧道、地库、无信号路段都不受影响。
+面向 **32 位安卓车机（Allwinner 全志/鼎微方案，Android 10，armeabi-v7a）** 的语音助手 APP。**有网络时优先使用百度在线语音识别（识别率更高），无网络时自动回退到 sherpa-onnx 离线识别**，进出隧道、地库、无信号路段都不受影响。
 
 ## 功能特性
 
-- **双引擎识别**：百度在线识别（优先，识别率更高）+ Vosk 离线识别（兜底，无网络自动切换）
+- **双引擎识别**：百度在线识别（优先，识别率更高）+ sherpa-onnx 离线识别（兜底，无网络自动切换）
 - **谁使用谁的 Key**：百度语音识别的 App ID/API Key/Secret Key 由用户在设置页自行填写，不内置开发者 Key
 - **首次联网仅用于初始化**：检测到本地无模型时引导下载（断点续传 + MD5 校验）
 - **三唤醒词常驻监听**：支持"小娜"、"你好小娜"、"小娜小娜"，前台服务 + 低功耗唤醒，播报期间自动暂停监听（防回声误触发）
@@ -23,7 +23,7 @@
 - **电话状态监听**：通话中自动暂停唤醒监听，避免麦克风冲突和误唤醒，挂断后自动恢复
 - **音量控制**：音量调到XX、大点声、小点声、静音、取消静音
 - **应用启动**：打开导航、打开音乐、打开设置等常用应用
-- **armv7 友好**：Vosk 带 32 位原生库，模型约 42MB；百度 SDK 支持 armeabi-v7a/arm64-v8a
+- **armv7 友好**：sherpa-onnx 带 32 位原生库，中文流式模型约 31MB；百度 SDK 支持 armeabi-v7a/arm64-v8a
 - **机器人卡通悬浮窗**：唤醒时显示卡通机器人，识别状态可视化
 - **导出 U 盘**：支持导出日志和配置到 U 盘，方便调试
 - **开机自启**：WorkManager + BootReceiver 双重兜底，确保车机开机后自动启动语音服务
@@ -42,7 +42,7 @@
 | --- | --- | --- |
 | 唤醒词 KWS | ONNX 自定义模型 | `multi_xiaona.onnx`，三唤醒词（小娜/你好小娜/小娜小娜），低功耗常驻监听 |
 | 语音识别 ASR（在线） | 百度语音识别 SDK | `bdasr_aipd_V3_20250717`，AipeEventManagerFactory 动态传入用户 Key，infile 模式识别 |
-| 语音识别 ASR（离线） | Vosk (small-cn) | 离线中文识别，模型约 42MB；支持 armv7；无网络时自动回退 |
+| 语音识别 ASR（离线） | sherpa-onnx（流式 Zipformer） | 离线中文识别，模型约 31MB；支持 armv7；无网络时自动回退 |
 | 降噪 | RNNoise + AudioRecord 内置 | RNNoise 深度学习降噪（唤醒阶段）；NoiseSuppressor/AutomaticGainControl（硬件支持时） |
 | 端点检测 VAD | RMS 能量 + 动态阈值 | 自适应静音阈值，已识别内容→1500ms，未识别→1000ms |
 | 语义理解 NLU | 本地规则引擎 | 模板 + 槽位 + 正则；意图配置 `intents.json`，30+ 内置意图，可热更新 |
@@ -80,7 +80,7 @@
 ┌─ 引擎层 ─────────────────────────────────────┐
 │ WakeWordEngine(ONNX 唤醒)                     │
 │   → BaiduAsrManager(百度在线识别，优先)        │
-│   → SpeechRecognizer(Vosk 离线识别，兜底)      │
+│   → SpeechRecognizer(sherpa-onnx 离线识别，兜底)      │
 │   → IntentParser(规则引擎 NLU)                 │
 │   → PlaceMatcher(地名拼音匹配)                 │
 │   → SkillExecutor(执行器调度)                  │
@@ -110,7 +110,7 @@
 │ MediaKeyDispatcher（系统级按键+广播兜底）      │
 └──────────────┬───────────────────────────────┘
 ┌─ 模型层（filesDir/va/，私有目录）─────────────┐
-│ models/asr/   Vosk 模型（识别用）              │
+│ models/asr/   sherpa-onnx 模型（识别用）              │
 │ assets/       ONNX 唤醒模型 + 配置             │
 │   multi_xiaona.onnx  唤醒词模型                │
 │   melspectrogram.onnx  梅尔频谱模型            │
@@ -126,7 +126,9 @@ CarVoiceAssistant/
 ├── app/
 │   ├── build.gradle.kts        # 依赖与构建配置（含模型包地址）
 │   ├── libs/
-│   │   └── bdasr_aipd_V3_20250717_*.aar  # 百度语音识别 SDK
+│   │   ├── bdasr_aipd_V3_20250717_*.aar   # 百度语音识别 SDK
+│   │   ├── sherpa-onnx-1.13.7.aar         # sherpa-onnx 离线识别引擎（官方 GitHub Releases 下载）
+│   │   └── onnxruntime-android-1.27.1.aar # 唤醒词 ONNX 推理（版本须与 sherpa 内置 onnxruntime 对齐 1.27.1）
 │   └── src/main/
 │       ├── AndroidManifest.xml
 │       ├── assets/
@@ -146,7 +148,7 @@ CarVoiceAssistant/
 │       │   │   ├── VoiceAssistantService.kt  # 前台服务编排（状态机）
 │       │   │   ├── BaiduAsrManager.kt        # 百度语音识别封装（单例模式）
 │       │   │   ├── WakeWordEngine.kt         # ONNX 唤醒词检测
-│       │   │   ├── SpeechRecognizer.kt       # Vosk 离线识别
+│       │   │   ├── SpeechRecognizer.kt       # sherpa-onnx 离线识别
 │       │   │   ├── IntentParser.kt           # 规则引擎 NLU
 │       │   │   ├── PlaceMatcher.kt           # 地名拼音模糊匹配
 │       │   │   ├── SkillExecutor.kt          # 执行器（Skill 调度）
@@ -206,17 +208,25 @@ CarVoiceAssistant/
 
 ## 部署前必须准备的 3 件事
 
-### 1. Vosk 中文模型（必须，离线识别用）
-- 下载：https://alphacephei.com/vosk/models 中的 `vosk-model-small-cn-0.22`（约 42MB，适合 32 位车机；资源充足可换大模型 `vosk-model-cn-0.22`）
-- 解压后确认目录内包含 `am/`、`conf/`、`graph/` 等，重命名为 `model/`
+### 1. sherpa-onnx 中文模型（必须，离线识别用）
+推荐使用官方**流式 Zipformer 中文模型**（sherpa-onnx 流式识别，体积小、速度快，适合 32 位车机）：
+- `sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23`（约 31MB，默认推荐）
+- 需要更高准确率可换 `sherpa-onnx-streaming-zipformer-ctc-zh-int8-2025-06-30`（单文件模型，约 60MB）或 paraformer 双语流式模型
+
+下载地址（任选）：
+- GitHub Releases：https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models
+- HuggingFace：https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23
+- 国内加速镜像（hf-mirror）：https://hf-mirror.com/csukuangfj/sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23
+
+解压后确认目录内包含 `encoder*.onnx`、`decoder*.onnx`、`joiner*.onnx`、`tokens.txt`（单文件 CTC 模型则包含 `model*.onnx` + `tokens.txt`），目录整体重命名为 `model/`
 - 唤醒词当前为"小娜"、"你好小娜"、"小娜小娜"（ONNX 模型，可自行训练替换）
 
 ### 2. 模型包打包与托管（必须）
-把 Vosk 模型打包为 `models.zip`，**目录结构必须如下**：
+把 sherpa-onnx 模型根目录重命名为 `model/`，打包为 `models.zip`，**目录结构必须如下**：
 
 ```
 models.zip
-└── asr/model/             # Vosk 模型根（含 am/ conf/ graph/）
+└── asr/model/             # sherpa-onnx 模型根（encoder*/decoder*/joiner*/tokens.txt，或 model*.onnx/tokens.txt）
 ```
 
 上传到你的下载服务器（或对象存储），然后：
@@ -241,7 +251,7 @@ models.zip
 }
 ```
 
-> 不配置百度语音识别也可以使用，APP 会自动使用 Vosk 离线识别。
+> 不配置百度语音识别也可以使用，APP 会自动使用 sherpa-onnx 离线识别。
 
 ## 支持的语音指令
 
@@ -342,10 +352,10 @@ APP 会自动选择优先级最高的已安装播放器（车机版优先）：
 
 ## 32 位车机兼容要点
 
-- **NDK 验证**：Vosk AAR 和百度 SDK 均含 `armeabi-v7a`，但不同车机 ROM 的权限与音频策略差异大，务必在**真实车机**上验证：
+- **NDK 验证**：sherpa-onnx AAR 和百度 SDK 均含 `armeabi-v7a`，但不同车机 ROM 的权限与音频策略差异大，务必在**真实车机**上验证：
   - 唤醒后能否正常打开第二个 AudioRecord（部分 ROM 对并发录音有限制，本实现已做"唤醒→释放→再录音"的顺序处理）
   - 麦克风增益、风噪/胎噪下的误唤醒率（ONNX 模型只识别唤醒词，误唤醒率较低）
-  - 内存占用：Vosk small 模型推理约几十 MB，唤醒和识别不同时运行，2GB 内存车机可运行
+  - 内存占用：sherpa-onnx 中文流式模型加载后常驻约 30-80MB，唤醒和识别不同时运行，2GB 内存车机可运行，唤醒和识别不同时运行，2GB 内存车机可运行
 - **回声消除**：车机播报时麦克风会收到喇叭声，量产前建议上**双麦阵列 + AEC**，并保持"播报期间不响应唤醒"的策略（已内置）
 - **U盘路径**：鼎微/全志方案 U 盘通常挂载在 `/storage/usb1`，APP 支持自动检测多个 U 盘路径
 - **开机自启**：部分车机 ROM 限制第三方应用自启，APP 已使用 WorkManager + BootReceiver 双重兜底，仍需在系统设置中手动允许自启
@@ -383,7 +393,7 @@ skillExecutor.carControlProvider = object : SkillExecutor.CarControlProvider {
 ```
 
 - `action` 对应 `SkillExecutor.execute()` 里的分支；新增动作需同步扩展执行器
-- `grammar` 是**可选的** Vosk 识别域限定词表（JSGF 短语，`[unk]` 表示任意词）。默认全空 = 自由识别 + 正则抽取，开箱即用；识别准确率不足时再按意图填写 grammar 并逐条实测
+- `grammar` 是**可选的**识别热词（对应原 Vosk grammar 词表；传热词时自动启用 modified_beam_search）。默认全空 = 自由识别 + 正则抽取，开箱即用；识别准确率不足时再按意图填写 grammar 并逐条实测
 
 ## 扩展：自定义地名
 
@@ -407,17 +417,17 @@ skillExecutor.carControlProvider = object : SkillExecutor.CarControlProvider {
 - 音乐控制通过系统级媒体按键 + 广播，部分车机 ROM 可能不响应，建议接厂商媒体 SDK
 - 腾讯车机版仅支持启动主界面，不支持 URI 直接搜索跳转（URI scheme 限制）
 - 首次下载依赖你的模型托管服务器可用性；生产环境建议支持断点续传（已实现）与失败重试
-- 百度语音识别需要网络连接，无网络时自动回退到 Vosk 离线识别
+- 百度语音识别需要网络连接，无网络时自动回退到 sherpa-onnx 离线识别
 - 空调/车窗等车控功能需要接入厂商 SDK，未接入时返回提示
 - 打电话功能需要 READ_CONTACTS 和 CALL_PHONE 权限，无权限时回退到拨号界面
 
 ## 安全与合规提示
 
 - 百度语音识别的语音数据会上传到百度服务器进行识别，请在隐私政策中明确说明
-- Vosk 离线识别的语音数据全部本地处理，不上传
+- sherpa-onnx 离线识别的语音数据全部本地处理，不上传
 - **谁使用谁的 Key**：百度语音识别的 App ID/API Key/Secret Key 由用户自行填写，不内置开发者 Key
 - 打电话功能需要 CALL_PHONE 和 READ_CONTACTS 权限，APP 会动态申请，用户可拒绝
-- 接入厂商 SDK 前确认其授权协议；Vosk 为 Apache 2.0 开源协议，可自由商用
+- 接入厂商 SDK 前确认其授权协议；sherpa-onnx 为 Apache 2.0 开源协议，可自由商用
 - RNNoise 为 BSD 开源协议，可自由商用
 - pinyin4j 为 GPLv2 开源协议，商用需注意
 
@@ -425,7 +435,7 @@ skillExecutor.carControlProvider = object : SkillExecutor.CarControlProvider {
 
 本项目采用 Apache License 2.0 开源协议。
 
-- Vosk：Apache License 2.0
+- sherpa-onnx：Apache License 2.0
 - RNNoise：BSD License
 - pinyin4j：GPLv2
 - 百度语音识别 SDK：百度智能云服务协议

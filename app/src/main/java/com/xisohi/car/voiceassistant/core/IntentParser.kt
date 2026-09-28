@@ -36,7 +36,7 @@ class IntentParser(context: Context) {
 
     /** 解析文本，命中返回 [VoiceIntent]，否则 null */
     fun parse(text: String): VoiceIntent? {
-        // 去掉所有空格：Vosk 识别结果可能在词之间加空格（如"播放 音乐"），
+        // 去掉所有空格：识别结果可能在词之间加空格（如"播放 音乐"），
         // 而 intents.json 里的正则是无空格的（如"播放音乐"）
         var trimmed = text.replace(" ", "").trim()
         // 去掉末尾的标点符号：百度识别结果常带句号/问号（如"播放音乐。"），
@@ -64,7 +64,7 @@ class IntentParser(context: Context) {
     }
 
     /**
-     * 生成 Vosk grammar（JSGF 词表）——可选增强。
+     * 生成可选的识别热词（原 Vosk grammar 词表）——可选增强。
      *
      * 默认 intents.json 中 grammar 为空数组 → 返回空列表 → 自由识别
      * （NLU 用正则抽取，开箱即用）。

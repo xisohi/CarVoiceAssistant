@@ -17,7 +17,7 @@ import java.util.Locale
  * 保存位置：/sdcard/Android/data/com.xisohi.car.voiceassistant/files/recordings/
  * 文件名格式：2026-09-16_14-30-25_导航到蚌埠站.wav
  *
- * 注意：保存的是给百度识别用的音频（2.5x 轻量增益，未经过 Vosk 的 8x 增益），
+ * 注意：保存的是给百度识别用的音频（2.5x 轻量增益，未经过 sherpa-onnx 的 8x 增益），
  * 更接近真实人声，适合判断录音质量。
  */
 object AudioSaver {

@@ -4,7 +4,9 @@ Thumbs.db
 .DS_Store
 # Built application files
 *.apk
-#*.aar
+# 本地依赖 AAR（sherpa-onnx / onnxruntime / 百度SDK，大体积二进制，
+# 由下载/解压流程重新获取，不需要进 git）
+*.aar
 *.ap_
 *.aab
 
@@ -99,3 +101,6 @@ lint/tmp/
 *.hprof
 .temp/
 output-metadata.json
+
+# 离线模型包（models.zip 由用户自行上传服务器，App 运行时引导下载，不需要进 git）
+model_package/

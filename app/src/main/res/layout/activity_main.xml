@@ -682,7 +682,7 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="有网络时优先使用百度识别，无网络时自动回退到离线 Vosk"
+                    android:text="有网络时优先使用百度识别，无网络时自动回退到离线 sherpa-onnx"
                     android:textSize="8sp"
                     android:textColor="#9E9E9E"
                     android:layout_marginTop="1dp" />
