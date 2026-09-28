@@ -325,7 +325,7 @@
                         android:id="@+id/tvSensitivityDesc"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="中（增益4.5x，阈值0.008）"
+                        android:text="中（增益4.5x，阈值0.180）"
                         android:textSize="9sp"
                         android:textColor="#1A73E8" />
                 </LinearLayout>
@@ -389,8 +389,8 @@
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
-                        android:max="99"
-                        android:progress="7"
+                        android:max="24"
+                        android:progress="17"
                         android:minHeight="18dp" />
                     <TextView
                         android:id="@+id/tvThresholdValue"
@@ -671,7 +671,6 @@
                         android:minHeight="0dp"
                         android:paddingVertical="0dp" />
                 </LinearLayout>
-                    android:paddingVertical="0dp" />
                 <TextView
                     android:id="@+id/tvBaiduStatus"
                     android:layout_width="wrap_content"

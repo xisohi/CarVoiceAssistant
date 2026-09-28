@@ -257,7 +257,7 @@ class MainActivity : AppCompatActivity() {
 
         binding.seekThreshold.setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: android.widget.SeekBar?, progress: Int, fromUser: Boolean) {
-                val threshold = (progress + 1) * 0.001f
+                val threshold = 0.01f + progress * 0.01f
                 binding.tvThresholdValue.text = String.format("%.3f", threshold)
             }
             override fun onStartTrackingTouch(seekBar: android.widget.SeekBar?) {}
@@ -283,7 +283,7 @@ class MainActivity : AppCompatActivity() {
         })
 
         binding.btnApplyManual.setOnClickListener {
-            val threshold = (binding.seekThreshold.progress + 1) * 0.001f
+            val threshold = 0.01f + binding.seekThreshold.progress * 0.01f
             val gain = 1.0f + binding.seekGain.progress * 0.1f
             val asrGain = 5.0f + binding.seekAsrGain.progress * 0.1f
             WakeWordEngine.setGainAndThreshold(gain, threshold)
@@ -769,7 +769,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateManualUI(threshold: Float, gain: Float) {
-        val thresholdProgress = ((threshold / 0.001f).toInt() - 1).coerceIn(0, 99)
+        val thresholdProgress = ((threshold - 0.01f) / 0.01f).toInt().coerceIn(0, 24)
         binding.seekThreshold.progress = thresholdProgress
         binding.tvThresholdValue.text = String.format("%.3f", threshold)
         val gainProgress = ((gain - 1.0f) / 0.1f).toInt().coerceIn(0, 70)
