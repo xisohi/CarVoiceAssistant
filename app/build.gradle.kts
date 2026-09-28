@@ -45,7 +45,7 @@ android {
         // 首次下载模型包的地址（Vosk 官网中文大模型，1.3GB，识别准确率更高）
         // 小模型（42MB）：https://alphacephei.com/vosk/models/vosk-model-small-cn-0.22.zip
         // 大模型（1.3GB）：https://alphacephei.com/vosk/models/vosk-model-cn-0.22.zip
-        buildConfigField("String", "MODEL_PACK_URL", "\"https://lcjly.cn/car/models.zip\"")
+        buildConfigField("String", "MODEL_PACK_URL", "\"https://lcjly.cn/car/Vosk/models.zip\"")
         buildConfigField("String", "MODEL_PACK_MD5", "\"\"")
 
         // 默认离线 TTS 引擎包名（可选，系统引擎为空字符串时用系统默认）
