@@ -1,6 +1,7 @@
 package com.xisohi.car.voiceassistant.core
 
 import android.media.AudioRecord
+import android.media.audiofx.AcousticEchoCanceler
 import android.media.audiofx.AutomaticGainControl
 import android.media.audiofx.NoiseSuppressor
 import com.xisohi.car.voiceassistant.core.LogUtils
@@ -32,6 +33,7 @@ class AudioNoiseReducer private constructor(
 
     private var noiseSuppressor: NoiseSuppressor? = null
     private var automaticGainControl: AutomaticGainControl? = null
+    private var echoCanceler: AcousticEchoCanceler? = null
     private var isReleased = false
 
     // RNNoise 深度学习降噪器
@@ -57,6 +59,10 @@ class AudioNoiseReducer private constructor(
      * 注意：这些效果是否生效取决于硬件驱动，不支持时会静默失败
      */
     private fun enableSystemEffects() {
+        // ★ 禁用 NoiseSuppressor：已有 RNNoise 深度学习降噪 + 高通滤波，
+        // 三层降噪叠加会导致人声频谱失真，反而降低识别率、增加误唤醒。
+        // 保留代码以便将来需要时启用：
+        /*
         try {
             if (NoiseSuppressor.isAvailable()) {
                 noiseSuppressor = NoiseSuppressor.create(audioSessionId)
@@ -68,6 +74,8 @@ class AudioNoiseReducer private constructor(
         } catch (e: Exception) {
             LogUtils.w(TAG, "启用 NoiseSuppressor 失败: ${e.message}")
         }
+        */
+        LogUtils.d(TAG, "NoiseSuppressor 已禁用（使用 RNNoise + 高通滤波替代）")
 
         try {
             if (AutomaticGainControl.isAvailable()) {
@@ -81,15 +89,29 @@ class AudioNoiseReducer private constructor(
             LogUtils.w(TAG, "启用 AutomaticGainControl 失败: ${e.message}")
         }
 
-        // 查询回声消除（AEC）支持情况——车机播放音乐时 AEC 能消除喇叭回声，减少误唤醒
+        // 启用回声消除（AEC）——车机播放音乐时 AEC 能消除喇叭回声，减少误唤醒
         try {
-            if (android.media.audiofx.AcousticEchoCanceler.isAvailable()) {
-                LogUtils.i(TAG, "AcousticEchoCanceler (AEC) 可用：系统支持回声消除")
+            if (AcousticEchoCanceler.isAvailable()) {
+                val aec = AcousticEchoCanceler.create(audioSessionId)
+                if (aec != null) {
+                    aec.enabled = true
+                    // AEC 启用是异步的，等 50ms 让它生效
+                    Thread.sleep(50)
+                    if (aec.enabled) {
+                        echoCanceler = aec
+                        LogUtils.i(TAG, "AEC 已启用（播放音乐时回声将被消除）")
+                    } else {
+                        aec.release()
+                        LogUtils.w(TAG, "AEC 启用失败（系统拒绝），已释放")
+                    }
+                } else {
+                    LogUtils.w(TAG, "AEC create() 返回 null")
+                }
             } else {
-                LogUtils.w(TAG, "AcousticEchoCanceler (AEC) 不可用：系统不支持回声消除，播放音乐时可能误唤醒")
+                LogUtils.w(TAG, "AEC 不可用（系统不支持），播放音乐时可能误唤醒")
             }
         } catch (e: Exception) {
-            LogUtils.w(TAG, "查询 AEC 支持情况失败: ${e.message}")
+            LogUtils.w(TAG, "启用 AEC 异常: ${e.message}")
         }
     }
 
@@ -179,6 +201,12 @@ class AudioNoiseReducer private constructor(
             automaticGainControl = null
         } catch (e: Exception) {
             LogUtils.w(TAG, "释放 AutomaticGainControl 失败: ${e.message}")
+        }
+        try {
+            echoCanceler?.release()
+            echoCanceler = null
+        } catch (e: Exception) {
+            LogUtils.w(TAG, "释放 AcousticEchoCanceler 失败: ${e.message}")
         }
         try {
             rnnoiseDenoiser.release()

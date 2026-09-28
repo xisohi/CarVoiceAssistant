@@ -267,11 +267,18 @@ class VoiceAssistantService : Service() {
         if (!wakeWordEngine.isLoaded) {
             LogUtils.e("VoiceService", "唤醒引擎加载失败: ${wakeWordEngine.errorMessage}")
         }
-        // 读取保存的灵敏度配置
+        // 读取保存的灵敏度配置（手动参数优先，否则用档位）
         val prefs = getSharedPreferences("voice_assistant_prefs", MODE_PRIVATE)
-        val savedSens = prefs.getInt("wake_sensitivity", 1)
-        WakeWordEngine.setSensitivity(savedSens)
-        LogUtils.i("VoiceService", "唤醒灵敏度: ${WakeWordEngine.getSensitivityName()} (增益=${WakeWordEngine.getAudioGain()}, 阈值=${WakeWordEngine.getDetectionThreshold()})")
+        val savedThreshold = prefs.getFloat("wake_threshold_override", -1f)
+        val savedGain = prefs.getFloat("wake_gain_override", -1f)
+        if (savedThreshold > 0 && savedGain > 0) {
+            WakeWordEngine.setGainAndThreshold(savedGain, savedThreshold)
+            LogUtils.i("VoiceService", "唤醒灵敏度: 自定义 (增益=$savedGain, 阈值=$savedThreshold)")
+        } else {
+            val savedSens = prefs.getInt("wake_sensitivity", 1)
+            WakeWordEngine.setSensitivity(savedSens)
+            LogUtils.i("VoiceService", "唤醒灵敏度: ${WakeWordEngine.getSensitivityName()} (增益=${WakeWordEngine.getAudioGain()}, 阈值=${WakeWordEngine.getDetectionThreshold()})")
+        }
 
         // 读取保存的识别增益（asrGain），避免服务重启后用户设置丢失
         val savedAsrGain = prefs.getFloat("asr_gain_override", 8.0f)
@@ -996,7 +1003,8 @@ class VoiceAssistantService : Service() {
             // ★★★ 方案3：生产者-消费者模式，录音线程和识别线程分离 ★★★
             // 录音线程（生产者）：只做 record.read() + 入队，不做任何处理，避免阻塞导致丢帧
             // 识别线程（消费者，当前协程）：从队列取音频 + 所有处理（降噪/增益/Vosk识别/UI更新/端点检测）
-            val audioQueue = java.util.concurrent.LinkedBlockingQueue<AudioFrame>(300)  // 约10秒缓冲，避免丢帧
+            var queueFullCount = 0
+            val audioQueue = java.util.concurrent.LinkedBlockingQueue<AudioFrame>(500)  // 约16秒缓冲，车机CPU慢时避免丢帧
             val recordingFinished = java.util.concurrent.atomic.AtomicBoolean(false)
 
             // ★ 录音线程（生产者）：只做录音和入队，极轻量，不会阻塞
@@ -1015,7 +1023,11 @@ class VoiceAssistantService : Service() {
                         // 用 offer() + 100ms 超时，避免队列满时永久阻塞（理论死锁风险）
                         // 队列容量300帧（约10秒），实际很难满；如果真满了，丢弃这一帧并打日志
                         if (!audioQueue.offer(AudioFrame(dataCopy, n), 100, java.util.concurrent.TimeUnit.MILLISECONDS)) {
-                            LogUtils.w("VoiceService", "音频队列满，丢弃一帧（${n} samples）")
+                            // 队列满日志降频：每20次打印一次，避免日志刷屏
+                            queueFullCount++
+                            if (queueFullCount % 20 == 0) {
+                                LogUtils.w("VoiceService", "音频队列满，已丢弃 ${queueFullCount} 帧（车机CPU慢，识别处理跟不上录音）")
+                            }
                         }
                     }
                 } catch (e: Exception) {
