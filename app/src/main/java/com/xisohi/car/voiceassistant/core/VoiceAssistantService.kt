@@ -549,6 +549,8 @@ class VoiceAssistantService : Service() {
         override fun run() {
             // 重置冷启动跳过计数，跳过麦克风刚启动时的爆音
             wakeWordEngine.resetSkipCounter()
+
+            // 音乐播放状态检测：每50帧检查一次，播放中时提高唤醒阈值
             val sampleRate = 16000
             val channelConfig = AudioFormat.CHANNEL_IN_MONO
             val audioFormat = AudioFormat.ENCODING_PCM_16BIT
@@ -559,7 +561,7 @@ class VoiceAssistantService : Service() {
             }
 
             val record = AudioRecord(
-                MediaRecorder.AudioSource.VOICE_RECOGNITION,
+                MediaRecorder.AudioSource.MIC,  // 对齐原厂：MIC模式，VOICE_RECOGNITION无实际增益
                 sampleRate,
                 channelConfig,
                 audioFormat,
@@ -608,6 +610,9 @@ class VoiceAssistantService : Service() {
             }
             LogUtils.d("WakeAudioThread", "开始录音，帧大小=$frameSize")
 
+            var frameCount = 0
+            var lastMusicCheck = -999
+            var musicActive = false
             try {
                 while (isWakeListening && !isInterrupted()) {
                     val read = record.read(audioBuffer, 0, frameSize, AudioRecord.READ_BLOCKING)
@@ -616,6 +621,19 @@ class VoiceAssistantService : Service() {
                         break
                     }
                     if (read == frameSize) {
+                        frameCount++
+                        // 每50帧（约50秒）检测一次音乐播放状态，播放中时提高唤醒阈值
+                        if (frameCount - lastMusicCheck >= 50) {
+                            lastMusicCheck = frameCount
+                            try {
+                                val am = getSystemService(AUDIO_SERVICE) as android.media.AudioManager
+                                val nowPlaying = am.isMusicActive
+                                if (nowPlaying != musicActive) {
+                                    musicActive = nowPlaying
+                                    wakeWordEngine.setMusicPlaying(nowPlaying)
+                                }
+                            } catch (e: Exception) { }
+                        }
                         // 应用降噪处理（高通滤波，去除低频发动机噪音）
                         noiseReducer.process(audioBuffer, read)
                         // process 可能在 service 销毁时访问已关闭的 session，捕获异常防止线程崩溃
@@ -953,7 +971,7 @@ class VoiceAssistantService : Service() {
                 return@launch
             }
             val record = AudioRecord(
-                MediaRecorder.AudioSource.VOICE_RECOGNITION,
+                MediaRecorder.AudioSource.MIC,  // 对齐原厂：MIC模式，VOICE_RECOGNITION无实际增益
                 SpeechRecognizer.SAMPLE_RATE.toInt(),
                 AudioFormat.CHANNEL_IN_MONO,
                 AudioFormat.ENCODING_PCM_16BIT,

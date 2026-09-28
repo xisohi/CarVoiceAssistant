@@ -52,10 +52,11 @@ public class WakeWordEngine {
     private static int sensitivityLevel = 1;
     // 车机环境优化的三档预设（麦克风远、环境噪音大，需要更低阈值和更高增益）
     // 低：保守（误唤醒少）；中：平衡（推荐日常使用）；高：灵敏（适合行驶中/小声）
-    // 根据车机实测日志调整：误唤醒 prob<0.17，真唤醒 prob>0.43，分界点 0.20
-    // 低=0.25（极端保守）/ 中=0.15（推荐，完全挡住误唤醒）/ 高=0.05（灵敏）
+    // 对齐原厂天琴语音(思必驰方案)：主唤醒词阈值0.18
+    // 误唤醒 prob<0.17，真唤醒 prob>0.43，0.18 正好在分界点
+    // 低=0.25（保守）/ 中=0.18（推荐，和原厂一致）/ 高=0.08（灵敏）
     private static final float[] GAIN_BY_LEVEL = {3.5f, 4.5f, 5.5f};
-    private static final float[] THRESHOLD_BY_LEVEL = {0.25f, 0.15f, 0.05f};
+    private static final float[] THRESHOLD_BY_LEVEL = {0.25f, 0.18f, 0.08f};
     private static final String[] LEVEL_NAMES = {"低", "中", "高"};
 
     /** 设置灵敏度档位（0=低, 1=中, 2=高） */
@@ -158,6 +159,16 @@ public class WakeWordEngine {
     private int framesProcessed = 0;
     /** 帧号计数器，用于调试日志时序定位 */
     private int frameCounter = 0;
+    /** 音乐播放中标志：动态提高阈值防音乐误唤醒 */
+    private volatile boolean musicPlaying = false;
+
+    /** 音乐播放状态变化时调用 */
+    public void setMusicPlaying(boolean playing) {
+        if (musicPlaying != playing) {
+            musicPlaying = playing;
+            LogUtils.i(TAG, "音乐播放状态: " + (playing ? "播放中，阈值x1.8防误唤醒" : "已停止，恢复正常阈值"));
+        }
+    }
     /** 临时阈值覆盖（播放音乐时提高阈值减少误唤醒，-1 表示不覆盖） */
     private static float tempThresholdOverride = -1f;
 
@@ -523,6 +534,10 @@ public class WakeWordEngine {
             // 启动保护期：前30帧（约30秒）麦克风可能有爆音，阈值翻倍减少误唤醒
             if (frameCounter < 30) {
                 effectiveThreshold *= 2.0f;
+            }
+            // 音乐播放中：AEC不可用，阈值提高1.8倍防音乐误唤醒
+            if (musicPlaying) {
+                effectiveThreshold *= 1.8f;
             }
             float bgProb = 1.0f - bestSigmoid;
             String detected = bestSigmoid > effectiveThreshold ? bestWord : null;
