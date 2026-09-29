@@ -100,6 +100,9 @@ class BaiduAsrManager private constructor(private val context: Context) {
     // ★ 识别中间结果心跳（asr.partial 非最终结果时触发）：
     // 上层用它重置"无推进超时"，避免用户开口晚/百度VAD静默延迟导致的误判超时
     @Volatile var onPartialListener: (() -> Unit)? = null
+    // ★ 最近一次在线失败是否为"未找到有效语音"（百度 -3005 / not find effective speech）：
+    // 上层据此区分提示语——没听清 vs 网络不好，避免误导用户
+    @Volatile var lastFailedNoSpeech: Boolean = false
 
     /**
      * 设置说话结束监听器（百度检测到 asr.end 时调用）
@@ -439,6 +442,7 @@ class BaiduAsrManager private constructor(private val context: Context) {
         }
 
         recognitionCallback = callback
+        lastFailedNoSpeech = false
         isRecognizing = true
 
         try {
@@ -590,6 +594,8 @@ class BaiduAsrManager private constructor(private val context: Context) {
 
                         if (hasError) {
                             Log.e(TAG, "识别失败: error=$errorCode, sub_error=$subErrorCode, desc=$desc")
+                            lastFailedNoSpeech = (subErrorCode == 7001) ||
+                                (desc != null && (desc.contains("-3005") || desc.contains("not find effective speech")))
                             isRecognizing = false
                             val cb = recognitionCallback
                             recognitionCallback = null

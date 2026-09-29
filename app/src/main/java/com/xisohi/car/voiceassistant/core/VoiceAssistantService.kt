@@ -976,8 +976,15 @@ class VoiceAssistantService : Service() {
         // TTS 播报（约1-2秒）天然覆盖了原 800ms 的"等百度释放麦克风"窗口，
         // 播报完成（onSpeakDone）后再启动离线录音，避免把提示音录进识别音频。
         isNetworkRetryPromptSpeaking = true
-        LogUtils.i("VoiceService", "网络不好，播报'请再说一遍'提示后开始离线识别")
-        ttsEngine.speak(getString(R.string.tts_network_retry_prompt))
+        // ★ 区分失败类型：百度"未找到有效语音"（说话太轻/太短）→ "没有听清"；
+        // 其他（超时/断连/鉴权）→ "网络不好"。避免网络正常时误导用户。
+        val noSpeech = baiduAsrManager.lastFailedNoSpeech
+        if (noSpeech) {
+            LogUtils.i("VoiceService", "没听清，播报'请再说一遍'提示后开始离线识别")
+        } else {
+            LogUtils.i("VoiceService", "网络不好，播报'请再说一遍'提示后开始离线识别")
+        }
+        ttsEngine.speak(getString(if (noSpeech) R.string.tts_not_heard else R.string.tts_network_retry_prompt))
         // ★ 超时兜底：若 onSpeakDone 未回调（TTS引擎异常），5秒后仍启动离线识别，避免卡死。
         // 注意：不清 isNetworkRetryPromptSpeaking —— 若兜底已启动离线（互斥标志拦截重复），
         // 迟到的 onSpeakDone 走网络分支再调 startRecognitionOffline() 会被 offlineRecognitionActive 拦住。
