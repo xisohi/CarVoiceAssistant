@@ -327,7 +327,7 @@ class VoiceAssistantService : Service() {
 
         intentParser = IntentParser(this)
         skillExecutor = SkillExecutor(this)
-        placeMatcher = PlaceMatcher(this)
+        placeMatcher = PlaceMatcher.getInstance(this)
         ttsEngine = TtsEngine(this).apply {
             listener = object : TtsEngine.Listener {
                 override fun onSpeakStart() {
@@ -911,6 +911,9 @@ class VoiceAssistantService : Service() {
                 onlineResultReceived = true  // ★ 超时已处理，屏蔽晚到的百度回调，避免重复触发回退
                 LogUtils.w("VoiceService", "百度在线识别超时（${ONLINE_RECOGNITION_TIMEOUT_MS}ms未返回），自动回退到离线识别")
                 sendRecognitionLog("⚠️ 在线识别超时，自动回退到离线识别")
+                // ★ 修复：立即 cancel 百度会话，释放 isRecognizing 占用，
+                // 否则 SDK 内部 20 秒超时前，下一次唤醒的在线识别会被 startStreamingRecognition 拒绝
+                baiduAsrManager.cancel()
                 handleOnlineFailure()
             }
         }
@@ -992,6 +995,9 @@ class VoiceAssistantService : Service() {
         speechEndedAt = 0L
         val modelDir = ModelManager.findAsrModelDir(this)
         if (modelDir == null) {
+            // ★ 修复：modelDir==null 分支必须复位互斥标志，
+            // 否则 offlineRecognitionActive 永远为 true，之后所有离线识别都被永久拦截
+            offlineRecognitionActive = false
             ttsEngine.speak(getString(R.string.tts_model_unavailable))
             resumeWake()
             return
@@ -1753,6 +1759,8 @@ class VoiceAssistantService : Service() {
         // 释放百度语音识别引擎（EventManager + factory），避免服务反复启停时 SDK 资源累积泄漏
         // 注意：只释放引擎，保留配置（appId/apiKey/secretKey），下次 init() 直接复用
         baiduAsrManager.releaseEngine()
+        // 取消 MediaSkill 待执行的自动播放延迟任务（服务销毁后不应再发媒体按键）
+        skillExecutor.cancelPendingTasks()
         ttsEngine.shutdown()
         // 释放提示音播放器
         toneGenerator?.release()

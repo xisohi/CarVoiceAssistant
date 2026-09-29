@@ -129,6 +129,8 @@ public class WakeWordEngine {
     private int dscnnMelTime = 50;
 
     // ★ 复用缓冲（每帧尺寸固定，避免唤醒线程长期运行每帧 new 数组频繁触发 GC）
+    // 注意：以下复用缓冲（reuseFloatAudio/reuseDscnnInput/reuseFlatInput）仅限单线程使用，
+    // 调用方保证 process() 只由 WakeAudioThread 单线程调用；若将来多线程并发调用会互相踩踏。
     private float[] reuseFloatAudio = null;   // 长度 = audio.length（正常固定为 audioSamplesNeeded）
     private float[][][] reuseDscnnInput = null; // [1][dscnnMelTime][N_MELS]，构造后尺寸固定
     private float[] reuseFlatInput = null;    // [dscnnMelTime * N_MELS]

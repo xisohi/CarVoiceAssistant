@@ -34,7 +34,9 @@ object AudioSaver {
      * 初始化，在 Application.onCreate() 或 MainActivity.onCreate() 中调用
      */
     fun init(ctx: Context) {
-        audioDir = File(ctx.getExternalFilesDir(null), AUDIO_DIR)
+        // ★ 修复：外部存储异常（未挂载/无权限）时 fallback 到内部存储，避免 File(null) NPE
+        val baseDir = ctx.getExternalFilesDir(null) ?: ctx.filesDir
+        audioDir = File(baseDir, AUDIO_DIR)
         if (!audioDir!!.exists()) {
             audioDir!!.mkdirs()
         }

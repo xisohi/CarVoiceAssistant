@@ -125,4 +125,12 @@ class SkillExecutor(private val context: Context) {
     fun selectSong(indexStr: String): ExecutionResult =
         mediaSkill.selectSong(indexStr)
 
+    /**
+     * 取消所有待执行的延迟任务（服务销毁时调用）。
+     * 避免服务销毁后自动播放的延迟媒体按键（4s/5.5s）仍在主线程执行。
+     */
+    fun cancelPendingTasks() {
+        mediaSkill.cancelAutoPlay()
+    }
+
 }

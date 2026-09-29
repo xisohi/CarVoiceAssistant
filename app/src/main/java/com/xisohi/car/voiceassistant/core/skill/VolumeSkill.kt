@@ -47,6 +47,7 @@ class VolumeSkill(private val context: Context) {
                 audioManager.setStreamVolume(streamType, target, 0)
                 android.util.Log.d("VolumeSkill", "成功设置 stream=$streamType 音量=$target")
                 success = true
+                break  // ★ 修复：第一个成功的流即停止，避免 5 个流音量全部被改
             } catch (e: Exception) {
                 android.util.Log.w("VolumeSkill", "stream=$streamType 设置失败: ${e.message}")
             }
@@ -72,6 +73,7 @@ class VolumeSkill(private val context: Context) {
                 )
                 android.util.Log.d("VolumeSkill", "成功调整 stream=$streamType")
                 success = true
+                break  // ★ 修复：第一个成功的流即停止
             } catch (e: Exception) {
                 android.util.Log.w("VolumeSkill", "stream=$streamType 调整失败: ${e.message}")
             }
@@ -86,7 +88,6 @@ class VolumeSkill(private val context: Context) {
     }
 
     private fun setMute(on: Boolean): ExecutionResult {
-        var success = false
         for (streamType in STREAMS_TO_TRY) {
             try {
                 audioManager.adjustStreamVolume(
@@ -95,7 +96,7 @@ class VolumeSkill(private val context: Context) {
                     0
                 )
                 android.util.Log.d("VolumeSkill", "成功设置 stream=$streamType 静音=$on")
-                success = true
+                break  // ★ 修复：第一个成功的流即停止（success 变量本就未被读取，直接移除）
             } catch (e: Exception) {
                 android.util.Log.w("VolumeSkill", "stream=$streamType 静音失败: ${e.message}")
             }

@@ -25,7 +25,7 @@ class PlaceManagerActivity : AppCompatActivity() {
         setContentView(binding.root)
 
         // 初始化 PlaceMatcher（会加载内置+自定义词库）
-        placeMatcher = PlaceMatcher(this)
+        placeMatcher = PlaceMatcher.getInstance(this)
 
         // 返回按钮
         binding.btnBack.setOnClickListener {

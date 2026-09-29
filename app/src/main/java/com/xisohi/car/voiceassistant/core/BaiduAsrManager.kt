@@ -216,6 +216,10 @@ class BaiduAsrManager private constructor(private val context: Context) {
         } catch (e: java.net.UnknownHostException) {
             Log.w(TAG, "配置验证失败: 无法解析主机名（网络不通）")
             VerifyResult.NetworkError("无法连接服务器，请检查网络")
+        } catch (e: org.json.JSONException) {
+            // ★ 修复：响应 200 但不是合法 JSON（HTTP 代理拦截页等）不应被当成"网络错误"误导用户
+            Log.w(TAG, "配置验证响应解析失败（非合法 JSON）: ${e.message}")
+            VerifyResult.AuthError("服务响应格式异常: ${e.message}")
         } catch (e: Exception) {
             Log.w(TAG, "配置验证异常: ${e.message}")
             VerifyResult.NetworkError("网络错误: ${e.message}")
@@ -413,9 +417,12 @@ class BaiduAsrManager private constructor(private val context: Context) {
             }
         }
         if (isRecognizing) {
-            Log.w(TAG, "正在识别中，忽略重复调用")
-            callback(null)  // 通知上层启动失败，避免上层白等15秒超时
-            return
+            // ★ 修复：不能直接 callback(null) 返回——那会让上层误判为"网络失败"并累加失败计数。
+            // 上一次会话可能因上层 6 秒超时先回退离线而残留（百度 SDK 内部 20 秒超时才自收尾），
+            // 此时 isRecognizing 仍为 true，若忽略本次调用，后续所有在线识别都会被拒。
+            // 正确做法：先 cancel() 释放旧会话（不回调旧 callback），再正常启动新会话。
+            Log.w(TAG, "正在识别中，先取消上一次会话再启动")
+            cancel()
         }
 
         recognitionCallback = callback

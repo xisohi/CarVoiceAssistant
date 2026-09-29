@@ -4,6 +4,7 @@ import android.content.Context
 import android.media.AudioManager
 import android.util.Log
 import android.view.KeyEvent
+import kotlin.jvm.Synchronized
 
 /**
  * 音频焦点管理器
@@ -45,7 +46,7 @@ class AudioFocusManager(private val context: Context) {
      *
      * 双保险：先申请音频焦点，再尝试直接改音量。
      */
-    fun muteMediaVolume() {
+    @Synchronized fun muteMediaVolume() {
         try {
             val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
@@ -88,7 +89,7 @@ class AudioFocusManager(private val context: Context) {
      * 恢复媒体音量到唤醒前的原始值。
      * 识别完成后或 TTS 播报前调用。
      */
-    fun restoreMediaVolume() {
+    @Synchronized fun restoreMediaVolume() {
         try {
             val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
@@ -163,7 +164,7 @@ class AudioFocusManager(private val context: Context) {
      * 2. 失败再试 adjustStreamVolume（调整方式，权限要求可能更低）
      * 3. 再失败就发送音量按键（模拟用户按音量键）
      */
-    fun setVolume(volume: Int) {
+    @Synchronized fun setVolume(volume: Int) {
         val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
         val maxVolume = getMaxVolume()
         val targetVolume = volume.coerceIn(0, maxVolume)

@@ -19,7 +19,7 @@ import kotlin.math.min
  *
  * 解决离线识别小模型词汇量有限，生僻字（如"圩"）只能识别成同音字的问题
  */
-class PlaceMatcher(context: Context) {
+class PlaceMatcher private constructor(context: Context) {
 
     data class Place(
         val name: String,      // 正确地名
@@ -305,5 +305,21 @@ class PlaceMatcher(context: Context) {
         }
 
         return dp[m][n]
+    }
+
+    companion object {
+        @Volatile
+        private var instance: PlaceMatcher? = null
+
+        /**
+         * 获取单例（线程安全）。
+         * 服务与地名管理页共享同一份词库：设置页增删地名后服务内立即生效，
+         * 也避免每次打开管理页都重新读取文件并做拼音转换。
+         */
+        fun getInstance(context: Context): PlaceMatcher {
+            return instance ?: synchronized(this) {
+                instance ?: PlaceMatcher(context.applicationContext).also { instance = it }
+            }
+        }
     }
 }
