@@ -924,9 +924,22 @@ class VoiceAssistantService : Service() {
         onlineTimeoutRunnable = timeoutRunnable
         mainHandler.postDelayed(timeoutRunnable, ONLINE_RECOGNITION_TIMEOUT_MS)
 
+        // ★ partial 心跳：百度仍在出中间结果（用户开口晚/说话慢/VAD静默判定延迟）时
+        // 重置超时计时。只有"6秒内完全无任何回调"才判超时回退，避免误判"网络不好"。
+        baiduAsrManager.onPartialListener = {
+            mainHandler.post {
+                if (!onlineResultReceived) {
+                    onlineTimeoutRunnable?.let { mainHandler.removeCallbacks(it) }
+                    mainHandler.postDelayed(timeoutRunnable, ONLINE_RECOGNITION_TIMEOUT_MS)
+                }
+            }
+        }
+
         // 百度自己开麦、自己 VAD、自己识别
         baiduAsrManager.startStreamingRecognition { result ->
             mainHandler.post {
+                // 识别结束：清理 partial 心跳，防止迟到事件重置超时
+                baiduAsrManager.onPartialListener = null
                 // 已经收到结果（或超时已处理），不再重复处理
                 if (onlineResultReceived) return@post
                 onlineResultReceived = true

@@ -97,6 +97,9 @@ class BaiduAsrManager private constructor(private val context: Context) {
     // 百度检测到说话结束的回调（asr.end 事件）
     // 用于流式识别：百度自己判 VAD 结束，通知上层停止录音
     private var onSpeechEndListener: (() -> Unit)? = null
+    // ★ 识别中间结果心跳（asr.partial 非最终结果时触发）：
+    // 上层用它重置"无推进超时"，避免用户开口晚/百度VAD静默延迟导致的误判超时
+    @Volatile var onPartialListener: (() -> Unit)? = null
 
     /**
      * 设置说话结束监听器（百度检测到 asr.end 时调用）
@@ -514,6 +517,7 @@ class BaiduAsrManager private constructor(private val context: Context) {
         handler.removeCallbacks(timeoutRunnable)
         isRecognizing = false
         recognitionCallback = null
+        onPartialListener = null
         Log.i(TAG, "百度语音识别已取消")
         // ★ 修复：send() 可能阻塞（SDK 内部同步清理音频资源，旧版 SDK 可能等数百毫秒）。
         // 取消常被超时分支在主线程调用（VoiceAssistantService 的 timeoutRunnable），
@@ -564,6 +568,9 @@ class BaiduAsrManager private constructor(private val context: Context) {
                             if (isFinal) {
                                 lastFinalResult = results[0]
                                 Log.i(TAG, "保存最终识别结果: $lastFinalResult")
+                            } else {
+                                // ★ 中间结果心跳：通知上层识别仍在推进（重置上层超时）
+                                onPartialListener?.invoke()
                             }
                         }
                     }
@@ -571,6 +578,7 @@ class BaiduAsrManager private constructor(private val context: Context) {
                 "asr.finish" -> {
                     // 识别结束（可能成功或失败）
                     handler.removeCallbacks(timeoutRunnable)
+                    onPartialListener = null
                     val result = parseRecogResult(params)
                     if (result != null) {
                         val hasError = result.third
