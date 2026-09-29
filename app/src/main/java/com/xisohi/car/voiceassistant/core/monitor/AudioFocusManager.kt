@@ -107,6 +107,9 @@ class AudioFocusManager(private val context: Context) {
                     Log.d(TAG, "✅ 已直接恢复媒体音量到: $originalMediaVolume")
                 } catch (e: SecurityException) {
                     Log.w(TAG, "⚠️ 车机系统禁止直接改音量: ${e.message}")
+                    // ★ 修复：恢复失败不清状态——isMediaVolumeMuted 保持 true、originalMediaVolume 保留，
+                    // 下次 restoreMediaVolume() 会重试恢复；否则"假装已恢复"但音量实际仍为 0
+                    return
                 }
                 isMediaVolumeMuted = false
                 originalMediaVolume = -1

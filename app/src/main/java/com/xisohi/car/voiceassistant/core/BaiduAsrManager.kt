@@ -503,11 +503,21 @@ class BaiduAsrManager private constructor(private val context: Context) {
     fun cancel() {
         if (!isRecognizing) return
         handler.removeCallbacks(timeoutRunnable)
+        isRecognizing = false
+        recognitionCallback = null
+        Log.i(TAG, "百度语音识别已取消")
+        // ★ 修复：send() 可能阻塞（SDK 内部同步清理音频资源，旧版 SDK 可能等数百毫秒）。
+        // 取消常被超时分支在主线程调用（VoiceAssistantService 的 timeoutRunnable），
+        // 若同步 send 会卡住 handleOnlineFailure / TTS 播报，故移到后台线程执行。
         try {
-            asrManager?.send("asr.cancel", null, null, 0, 0)
-            isRecognizing = false
-            recognitionCallback = null
-            Log.i(TAG, "百度语音识别已取消")
+            val m = asrManager ?: return
+            Thread {
+                try {
+                    m.send("asr.cancel", null, null, 0, 0)
+                } catch (e: Exception) {
+                    Log.e(TAG, "发送取消指令失败: ${e.message}")
+                }
+            }.start()
         } catch (e: Exception) {
             Log.e(TAG, "取消百度语音识别失败: ${e.message}", e)
         }

@@ -88,6 +88,7 @@ class VolumeSkill(private val context: Context) {
     }
 
     private fun setMute(on: Boolean): ExecutionResult {
+        var success = false
         for (streamType in STREAMS_TO_TRY) {
             try {
                 audioManager.adjustStreamVolume(
@@ -96,13 +97,18 @@ class VolumeSkill(private val context: Context) {
                     0
                 )
                 android.util.Log.d("VolumeSkill", "成功设置 stream=$streamType 静音=$on")
-                break  // ★ 修复：第一个成功的流即停止（success 变量本就未被读取，直接移除）
+                success = true
+                break  // ★ 修复：第一个成功的流即停止；success 用于向用户如实报告结果
             } catch (e: Exception) {
                 android.util.Log.w("VolumeSkill", "stream=$streamType 静音失败: ${e.message}")
             }
         }
         
-        return ExecutionResult(true, if (on) "已静音" else "已取消静音")
+        return if (success) {
+            ExecutionResult(true, if (on) "已静音" else "已取消静音")
+        } else {
+            ExecutionResult(false, if (on) "静音失败，车机不支持" else "取消静音失败，车机不支持")
+        }
     }
     
     /**

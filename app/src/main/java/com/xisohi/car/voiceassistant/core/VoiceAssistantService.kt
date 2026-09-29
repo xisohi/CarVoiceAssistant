@@ -28,6 +28,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
 import android.media.ToneGenerator
 import android.media.AudioManager
@@ -1004,14 +1005,26 @@ class VoiceAssistantService : Service() {
         }
         recognitionJob = scope.launch(Dispatchers.IO, start = CoroutineStart.LAZY) {
             // 使用自由听写模式（不限制 Grammar 词表）
-            val recognizer = SpeechRecognizer.create(modelDir)
+            val recognizer = try {
+                SpeechRecognizer.create(modelDir)
+            } catch (e: Exception) {
+                // ★ 兜底：create 抛异常（模型损坏/资源不足）也必须复位互斥标志并恢复唤醒，
+                // 否则 offlineRecognitionActive 永久为 true，后续所有离线识别被拦截
+                LogUtils.e("VoiceService", "创建离线识别器失败: ${e.message}", e)
+                offlineRecognitionActive = false
+                withContext(Dispatchers.Main) { resumeWake() }
+                return@launch
+            }
             val minBuf = AudioRecord.getMinBufferSize(
                 SpeechRecognizer.SAMPLE_RATE.toInt(),
                 AudioFormat.CHANNEL_IN_MONO,
                 AudioFormat.ENCODING_PCM_16BIT
             )
             if (minBuf <= 0) {
-                recognizer.release()
+                // ★ 修复：此 return@launch 在主循环 try-finally 之前，finally 不会执行，
+                // 必须显式复位互斥标志，否则后续所有离线识别被永久拦截（与 modelDir==null 同类泄漏）
+                offlineRecognitionActive = false
+                try { recognizer.release() } catch (_: Exception) {}
                 withContext(Dispatchers.Main) { resumeWake() }
                 return@launch
             }
@@ -1743,6 +1756,10 @@ class VoiceAssistantService : Service() {
         instance = null
         currentState = State.IDLE
         recognitionJob?.cancel()
+        // ★ 修复：cancel() 只是标记，协程可能正阻塞在 record.read()/feed() 中不会立即退出；
+        // 限时等待其退出（上限 1.5s），避免随后 wakeWordEngine.close()/releaseCachedModel()
+        // 与仍在运行的协程并发访问已释放的原生 ONNX/sherpa 资源导致崩溃
+        runBlocking { withTimeoutOrNull(1500L) { recognitionJob?.join() } }
         scope.cancel()
         // 注意顺序：先停止唤醒线程（会等待线程结束），再关闭 ONNX session
         // 防止线程还在访问已关闭的 session 导致崩溃
@@ -1860,39 +1877,5 @@ class VoiceAssistantService : Service() {
             }
         }
         carWakeupReceiver = null
-    }
-
-    /**
-     * 判断 App 是否在前台
-     */
-    private fun isAppForeground(): Boolean {
-        return try {
-            val am = getSystemService(android.content.Context.ACTIVITY_SERVICE) as android.app.ActivityManager
-            val runningApp = am.runningAppProcesses?.firstOrNull { it.processName == packageName }
-            runningApp?.importance == android.app.ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
-        } catch (e: Exception) {
-            false
-        }
-    }
-
-    /**
-     * 拉起主界面（通过唤醒广播触发时调用）
-     */
-    private fun launchMainActivity() {
-        try {
-            val intent = packageManager.getLaunchIntentForPackage(packageName)?.apply {
-                addFlags(
-                    android.content.Intent.FLAG_ACTIVITY_NEW_TASK or
-                            android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
-                            android.content.Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED
-                )
-            }
-            if (intent != null) {
-                startActivity(intent)
-                LogUtils.i("VoiceService", "已通过唤醒广播拉起主界面")
-            }
-        } catch (e: Exception) {
-            LogUtils.e("VoiceService", "拉起主界面失败: ${e.message}")
-        }
     }
 }

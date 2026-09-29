@@ -3,12 +3,12 @@ package com.xisohi.car.voiceassistant
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.os.Handler
-import android.os.Looper
 import android.util.Log
-import com.xisohi.car.voiceassistant.core.FloatViewService
+import androidx.work.ExistingWorkPolicy
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkManager
+import com.xisohi.car.voiceassistant.core.AutoStartWorker
 import com.xisohi.car.voiceassistant.core.LogUtils
-import com.xisohi.car.voiceassistant.core.VoiceAssistantService
 
 class BootReceiver : BroadcastReceiver() {
 
@@ -16,6 +16,7 @@ class BootReceiver : BroadcastReceiver() {
         private const val TAG = "BootReceiver"
         private const val PREFS_NAME = "voice_assistant_prefs"
         private const val KEY_AUTO_START = "auto_start_on_boot"
+        private const val BOOT_WORK_NAME = "boot_start_service"
 
         /**
          * 设置 WorkManager 周期性自启动检查
@@ -47,15 +48,21 @@ class BootReceiver : BroadcastReceiver() {
         }
 
         // 只做一件事：启动前台服务（延迟 8 秒，等系统完全就绪）
-        LogUtils.d(TAG, "延迟 8000ms 后启动前台服务...")
-        Handler(Looper.getMainLooper()).postDelayed({
-            try {
-                VoiceAssistantService.start(context)
-                LogUtils.i(TAG, "已启动语音助手服务")
-                scheduleAutoStartCheck(context)
-            } catch (e: Exception) {
-                LogUtils.e(TAG, "自启失败: ${e.message}", e)
-            }
-        }, 8000L)
+        // ★ 修复：BroadcastReceiver.onReceive() 返回后进程随时可能被杀，Handler.postDelayed(8s) 不可靠；
+        // 改用 WorkManager 一次性延迟任务（持久化，进程被杀也会在延迟后可靠执行），
+        // 复用 AutoStartWorker 的启动逻辑（检查服务状态 + 启动服务 + 补悬浮窗）。
+        LogUtils.d(TAG, "安排 8 秒后启动前台服务（WorkManager 一次性任务）...")
+        try {
+            val workRequest = OneTimeWorkRequestBuilder<AutoStartWorker>()
+                .setInitialDelay(8, java.util.concurrent.TimeUnit.SECONDS)
+                .build()
+            WorkManager.getInstance(context).enqueueUniqueWork(
+                BOOT_WORK_NAME,
+                ExistingWorkPolicy.REPLACE,  // 同一次开机重复广播时替换，避免堆积
+                workRequest
+            )
+        } catch (e: Exception) {
+            LogUtils.e(TAG, "安排自启失败: ${e.message}", e)
+        }
     }
 }
