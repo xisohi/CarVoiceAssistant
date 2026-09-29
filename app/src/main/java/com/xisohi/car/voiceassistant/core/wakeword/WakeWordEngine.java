@@ -128,6 +128,11 @@ public class WakeWordEngine {
     private int audioSamplesNeeded;
     private int dscnnMelTime = 50;
 
+    // ★ 复用缓冲（每帧尺寸固定，避免唤醒线程长期运行每帧 new 数组频繁触发 GC）
+    private float[] reuseFloatAudio = null;   // 长度 = audio.length（正常固定为 audioSamplesNeeded）
+    private float[][][] reuseDscnnInput = null; // [1][dscnnMelTime][N_MELS]，构造后尺寸固定
+    private float[] reuseFlatInput = null;    // [dscnnMelTime * N_MELS]
+
     public int getMelFramesNeeded() { return melFramesNeeded; }
     public int getAudioSamplesNeeded() { return audioSamplesNeeded; }
 
@@ -377,10 +382,14 @@ public class WakeWordEngine {
 
         try {
             // 1. Convert to float（唤醒阶段使用 audioGain，与 asrGain 无关）
-            float[] floatAudio = new float[audio.length];
-            for (int i = 0; i < audio.length; i++) {
-                floatAudio[i] = (float) audio[i] * audioGain;
+            // ★ 复用缓冲：输入长度正常固定（audioSamplesNeeded），仅在长度变化时扩容
+            if (reuseFloatAudio == null || reuseFloatAudio.length != audio.length) {
+                reuseFloatAudio = new float[audio.length];
             }
+            for (int i = 0; i < audio.length; i++) {
+                reuseFloatAudio[i] = (float) audio[i] * audioGain;
+            }
+            float[] floatAudio = reuseFloatAudio;
 
             // 2. Mel spectrogram
             OnnxTensor melIn = OnnxTensor.createTensor(env,
@@ -410,7 +419,11 @@ public class WakeWordEngine {
             }
 
             int melStart = Math.max(0, frames - dscnnMelTime);
-            float[][][] dscnnInput = new float[1][dscnnMelTime][N_MELS];
+            // ★ 复用缓冲：dscnnMelTime / N_MELS 构造后固定，直接复用避免每帧 new
+            if (reuseDscnnInput == null) {
+                reuseDscnnInput = new float[1][dscnnMelTime][N_MELS];
+            }
+            float[][][] dscnnInput = reuseDscnnInput;
             for (int f = 0; f < dscnnMelTime; f++) {
                 int srcF = melStart + f;
                 if (srcF >= 0 && srcF < frames) {
@@ -418,8 +431,11 @@ public class WakeWordEngine {
                 }
             }
 
-            // Flatten to 1D
-            float[] flatInput = new float[dscnnMelTime * N_MELS];
+            // Flatten to 1D（★ 复用缓冲，尺寸固定）
+            if (reuseFlatInput == null) {
+                reuseFlatInput = new float[dscnnMelTime * N_MELS];
+            }
+            float[] flatInput = reuseFlatInput;
             for (int f = 0; f < dscnnMelTime; f++) {
                 System.arraycopy(dscnnInput[0][f], 0, flatInput, f * N_MELS, N_MELS);
             }

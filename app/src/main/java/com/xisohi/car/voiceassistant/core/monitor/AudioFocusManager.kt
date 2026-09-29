@@ -33,6 +33,12 @@ class AudioFocusManager(private val context: Context) {
     /** 音频焦点申请结果 */
     private var audioFocusGranted = false
 
+    /** 音频焦点变化监听（空实现：焦点变化不主动处理，音量由直接修改兜底）。
+     *  部分车机 ROM 对 requestAudioFocus(null,...) 处理异常，传非 null listener 更稳妥。 */
+    private val focusListener = object : AudioManager.OnAudioFocusChangeListener {
+        override fun onAudioFocusChange(focusChange: Int) {}
+    }
+
     /**
      * 降低媒体音量到 0（音乐、导航等），专注听用户说话，提高识别率。
      * 第一次调用时保存原始音量，后续调用不会重复保存。
@@ -46,7 +52,7 @@ class AudioFocusManager(private val context: Context) {
             // === 第一步：申请音频焦点（标准 API，音乐 App 会自动降低音量） ===
             if (!audioFocusGranted) {
                 val result = audioManager.requestAudioFocus(
-                    null,
+                    focusListener,
                     AudioManager.STREAM_MUSIC,
                     AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK
                 )
@@ -88,7 +94,7 @@ class AudioFocusManager(private val context: Context) {
 
             // === 第一步：放弃音频焦点 ===
             if (audioFocusGranted) {
-                audioManager.abandonAudioFocus(null)
+                audioManager.abandonAudioFocus(focusListener)
                 audioFocusGranted = false
                 Log.d(TAG, "✅ 已放弃音频焦点，音乐 App 应恢复正常音量")
             }

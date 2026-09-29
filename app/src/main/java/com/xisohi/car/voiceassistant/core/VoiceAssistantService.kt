@@ -20,10 +20,12 @@ import com.xisohi.car.voiceassistant.R
 import com.xisohi.car.voiceassistant.core.wakeword.WakeWordEngine  // 使用您指定的包
 import com.xisohi.car.voiceassistant.download.ModelManager
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -796,6 +798,8 @@ class VoiceAssistantService : Service() {
         }
         // 无有效缓存 → IO 线程同步探测后回到主线程决策
         scope.launch(Dispatchers.IO) {
+            // ★ 服务销毁时 scope 会 cancel 本协程，此处显式检查避免探测期间服务已销毁
+            if (!isActive) return@launch
             val canReachInternet = networkMonitor.probeNow()
             withContext(Dispatchers.Main) {
                 decideRecognitionPath(canReachInternet)
@@ -964,7 +968,7 @@ class VoiceAssistantService : Service() {
             resumeWake()
             return
         }
-        recognitionJob = scope.launch(Dispatchers.IO) {
+        recognitionJob = scope.launch(Dispatchers.IO, start = CoroutineStart.LAZY) {
             // 使用自由听写模式（不限制 Grammar 词表）
             val recognizer = SpeechRecognizer.create(modelDir)
             val minBuf = AudioRecord.getMinBufferSize(
@@ -1269,12 +1273,17 @@ class VoiceAssistantService : Service() {
             }
             withContext(Dispatchers.Main) { handleText(finalText) }
         }
+        // ★ LAZY 启动：先完成赋值再 start，确保协程 finally 里
+        // recognitionJob = null 不会与赋值竞态（修复：快速完成时误清新 job）
+        recognitionJob!!.start()
     }
 
     /**
      * 对 PCM 音频数据应用增益放大（识别阶段专用）
-     * 使用独立的 asrGain（默认 1.5x），比唤醒增益（默认 4.5x）保守，
-     * 避免近场说话时波形削顶失真，反而降低 sherpa-onnx 识别率。
+     * 使用独立的 asrGain（默认 8.0x，可在设置页调整，范围 5.0~10.0）。
+     * 注意：当前默认 8.0 高于唤醒增益（默认 4.5x），
+     * 若近场说话波形削顶失真、识别率下降，建议调低 asrGain。
+     * 保存的 WAV 是增益后的音频（与喂给识别器的一致），回听音量偏大属正常。
      */
     private fun applyGain(buffer: ShortArray, length: Int) {
         val gain = WakeWordEngine.getAsrGain()
@@ -1543,6 +1552,16 @@ class VoiceAssistantService : Service() {
                             if (!ttsEngine.isReady) {
                                 currentState = State.IDLE
                                 resumeWake()
+                            } else {
+                                // ★ 超时兜底：TTS播报后5秒内未收到 onSpeakDone 自动恢复唤醒监听
+                                // 防止TTS引擎异常导致 onSpeakDone 不回调，服务卡在 SPEAKING
+                                mainHandler.postDelayed({
+                                    if (currentState != State.IDLE) {
+                                        LogUtils.w("VoiceService", "天气播报超时（5秒未收到onSpeakDone），自动恢复唤醒监听")
+                                        currentState = State.IDLE
+                                        resumeWake()
+                                    }
+                                }, 5000)
                             }
                         }
                     }
@@ -1591,6 +1610,15 @@ class VoiceAssistantService : Service() {
                         if (!ttsEngine.isReady) {
                             currentState = State.IDLE
                             resumeWake()
+                        } else {
+                            // ★ 超时兜底：TTS播报后5秒内未收到 onSpeakDone 自动恢复唤醒监听
+                            mainHandler.postDelayed({
+                                if (currentState != State.IDLE) {
+                                    LogUtils.w("VoiceService", "油价播报超时（5秒未收到onSpeakDone），自动恢复唤醒监听")
+                                    currentState = State.IDLE
+                                    resumeWake()
+                                }
+                            }, 5000)
                         }
                     }
                 } catch (e: Exception) {
@@ -1753,6 +1781,8 @@ class VoiceAssistantService : Service() {
                 if (!isRunning) {
                     LogUtils.i("VoiceService", "服务未运行，通过唤醒广播启动服务")
                     try {
+                        // ★ onReceive 的 this 是 BroadcastReceiver（非 Service），
+                        // 动态注册时 context 参数就是 Service 实例本身，用它启动服务
                         val serviceIntent = android.content.Intent(context, VoiceAssistantService::class.java)
                         serviceIntent.action = ACTION_START
                         if (android.os.Build.VERSION.SDK_INT >= 26) {

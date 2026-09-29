@@ -257,8 +257,10 @@ class SpeechRecognizer private constructor(
             // 若音频不足就 decode，C++ 层 features.cc:GetFrames 会打印
             // "%d + %d > %d" 并调用 SHERPA_ONNX_EXIT(-1) → abort 整个进程（闪退）。
             // isReady() 返回 false 表示帧数不足，此时应等待更多音频而非解码。
+            // guard 只是防死循环保险，实际次数由 isReady() 门控决定；
+            // 与 finish() 统一上限，避免长音频一次喂入大量 chunk 时提前截断
             var guard = 0
-            while (recognizer.isReady(stream) && guard < 4) {
+            while (recognizer.isReady(stream) && guard < 20) {
                 recognizer.decode(stream)
                 guard++
             }
