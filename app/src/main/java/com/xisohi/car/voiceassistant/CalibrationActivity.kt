@@ -147,12 +147,12 @@ class CalibrationActivity : AppCompatActivity() {
     private fun updateCurrentParams() {
         val threshold = WakeWordEngine.getDetectionThreshold()
         val gain = WakeWordEngine.getAudioGain()
-        // 三档配置：低(gain=3.5,threshold=0.02) / 中(gain=4.5,threshold=0.008) / 高(gain=5.5,threshold=0.001)
-        // 极端值：超过高档范围（gain>5.5 或 threshold<0.001）
-        val isExtreme = (gain > 5.5f || threshold < 0.001f)
+        // 三档配置：低(gain=3.5,threshold=0.25) / 中(gain=4.5,threshold=0.18) / 高(gain=5.5,threshold=0.12)
+        // 极端值：低于低档下限（gain>5.5 或 threshold<0.10，KWS 触发式阈值下限）
+        val isExtreme = (gain > 5.5f || threshold < 0.10f)
         // 推荐范围：gain 3.0~5.5（覆盖低/中/高三档，与 isExtreme>5.5 不重叠）
-        // threshold 0.002~0.05（与 calculatedThreshold.coerceIn 一致，覆盖低档 0.02）
-        val isRecommended = (threshold in 0.002f..0.05f && gain in 3.0f..5.5f)
+        // threshold 0.12~0.30（与 calculatedThreshold.coerceIn 一致，覆盖三档 0.12/0.18/0.25）
+        val isRecommended = (threshold in 0.12f..0.30f && gain in 3.0f..5.5f)
 
         val statusText = when {
             isExtreme -> "⚠️ 当前参数较极端，可能影响校准准确性，建议重置为默认"
@@ -160,7 +160,7 @@ class CalibrationActivity : AppCompatActivity() {
             else -> "⚠️ 当前参数偏离推荐范围，建议重置为默认"
         }
 
-        tvCurrentParams.text = "当前：threshold=${String.format("%.3f", threshold)}, gain=${String.format("%.1f", gain)}x\n$statusText\n推荐：threshold=0.002~0.05, gain=3.0~5.5x（覆盖低/中/高三档）"
+        tvCurrentParams.text = "当前：threshold=${String.format("%.3f", threshold)}, gain=${String.format("%.1f", gain)}x\n$statusText\n推荐：threshold=0.12~0.30, gain=3.0~5.5x（覆盖低/中/高三档）"
     }
 
     private fun showStep() {
@@ -276,7 +276,7 @@ class CalibrationActivity : AppCompatActivity() {
         val silentP95 = if (silentProbs.isNotEmpty()) percentile(silentProbs, 95f) else 0.08f
         val noiseMax = if (noiseProbs.isNotEmpty()) percentile(noiseProbs, 100f) else 0.10f
         calculatedThreshold = maxOf(silentP95 + 0.05f, noiseMax + 0.05f)
-        calculatedThreshold = calculatedThreshold.coerceIn(0.002f, 0.05f)
+        calculatedThreshold = calculatedThreshold.coerceIn(0.12f, 0.30f)
 
         // 计算增益
         val quietAvg = if (quietProbs.isNotEmpty()) quietProbs.average().toFloat() else 0.3f

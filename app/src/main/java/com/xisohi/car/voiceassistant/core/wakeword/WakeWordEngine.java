@@ -56,10 +56,10 @@ public class WakeWordEngine {
     /** 灵敏度档位：0=低, 1=中(默认), 2=高 */
     private static volatile int sensitivityLevel = 1;
     // KWS 是触发式引擎：触发阈值 = KeywordSpotterConfig.keywordsThreshold（ContextGraph 编译期固化）。
-    // 三档预设（对齐官方默认 0.25）：
-    // 低=0.30（保守，误唤醒少）/ 中=0.25（官方默认）/ 高=0.15（灵敏，适合行驶/小声）
+    // 三档预设（KWS 语义重标定，2026-09 用户拍板中档 0.18）：
+    // 低=0.25（官方默认，保守）/ 中=0.18（平衡，默认，车机验证值）/ 高=0.12（灵敏，行驶/小声）
     private static final float[] GAIN_BY_LEVEL = {3.5f, 4.5f, 5.5f};
-    private static final float[] THRESHOLD_BY_LEVEL = {0.30f, 0.25f, 0.15f};
+    private static final float[] THRESHOLD_BY_LEVEL = {0.25f, 0.18f, 0.12f};
     private static final String[] LEVEL_NAMES = {"低", "中", "高"};
     private static volatile float detectionThreshold = THRESHOLD_BY_LEVEL[1];
 
