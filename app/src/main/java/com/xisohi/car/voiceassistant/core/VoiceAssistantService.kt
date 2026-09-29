@@ -123,10 +123,12 @@ class VoiceAssistantService : Service() {
             "com.unisound.intent.action.DO_WAKEUP_DOFUN",  // 点火时确认存在（新增）
             "com.unisound.intent.action.Baios_WAKEUP"      // 360 用的唤醒广播，保留备用
         )
-        private val WAKEUP_ACTIONS: List<String> by lazy {
+        // ★ 完善：改为每次读取（不用 lazy）——lazy 是进程级缓存，保存自定义列表后"重启服务"不会重新读取；
+        // getter 每次访问读 SharedPreferences，服务重启（stop+start）后 onCreate 重新注册接收器即生效
+        private val WAKEUP_ACTIONS: List<String> get() {
             val custom = instance?.getSharedPreferences("voice_assistant_prefs", MODE_PRIVATE)
                 ?.getStringSet(KEY_CAR_WAKEUP_ACTIONS, null)
-            if (custom.isNullOrEmpty()) DEFAULT_WAKEUP_ACTIONS else custom.toList()
+            return if (custom.isNullOrEmpty()) DEFAULT_WAKEUP_ACTIONS else custom.toList()
         }
 
         // 本次录音的 RMS 峰值（设置页显示这个值，车机上看不到日志，峰值更有意义）
@@ -157,7 +159,18 @@ class VoiceAssistantService : Service() {
         fun stop(context: Context) {
             instance?.stopSelf()
         }
+
+        /**
+         * ★ 完善：重载意图规则（调试/OTA 热更新 intents.json 后调用，无需重启服务）。
+         * @return true=重载成功；false=服务未运行或配置损坏（保持旧规则）
+         */
+        fun reloadIntentRules(): Boolean = instance?.reloadIntentRules() ?: false
     }
+
+    /**
+     * ★ 完善：重载意图规则（由 MainActivity 经 companion 转发调用；intentParser 在 onCreate 初始化）
+     */
+    fun reloadIntentRules(): Boolean = intentParser.reloadRules()
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val mainHandler = Handler(Looper.getMainLooper())

@@ -688,5 +688,77 @@
                     android:layout_marginTop="1dp" />
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
+        <!-- ============ 车机适配 / 调试卡 ============ -->
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="3dp"
+            app:cardCornerRadius="5dp"
+            app:contentPadding="3dp">
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="车机适配 / 调试"
+                    android:textSize="11sp"
+                    android:textStyle="bold" />
+                <com.google.android.material.textfield.TextInputLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:hint="自定义车机唤醒广播（逗号分隔，留空=内置7个）"
+                    app:boxBackgroundMode="outline"
+                    app:boxStrokeWidth="1dp"
+                    app:boxStrokeWidthFocused="1dp">
+                    <com.google.android.material.textfield.TextInputEditText
+                        android:id="@+id/etCarWakeupActions"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:inputType="textMultiLine"
+                        android:textSize="9sp"
+                        android:paddingVertical="3dp" />
+                </com.google.android.material.textfield.TextInputLayout>
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginTop="2dp">
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnSaveCarWakeupActions"
+                        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                        android:layout_width="0dp"
+                        android:layout_height="24dp"
+                        android:layout_weight="1"
+                        android:text="保存广播"
+                        android:textSize="9sp"
+                        android:layout_marginEnd="2dp"
+                        android:minWidth="0dp"
+                        android:minHeight="0dp"
+                        android:paddingVertical="0dp" />
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnReloadIntentRules"
+                        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                        android:layout_width="0dp"
+                        android:layout_height="24dp"
+                        android:layout_weight="1"
+                        android:text="重载意图规则"
+                        android:textSize="9sp"
+                        android:minWidth="0dp"
+                        android:minHeight="0dp"
+                        android:paddingVertical="0dp" />
+                </LinearLayout>
+                <TextView
+                    android:id="@+id/tvCarWakeupHint"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="保存广播后重启服务生效；重载意图规则立即生效（读取 filesDir/va/config/intents.json，无则用内置）"
+                    android:textSize="8sp"
+                    android:textColor="#9E9E9E"
+                    android:layout_marginTop="2dp" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
     </LinearLayout>
 </ScrollView>

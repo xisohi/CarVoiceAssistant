@@ -44,6 +44,7 @@ class MainActivity : AppCompatActivity() {
         private const val KEY_MANUAL_THRESHOLD = "wake_threshold_override"
         private const val KEY_MANUAL_GAIN = "wake_gain_override"
         private const val KEY_MANUAL_ASR_GAIN = "asr_gain_override"
+        private const val KEY_CAR_WAKEUP_ACTIONS = "car_wakeup_actions"
     }
 
     private lateinit var binding: ActivityMainBinding
@@ -181,6 +182,25 @@ class MainActivity : AppCompatActivity() {
         binding.btnLogViewer.setOnClickListener {
             startActivity(android.content.Intent(this, LogViewerActivity::class.java))
         }
+
+        // 车机适配：自定义唤醒广播 + 重载意图规则
+        binding.etCarWakeupActions.setText(
+            prefs.getStringSet(KEY_CAR_WAKEUP_ACTIONS, null)?.joinToString(",") ?: ""
+        )
+        binding.btnSaveCarWakeupActions.setOnClickListener {
+            val raw = binding.etCarWakeupActions.text?.toString()?.trim().orEmpty()
+            val actions = raw.split(",", "，", " ", "\n").map { it.trim() }.filter { it.isNotEmpty() }
+            prefs.edit().apply {
+                if (actions.isEmpty()) remove(KEY_CAR_WAKEUP_ACTIONS)
+                else putStringSet(KEY_CAR_WAKEUP_ACTIONS, actions.toSet())
+            }.apply()
+            toast(if (actions.isEmpty()) "已恢复内置 7 个唤醒广播，重启服务生效" else "已保存 ${actions.size} 个唤醒广播，重启服务生效")
+        }
+        binding.btnReloadIntentRules.setOnClickListener {
+            val ok = VoiceAssistantService.reloadIntentRules()
+            toast(if (ok) "意图规则已重载" else "重载失败（服务未运行或配置损坏），保持旧规则")
+        }
+
         // 初始化灵敏度显示（如果有手动参数，显示手动；否则显示当前引擎参数）
         val savedThreshold = prefs.getFloat(KEY_MANUAL_THRESHOLD, -1f)
         val savedGain = prefs.getFloat(KEY_MANUAL_GAIN, -1f)

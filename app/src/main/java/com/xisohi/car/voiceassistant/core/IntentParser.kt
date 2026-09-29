@@ -36,9 +36,21 @@ private data class IntentRule(
  *  - 旧 JSON 不填 priority 时默认 0，等价于原数组顺序，行为不变。
  *  - 建议：具体规则（完全匹配/固定词）优先级高；通配规则（"打开XX"/"去XX"）优先级低。
  */
-class IntentParser(context: Context) {
+class IntentParser(private val context: Context) {
 
-    private val rules: List<IntentRule> = loadRules(context)
+    private var rules: List<IntentRule> = loadRules(context)
+
+    /**
+     * ★ 完善：热重载意图规则（filesDir/va/config/intents.json 更新后调用，无需重启服务）。
+     * 加载失败（配置损坏 → 空规则列表）时保留旧规则。
+     * @return true=重载成功
+     */
+    fun reloadRules(): Boolean {
+        val newRules = loadRules(context)
+        if (newRules.isEmpty()) return false
+        rules = newRules
+        return true
+    }
 
     /** 解析文本，命中返回 [VoiceIntent]，否则 null */
     fun parse(text: String): VoiceIntent? {

@@ -65,6 +65,7 @@ class AppLaunchSkill(
         Triple("高德地图", "com.autonavi.minimap", false),
         Triple("百度地图", "com.baidu.BaiduMap", false),
         Triple("腾讯地图", "com.tencent.map", false),
+        Triple("腾讯地图车机版", "com.tencent.wecarnavi", false),
     )
 
     /** 设置项到 Settings Action 的映射 */
