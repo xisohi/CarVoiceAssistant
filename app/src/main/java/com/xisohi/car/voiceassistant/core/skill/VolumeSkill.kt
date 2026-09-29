@@ -4,6 +4,7 @@ import android.content.Context
 import android.media.AudioManager
 import android.view.KeyEvent
 import com.xisohi.car.voiceassistant.core.ExecutionResult
+import com.xisohi.car.voiceassistant.core.NumberUtils
 import com.xisohi.car.voiceassistant.core.VoiceIntent
 
 /**
@@ -35,7 +36,10 @@ class VolumeSkill(private val context: Context) {
     }
 
     private fun setVolume(raw: String?): ExecutionResult {
-        val value = raw?.replace("百分之", "")?.replace("%", "")?.toIntOrNull()
+        // ★ 支持汉字数字："百分之五十"/"五十" → 50（识别结果几乎都是汉字数字）
+        val cleaned = raw?.replace("百分之", "")?.replace("%", "")
+            ?: return ExecutionResult(false, "没听清音量数值")
+        val value = cleaned.toIntOrNull() ?: NumberUtils.chineseToInt(cleaned)
             ?: return ExecutionResult(false, "没听清音量数值")
         
         var success = false

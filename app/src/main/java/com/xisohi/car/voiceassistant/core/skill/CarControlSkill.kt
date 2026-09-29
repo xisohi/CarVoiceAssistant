@@ -1,6 +1,7 @@
 package com.xisohi.car.voiceassistant.core.skill
 
 import com.xisohi.car.voiceassistant.core.ExecutionResult
+import com.xisohi.car.voiceassistant.core.NumberUtils
 import com.xisohi.car.voiceassistant.core.VoiceIntent
 
 /**
@@ -59,7 +60,9 @@ class CarControlSkill {
     }
 
     private fun climateTemp(raw: String): ExecutionResult {
-        val degree = raw.replace("度", "").toIntOrNull()
+        // ★ 支持汉字数字："二十五度"/"四十二度" → 25/42（识别结果几乎都是汉字数字）
+        val degreeRaw = raw.replace("度", "")
+        val degree = degreeRaw.toIntOrNull() ?: NumberUtils.chineseToInt(degreeRaw)
             ?: return ExecutionResult(false, "没听清温度数值")
         val p = provider
         return if (p != null && p.setTemperature(degree)) {
