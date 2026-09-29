@@ -62,7 +62,10 @@ class IntentParser(context: Context) {
                         } catch (_: Exception) {
                         }
                     }
-                    return VoiceIntent(rule.id, rule.action, params)
+                    return VoiceIntent(rule.id, rule.action, params).also {
+                        // ★ 实机排查：打印命中规则与槽位（验证 value 捕获内容，如"百分之五十"）
+                        LogUtils.d("IntentParser", "命中规则 ${rule.id}, params=$params")
+                    }
                 }
             }
         }

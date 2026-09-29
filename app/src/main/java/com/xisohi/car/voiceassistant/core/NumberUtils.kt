@@ -18,6 +18,9 @@ object NumberUtils {
     /**
      * 汉字数字转 Int（支持 0~999，含"十/百"组合）。
      * 例：五→5，五十→50，二十五→25，十五→15，百→100，两百→200，一百零五→105。
+     *
+     * 注意：不含"百分之"前缀和"度"等单位——这些由调用方剥离后再传入
+     * （如 VolumeSkill 先 replace("百分之","")，CarControlSkill 先 replace("度","")）。
      * 非法输入（含非数字汉字、阿拉伯数字混入）返回 null。
      */
     fun chineseToInt(s: String): Int? {
