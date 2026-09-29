@@ -369,6 +369,7 @@ class BaiduAsrManager private constructor(private val context: Context) {
             isRecognizing = false
             recognitionCallback = null
             onPartialListener = null
+            lastFailedNoSpeech = false
 
             if (wasRecognizing && oldManager != null) {
                 try {
