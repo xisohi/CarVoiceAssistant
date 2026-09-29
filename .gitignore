@@ -105,3 +105,6 @@ output-metadata.json
 
 # 离线模型包（models.zip 由用户自行上传服务器，App 运行时引导下载，不需要进 git）
 model_package/
+
+# 本地下载/取证临时目录（模型下载包、解压产物、AAR classes.jar 提取件）
+_download/
