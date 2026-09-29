@@ -557,8 +557,13 @@ class VoiceAssistantService : Service() {
         LogUtils.i("WakeState", "startWakeListening: isWakeListening=$isWakeListening, state=$currentState")
         if (isWakeListening) return
         if (!wakeWordEngine.isLoaded) {
-            LogUtils.e("VoiceService", "唤醒引擎未加载，无法启动")
-            return
+            // ★ 懒加载模式：构造后引擎未加载是正常状态，唤醒线程启动后首次 process() 自动加载模型。
+            //   仅当已尝试加载且失败（errorMessage != null）才阻止启动。
+            if (wakeWordEngine.getErrorMessage() != null) {
+                LogUtils.e("VoiceService", "唤醒引擎加载失败: ${wakeWordEngine.getErrorMessage()}，无法启动")
+                return
+            }
+            LogUtils.d("VoiceService", "唤醒引擎懒加载（首次唤醒时加载 KWS 模型）")
         }
         isWakeListening = true
         wakeAudioThread = WakeAudioThread().apply { start() }
