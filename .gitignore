@@ -4,9 +4,10 @@ Thumbs.db
 .DS_Store
 # Built application files
 *.apk
-# 本地依赖 AAR（sherpa-onnx / onnxruntime / 百度SDK，大体积二进制，
-# 由下载/解压流程重新获取，不需要进 git）
+# 本地依赖 AAR（sherpa-onnx / onnxruntime / 百度SDK）
+# 编译必需，且版本需精确对齐（符号版本），必须进 git
 *.aar
+!app/libs/*.aar
 *.ap_
 *.aab
 
