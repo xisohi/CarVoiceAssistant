@@ -163,7 +163,7 @@ public class WakeWordEngine {
     // 冷启动防误唤醒：跳过前 N 帧
     // 注意：audioSamplesNeeded=16080，16kHz 下每帧约 1 秒，所以 3 帧≈3 秒
     // 使用实例字段，每次创建 WakeWordEngine 时重置，确保服务重启后防误唤醒仍生效
-    private static final int STARTUP_SKIP_FRAMES = 5;  // 跳过前5帧（约5秒），过滤麦克风启动爆音
+    private static final int STARTUP_SKIP_FRAMES = 2;  // 跳过前2帧（约2秒），过滤麦克风启动爆音（原5秒过久，对话结束立刻唤醒被吞）
     private int framesProcessed = 0;
     /** 帧号计数器，用于调试日志时序定位 */
     private int frameCounter = 0;
