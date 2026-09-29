@@ -1,87 +1,110 @@
 package com.xisohi.car.voiceassistant.core.wakeword;
 
 import android.content.Context;
-import android.content.res.AssetManager;
-import android.util.Log;
+
+import com.k2fsa.sherpa.onnx.FeatureConfig;
+import com.k2fsa.sherpa.onnx.KeywordSpotter;
+import com.k2fsa.sherpa.onnx.KeywordSpotterConfig;
+import com.k2fsa.sherpa.onnx.KeywordSpotterResult;
+import com.k2fsa.sherpa.onnx.OnlineModelConfig;
+import com.k2fsa.sherpa.onnx.OnlineStream;
+import com.k2fsa.sherpa.onnx.OnlineTransducerModelConfig;
+import com.k2fsa.sherpa.onnx.QnnConfig;
 import com.xisohi.car.voiceassistant.core.LogUtils;
 
-import ai.onnxruntime.OnnxTensor;
-import ai.onnxruntime.OrtEnvironment;
-import ai.onnxruntime.OrtException;
-import ai.onnxruntime.OrtSession;
-
-import java.io.IOException;
-import java.io.InputStream;
-import java.nio.FloatBuffer;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
 import java.util.Locale;
 
-import org.json.JSONArray;
-import org.json.JSONObject;
-
 /**
- * Wake word inference engine.
+ * Wake word inference engine — sherpa-onnx 官方 KWS（zipformer transducer，open vocabulary）。
  *
- * Supports two modes:
- *   1. Multi-model (legacy): one ONNX per keyword, each outputs [B,1] sigmoid
- *   2. Multi-keyword (new):  single ONNX outputs [B,N] sigmoid array — one forward pass
+ * 替换原自研 melspectrogram.onnx + 分类器 pipeline：
+ *   - 官方 3M 中英 KWS 模型（sherpa-onnx-kws-zipformer-zh-en-3M-2025-12-20，int8 组合 ~5.4MB）
+ *   - 免训练自定义关键词：assets/kws/keywords.txt（当前：小飞 / 小飞小飞 / 您好小飞）
+ *   - 触发式语义：KeywordSpotter 只在关键词完整命中时返回结果（ContextGraph 阈值），
+ *     与旧"逐帧 sigmoid 概率"不同——日志/回调已相应调整为触发驱动。
  *
- * Pipeline: audio → melspectrogram.onnx → classifier → sigmoid.
+ * 对外接口保持兼容：process(short[])/setSensitivity/setGainAndThreshold/setAsrGain/
+ * getDetectionThreshold/getAudioGain/resetSkipCounter/DetectionListener 等签名均不变。
+ *
+ * 注意：
+ *   - 增益/阈值修改采用"惰性重建"：唤醒线程下次 process() 时重建引擎（KWS 阈值在构造时
+ *     编译进 ContextGraph），避免与正在运行的唤醒线程竞态。
+ *   - tempThresholdOverride 保留接口但不生效（KWS 不支持运行时阈值覆盖），仅供日志显示。
  */
 public class WakeWordEngine {
 
     private static final String TAG = "WakeWordEngine";
-    private static final String MEL_MODEL = "melspectrogram.onnx";
+    /** KWS 模型资源目录（assets 相对路径） */
+    private static final String KWS_DIR = "kws";
+    private static final String KWS_ENCODER = KWS_DIR + "/encoder.onnx";
+    private static final String KWS_DECODER = KWS_DIR + "/decoder.onnx";
+    private static final String KWS_JOINER = KWS_DIR + "/joiner.onnx";
+    private static final String KWS_TOKENS = KWS_DIR + "/tokens.txt";
+    private static final String KWS_KEYWORDS = KWS_DIR + "/keywords.txt";
+    /** 唤醒词列表（与 keywords.txt 的 @ 后原始词一致，createStream 时显式传入） */
+    private static final String[] WAKE_WORDS = {"小飞", "小飞小飞", "您好小飞"};
+    private static final String WAKE_WORDS_CSV = "小飞,小飞小飞,您好小飞";
 
-    /** 音频增益系数：放大输入音频，提高小声说话的检测率（唤醒阶段专用）。 */
+    public static final int SAMPLE_RATE = 16000;
+    /** 录音帧大小（保持旧 mel 方案的 16080≈1秒，WakeAudioThread 依赖此值分配缓冲） */
+    public static final int AUDIO_SAMPLES_NEEDED = 16080;
+
+    // ===== 可调参数（静态字段，UI/校准逻辑兼容） =====
+    /** 音频增益系数：放大输入幅度，提高小声说话的检测率（唤醒阶段专用）。 */
     private static volatile float audioGain = 4.5f;
-
-    /**
-     * 识别专用增益：指令识别阶段使用，比唤醒增益保守，避免近场说话时削顶失真。
-     * 唤醒是远场检测（用户可能离麦克风较远），需要较大增益；
-     * 识别是指令阶段（用户通常已靠近或音量正常），过大会导致波形截断，反而降低 sherpa-onnx 识别率。
-     */
+    /** 识别专用增益：指令识别阶段使用（与唤醒无关，sherpa-onnx 离线识别用）。 */
     private static volatile float asrGain = 8.0f;
-
-    /** 唤醒检测阈值：sigmoid 概率超过此值即判定为唤醒。降低可提高灵敏度。 */
-    private static volatile float detectionThreshold = 0.025f;
-
     /** 灵敏度档位：0=低, 1=中(默认), 2=高 */
     private static volatile int sensitivityLevel = 1;
-    // 车机环境优化的三档预设（麦克风远、环境噪音大，需要更低阈值和更高增益）
-    // 低：保守（误唤醒少）；中：平衡（推荐日常使用）；高：灵敏（适合行驶中/小声）
-    // 对齐原厂天琴语音(思必驰方案)：主唤醒词阈值0.18
-    // 误唤醒 prob<0.17，真唤醒 prob>0.43，0.18 正好在分界点
-    // 低=0.25（保守）/ 中=0.18（推荐，和原厂一致）/ 高=0.08（灵敏）
+    // KWS 是触发式引擎：触发阈值 = KeywordSpotterConfig.keywordsThreshold（ContextGraph 编译期固化）。
+    // 三档预设（对齐官方默认 0.25）：
+    // 低=0.30（保守，误唤醒少）/ 中=0.25（官方默认）/ 高=0.15（灵敏，适合行驶/小声）
     private static final float[] GAIN_BY_LEVEL = {3.5f, 4.5f, 5.5f};
-    private static final float[] THRESHOLD_BY_LEVEL = {0.25f, 0.18f, 0.08f};
+    private static final float[] THRESHOLD_BY_LEVEL = {0.30f, 0.25f, 0.15f};
     private static final String[] LEVEL_NAMES = {"低", "中", "高"};
+    private static volatile float detectionThreshold = THRESHOLD_BY_LEVEL[1];
 
-    /** 设置灵敏度档位（0=低, 1=中, 2=高） */
-    public static void setSensitivity(int level) {
-        if (level < 0 || level > 2) level = 1;
-        sensitivityLevel = level;
-        audioGain = GAIN_BY_LEVEL[level];
-        detectionThreshold = THRESHOLD_BY_LEVEL[level];
-        LogUtils.i(TAG, "灵敏度设置为: " + LEVEL_NAMES[level]
-                + " (增益=" + audioGain + ", 阈值=" + detectionThreshold + ")");
-    }
-    /** 获取当前灵敏度档位 */
-    public static int getSensitivity() { return sensitivityLevel; }
-    /** 获取当前灵敏度名称 */
-    public static String getSensitivityName() {
-        if (sensitivityLevel < 0 || sensitivityLevel >= LEVEL_NAMES.length) return "自定义";
-        return LEVEL_NAMES[sensitivityLevel];
+    // 冷启动防误唤醒：跳过前 N 帧（每帧≈1秒，2帧≈2秒，滤麦克风启动爆音）
+    private static final int STARTUP_SKIP_FRAMES = 2;
+    private int framesProcessed = 0;
+    /** 帧号计数器，用于调试日志时序定位 */
+    private int frameCounter = 0;
+    /** 临时阈值覆盖（KWS 不支持运行时生效，仅日志显示；-1 表示不覆盖） */
+    private static volatile float tempThresholdOverride = -1f;
+
+    // ===== KWS 引擎 =====
+    private KeywordSpotter spotter;
+    private OnlineStream stream;
+    private Context appContext;
+    private boolean loaded;
+    private String errorMessage = null;
+    /** 惰性重建标志：增益/阈值修改后置位，由唤醒线程下次 process() 时执行重建 */
+    private static volatile boolean rebuildRequested = false;
+
+    // 复用缓冲（单线程，仅 WakeAudioThread 调用 process()）
+    private float[] reuseFloatAudio = null;
+
+    // ===== 唤醒灵敏度测试日志（保持原接口） =====
+    public interface TestLogListener {
+        void onLog(String line);
     }
 
-    // Audio parameters (constant)
-    static final int SAMPLE_RATE = 16000;
-    static final float MEL_HOP_SEC = 0.010f;
-    static final float MEL_WIN_SEC = 0.025f;
-    static final int MEL_HOP_SAMPLES = (int) (SAMPLE_RATE * MEL_HOP_SEC);
-    static final int N_MELS = 32;
+    /** 实时检测回调接口（校准向导用） */
+    public interface DetectionListener {
+        /**
+         * 每帧检测结果回调
+         * @param word 触发的唤醒词（null=未触发）
+         * @param prob 触发概率（KWS 触发式语义：触发=1.0，未触发=0.0，非逐帧 sigmoid）
+         * @param melMean 音频能量指标（KWS 无 mel，此参数为 RMS 音量）
+         * @param triggered 是否触发
+         */
+        void onDetection(String word, float prob, float melMean, boolean triggered);
+    }
+    private static DetectionListener detectionListener = null;
+    private static TestLogListener testLogListener = null;
+    private static final java.util.List<String> testLogs = new java.util.ArrayList<>();
+    private static boolean testLogging = false;
+    private static String testScenario = "";
 
     /** Detection result with specific wake word name. */
     public static class DetectionResult {
@@ -89,7 +112,7 @@ public class WakeWordEngine {
         public final float probability;
         /** Mean probability across ALL models — represents background noise level. */
         public final float backgroundMean;
-        /** Per-model recommended consecutive frames (from model_info.json). */
+        /** Per-model recommended consecutive frames. */
         public final int recommendedConsFrames;
 
         public DetectionResult(String wakeWord, float probability, float backgroundMean,
@@ -101,105 +124,73 @@ public class WakeWordEngine {
         }
     }
 
-    private static class ModelSlot {
-        final String wakeWord;
-        final String modelFile;
-        final int consFrames;
-        OrtSession session;
+    // ===== 静态接口（保持原签名） =====
 
-        ModelSlot(String wakeWord, String modelFile, int consFrames) {
-            this.wakeWord = wakeWord;
-            this.modelFile = modelFile;
-            this.consFrames = consFrames;
-        }
+    /** 设置灵敏度档位（0=低, 1=中, 2=高）；惰性重建，下次唤醒即生效 */
+    public static void setSensitivity(int level) {
+        if (level < 0 || level > 2) level = 1;
+        sensitivityLevel = level;
+        audioGain = GAIN_BY_LEVEL[level];
+        detectionThreshold = THRESHOLD_BY_LEVEL[level];
+        rebuildRequested = true;
+        LogUtils.i(TAG, "灵敏度设置为: " + LEVEL_NAMES[level]
+                + " (增益=" + audioGain + ", 阈值=" + detectionThreshold + ", 下次唤醒生效)");
     }
 
-    // === New: single multi-keyword model ===
-    private boolean isMultiKeyword;
-    private String[] keywords;                // index → keyword name
-    private OrtSession multiKwSession;        // single session for multi-keyword model
-    private int multiKwConsFrames = 2;
+    /** 获取当前灵敏度档位 */
+    public static int getSensitivity() { return sensitivityLevel; }
 
-    // === Legacy: multi-model ===
-    private final List<ModelSlot> models = new ArrayList<>();
-
-    private String[] wakeWordNames;
-    private int melFramesNeeded;
-    private int audioSamplesNeeded;
-    private int dscnnMelTime = 50;
-
-    // ★ 复用缓冲（每帧尺寸固定，避免唤醒线程长期运行每帧 new 数组频繁触发 GC）
-    // 注意：以下复用缓冲（reuseFloatAudio/reuseDscnnInput/reuseFlatInput）仅限单线程使用，
-    // 调用方保证 process() 只由 WakeAudioThread 单线程调用；若将来多线程并发调用会互相踩踏。
-    private float[] reuseFloatAudio = null;   // 长度 = audio.length（正常固定为 audioSamplesNeeded）
-    private float[][] reuseMel2d = null;      // mel2d 复用（frames 变化时扩容）
-    private float[][][] reuseDscnnInput = null; // [1][dscnnMelTime][N_MELS]，构造后尺寸固定
-    private float[] reuseFlatInput = null;    // [dscnnMelTime * N_MELS]
-
-    public int getMelFramesNeeded() { return melFramesNeeded; }
-    public int getAudioSamplesNeeded() { return audioSamplesNeeded; }
-
-    /** Pipe-separated display string of all wake words. */
-    public String getWakeWordDisplay() {
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < wakeWordNames.length; i++) {
-            if (i > 0) sb.append(" | ");
-            sb.append(wakeWordNames[i]);
-        }
-        return sb.toString();
+    /** 获取当前灵敏度名称 */
+    public static String getSensitivityName() {
+        if (sensitivityLevel < 0 || sensitivityLevel >= LEVEL_NAMES.length) return "自定义";
+        return LEVEL_NAMES[sensitivityLevel];
     }
 
-    /** Number of wake word models loaded. */
-    public int getModelCount() { return isMultiKeyword ? keywords.length : models.size(); }
-    public boolean isDscnnMode() { return true; }
+    /** 获取当前音频增益（唤醒阶段） */
+    public static float getAudioGain() { return audioGain; }
 
-    private final OrtEnvironment env;
-    private OrtSession melSession;
+    /** 获取当前检测阈值 */
+    public static float getDetectionThreshold() { return detectionThreshold; }
 
-    private boolean loaded;
-    private String errorMessage = null;
-    private int debugLogCount = 0;
-    private static final int DEBUG_LOG_MAX = 50;
-    // 冷启动防误唤醒：跳过前 N 帧
-    // 注意：audioSamplesNeeded=16080，16kHz 下每帧约 1 秒，所以 3 帧≈3 秒
-    // 使用实例字段，每次创建 WakeWordEngine 时重置，确保服务重启后防误唤醒仍生效
-    private static final int STARTUP_SKIP_FRAMES = 2;  // 跳过前2帧（约2秒），过滤麦克风启动爆音（原5秒过久，对话结束立刻唤醒被吞）
-    private int framesProcessed = 0;
-    /** 帧号计数器，用于调试日志时序定位 */
-    private int frameCounter = 0;
-    /** 临时阈值覆盖（播放音乐时提高阈值减少误唤醒，-1 表示不覆盖） */
-    private static volatile float tempThresholdOverride = -1f;
+    /** 获取识别专用增益（指令识别阶段） */
+    public static float getAsrGain() { return asrGain; }
 
-    // ===== 唤醒灵敏度测试日志 =====
-    /** 测试日志回调接口 */
-    public interface TestLogListener {
-        void onLog(String line);
+    /** 设置识别专用增益（建议 5.0~8.0，限幅 [5.0, 10.0]） */
+    public static void setAsrGain(float gain) {
+        asrGain = Math.max(5.0f, Math.min(10.0f, gain));
+        LogUtils.i(TAG, "识别增益设置为: " + asrGain);
     }
 
-    /** 实时检测回调接口（用于校准向导） */
-    public interface DetectionListener {
-        /** 每帧检测结果回调
-         * @param word 检测到的关键词（null表示未检测到）
-         * @param prob 最高概率（0~1）
-         * @param melMean mel频谱均值（反映音量）
-         * @param triggered 是否真正触发（超过阈值且连续帧确认）
-         */
-        void onDetection(String word, float prob, float melMean, boolean triggered);
+    /** 直接设置增益和阈值（手动调参/校准用）；惰性重建，下次唤醒即生效 */
+    public static void setGainAndThreshold(float gain, float threshold) {
+        audioGain = gain;
+        detectionThreshold = threshold;
+        sensitivityLevel = -1;  // 自定义档位
+        rebuildRequested = true;
+        LogUtils.i(TAG, "唤醒参数已更新(自定义): gain=" + gain + ", threshold=" + threshold + "（下次唤醒生效）");
     }
-    private static DetectionListener detectionListener = null;
+
+    /** 获取实际生效的阈值（临时覆盖优先，仅供日志显示） */
+    public static float getEffectiveThreshold() {
+        return tempThresholdOverride > 0 ? tempThresholdOverride : detectionThreshold;
+    }
+
+    /** 设置临时阈值覆盖（KWS ContextGraph 阈值编译期固化，不支持运行时生效；保留接口兼容） */
+    public static void setTempThresholdOverride(float threshold) {
+        tempThresholdOverride = threshold;
+        LogUtils.i(TAG, "临时阈值覆盖(仅显示，KWS引擎不支持运行时生效): " + (threshold < 0 ? "清除" : threshold));
+    }
+
     /** 设置实时检测回调 */
     public static void setDetectionListener(DetectionListener listener) {
         detectionListener = listener;
     }
-    private static TestLogListener testLogListener = null;
-    private static final java.util.List<String> testLogs = new java.util.ArrayList<>();
-    private static boolean testLogging = false;
-    private static String testScenario = "";
 
     /** 设置测试日志监听器 */
     public static void setTestLogListener(TestLogListener listener) {
         testLogListener = listener;
     }
+
     /** 开始记录测试日志 */
     public static void startTestLogging(String scenario) {
         testScenario = scenario;
@@ -208,28 +199,97 @@ public class WakeWordEngine {
         testLogs.add("=== 测试场景: " + scenario + " ===");
         testLogs.add("时间, 唤醒词, 概率, 阈值, 增益, 是否触发");
     }
+
     /** 停止记录测试日志 */
     public static void stopTestLogging() {
         testLogging = false;
     }
+
     /** 获取测试日志 */
     public static java.util.List<String> getTestLogs() {
         return new java.util.ArrayList<>(testLogs);
     }
+
     /** 清除测试日志 */
     public static void clearTestLogs() {
         testLogs.clear();
     }
-    /** 获取当前音频增益（唤醒阶段） */
-    public static float getAudioGain() { return audioGain; }
-    /** 获取当前检测阈值 */
-    public static float getDetectionThreshold() { return detectionThreshold; }
 
-    /**
-     * 获取识别专用增益（指令识别阶段）
-     * 与唤醒增益独立，避免近场说话时 4.5x 过放大导致削顶
-     */
-    public static float getAsrGain() { return asrGain; }
+    // ===== 实例方法 =====
+
+    public WakeWordEngine(Context context) {
+        appContext = context.getApplicationContext();
+        try {
+            // 构造时立即加载引擎（首次唤醒即用默认参数）
+            rebuildInternal(appContext);
+            loaded = true;
+            LogUtils.i(TAG, "KWS 引擎加载成功，唤醒词: " + getWakeWordDisplay()
+                    + "（threshold=" + detectionThreshold + ", gain=" + audioGain + "）");
+        } catch (Exception e) {
+            LogUtils.e(TAG, "Failed to load KWS models — check assets/kws/", e);
+            errorMessage = e.getMessage();
+            loaded = false;
+        }
+    }
+
+    /** 重建 KWS 引擎（阈值/增益变更时由唤醒线程惰性调用，单线程安全） */
+    private void rebuildInternal(Context context) throws Exception {
+        if (spotter != null) { try { spotter.release(); } catch (Exception ignored) {} }
+        if (stream != null) { try { stream.release(); } catch (Exception ignored) {} }
+
+        FeatureConfig feat = new FeatureConfig();
+        feat.setSampleRate(SAMPLE_RATE);
+        feat.setFeatureDim(80);
+        feat.setDither(0.0f);
+
+        OnlineTransducerModelConfig trans = new OnlineTransducerModelConfig(
+                KWS_ENCODER, KWS_DECODER, KWS_JOINER, new QnnConfig("", "", ""));
+
+        OnlineModelConfig model = new OnlineModelConfig();
+        model.setTransducer(trans);
+        model.setTokens(KWS_TOKENS);
+        model.setNumThreads(2);
+        model.setProvider("cpu");
+        model.setModelType("zipformer");
+        model.setModelingUnit("phone+ppinyin");
+
+        KeywordSpotterConfig config = new KeywordSpotterConfig();
+        config.setFeatConfig(feat);
+        config.setModelConfig(model);
+        config.setMaxActivePaths(4);
+        config.setKeywordsFile(KWS_KEYWORDS);
+        config.setKeywordsScore(1.0f);
+        config.setKeywordsThreshold(detectionThreshold);
+        config.setNumTrailingBlanks(1);
+
+        spotter = new KeywordSpotter(context.getAssets(), config);
+        // 显式传入关键词（与 keywords.txt 一致），不依赖 createStream 的 keywordsFile 解析
+        stream = spotter.createStream(WAKE_WORDS_CSV);
+        framesProcessed = 0;
+        frameCounter = 0;
+    }
+
+    public boolean isLoaded() { return loaded; }
+    public String getErrorMessage() { return errorMessage; }
+
+    /** mel 帧数（KWS 无 mel，返回 1 兼容旧调用方） */
+    public int getMelFramesNeeded() { return 1; }
+    /** 录音帧大小（保持不变，WakeAudioThread 依赖） */
+    public int getAudioSamplesNeeded() { return AUDIO_SAMPLES_NEEDED; }
+
+    /** Pipe-separated display string of all wake words. */
+    public String getWakeWordDisplay() {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < WAKE_WORDS.length; i++) {
+            if (i > 0) sb.append(" | ");
+            sb.append(WAKE_WORDS[i]);
+        }
+        return sb.toString();
+    }
+
+    /** Number of wake word models loaded. */
+    public int getModelCount() { return WAKE_WORDS.length; }
+    public boolean isDscnnMode() { return false; }
 
     /** 重置冷启动跳过计数（每次唤醒线程启动时调用） */
     public void resetSkipCounter() {
@@ -239,328 +299,81 @@ public class WakeWordEngine {
         LogUtils.d(TAG, "冷启动跳过计数已重置");
     }
 
-    /** 设置临时阈值覆盖（播放音乐时用，传 -1 清除覆盖） */
-    public static void setTempThresholdOverride(float threshold) {
-        tempThresholdOverride = threshold;
-        LogUtils.i(TAG, "临时阈值覆盖: " + (threshold < 0 ? "清除" : threshold));
-    }
-
-    /** 获取实际生效的阈值（临时覆盖优先） */
-    public static float getEffectiveThreshold() {
-        return tempThresholdOverride > 0 ? tempThresholdOverride : detectionThreshold;
-    }
+    private int debugLogCount = 0;
+    private static final int DEBUG_LOG_MAX = 50;
 
     /**
-     * 设置识别专用增益
-     * 建议范围 5.0~8.0：太小识别不清，太大削顶失真
-     * @param gain 增益值，会被限制在 [5.0, 10.0] 区间
-     */
-    public static void setAsrGain(float gain) {
-        asrGain = Math.max(5.0f, Math.min(10.0f, gain));
-        LogUtils.i(TAG, "识别增益设置为: " + asrGain);
-    }
-
-    /** 直接设置增益和阈值（用于校准向导应用结果，仅影响唤醒参数） */
-    public static void setGainAndThreshold(float gain, float threshold) {
-        audioGain = gain;
-        detectionThreshold = threshold;
-        sensitivityLevel = -1;  // 自定义档位，区别于预设的低/中/高
-        LogUtils.i(TAG, "唤醒参数已更新(自定义): gain=" + gain + ", threshold=" + threshold);
-    }
-
-    public WakeWordEngine(Context context) {
-        env = OrtEnvironment.getEnvironment();
-        try {
-            AssetManager am = context.getAssets();
-            byte[] infoBytes;
-            try (InputStream is = am.open("model_info.json")) {
-                infoBytes = new byte[is.available()];
-                int offset = 0;
-                while (offset < infoBytes.length) {
-                    int read = is.read(infoBytes, offset, infoBytes.length - offset);
-                    if (read < 0) break;
-                    offset += read;
-                }
-            }
-            JSONObject info = new JSONObject(new String(infoBytes, "UTF-8"));
-
-            dscnnMelTime = info.optInt("mel_time", 50);
-            LogUtils.i(TAG, "mel_time=" + dscnnMelTime);
-
-            // ── New: single multi-keyword model ──
-            if (info.has("model_type") && "multi_keyword".equals(info.getString("model_type"))) {
-                isMultiKeyword = true;
-                JSONArray kwArray = info.getJSONArray("keywords");
-                keywords = new String[kwArray.length()];
-                for (int i = 0; i < kwArray.length(); i++) {
-                    keywords[i] = kwArray.getString(i);
-                }
-                multiKwConsFrames = info.optInt("cons_frames", 2);
-                String modelFile = info.getString("model_file");
-
-                wakeWordNames = keywords;
-                multiKwSession = loadModel(context, modelFile);
-                LogUtils.i(TAG, "Multi-keyword mode: " + keywords.length + " keywords in 1 model ("
-                        + modelFile + ")");
-
-                // ── Legacy: multi-model ──
-            } else if (info.optBoolean("multi_model", false) && info.has("models")) {
-                JSONArray modelArray = info.getJSONArray("models");
-                for (int i = 0; i < modelArray.length(); i++) {
-                    JSONObject m = modelArray.getJSONObject(i);
-                    String word = m.getString("wake_word");
-                    String file = m.getString("model_file");
-                    int cf = m.optInt("cons_frames", 5);
-                    models.add(new ModelSlot(word, file, cf));
-                    LogUtils.i(TAG, "Registered: " + word + " file=" + file + " cons_frames=" + cf);
-                }
-                wakeWordNames = new String[models.size()];
-                for (int i = 0; i < models.size(); i++) {
-                    wakeWordNames[i] = models.get(i).wakeWord;
-                }
-
-                // ── Legacy: single model ──
-            } else {
-                String word = info.getString("wake_word");
-                String file = info.getString("model_file");
-                int cf = info.optInt("cons_frames", 5);
-                models.add(new ModelSlot(word, file, cf));
-                wakeWordNames = new String[]{word};
-                LogUtils.i(TAG, "Single model: " + word + " cons_frames=" + cf);
-            }
-
-            melFramesNeeded = dscnnMelTime;
-            audioSamplesNeeded = melFramesNeeded * MEL_HOP_SAMPLES + (int) (SAMPLE_RATE * MEL_WIN_SEC);
-            LogUtils.i(TAG, "melFramesNeeded=" + melFramesNeeded
-                    + " audioSamplesNeeded=" + audioSamplesNeeded);
-
-            // Load mel model + classifier(s)
-            melSession = loadModel(context, MEL_MODEL);
-            if (!isMultiKeyword) {
-                for (ModelSlot m : models) {
-                    m.session = loadModel(context, m.modelFile);
-                }
-            }
-
-            loaded = true;
-            LogUtils.i(TAG, "All models loaded (" + (isMultiKeyword ? "multi-kw" : "multi-model") + ")");
-        } catch (Exception e) {
-            LogUtils.e(TAG, "Failed to load models — check assets/ for model_info.json + .onnx files", e);
-            errorMessage = e.getMessage();
-            loaded = false;
-        }
-    }
-
-    private OrtSession loadModel(Context context, String filename) throws IOException, OrtException {
-        AssetManager am = context.getAssets();
-        byte[] modelBytes;
-        try (InputStream is = am.open(filename)) {
-            modelBytes = new byte[is.available()];
-            int offset = 0;
-            while (offset < modelBytes.length) {
-                int read = is.read(modelBytes, offset, modelBytes.length - offset);
-                if (read < 0) break;
-                offset += read;
-            }
-        }
-        OrtSession.SessionOptions opts = new OrtSession.SessionOptions();
-        // ONNX Runtime 1.25.0+ 已修复 armeabi-v7a 上的内存对齐问题 (issue #27311, PR #27312)
-        // 可以安全使用 ALL_OPT 全优化
-        opts.setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT);
-        return env.createSession(modelBytes, opts);
-    }
-
-    public boolean isLoaded() { return loaded; }
-    public String getErrorMessage() { return errorMessage; }
-
-    /**
-     * Run inference on raw 16-bit PCM audio.
+     * Run inference on raw 16-bit PCM audio (16kHz, ~1s frame).
      *
-     * @param audio 16-bit mono PCM, 16 kHz
-     * @return best matching DetectionResult or null on error
+     * KWS 触发式语义：命中关键词才返回 DetectionResult；未命中返回 null。
+     * 调用方（WakeAudioThread）判断 result != null && wakeWord != null 即触发。
      */
     public DetectionResult process(short[] audio) {
-        if (!loaded) return null;
+        if (!loaded || spotter == null || stream == null) return null;
         frameCounter++;
 
+        // 惰性重建：增益/阈值修改后，下次 process 时重建引擎（单线程安全）
+        if (rebuildRequested) {
+            try {
+                rebuildInternal(appContext);
+                rebuildRequested = false;
+                LogUtils.i(TAG, "KWS 引擎已重建（新参数生效）: threshold=" + detectionThreshold + ", gain=" + audioGain);
+            } catch (Exception e) {
+                LogUtils.e(TAG, "KWS 引擎重建失败，保持旧引擎", e);
+                rebuildRequested = false;
+            }
+        }
+
+        // 冷启动跳过前 N 帧（约2秒，滤麦克风启动爆音；原5秒过久，对话结束立刻唤醒被吞）
+        if (framesProcessed < STARTUP_SKIP_FRAMES) {
+            framesProcessed++;
+            return null;
+        }
+        // 启动保护期：前5帧忽略触发（KWS 阈值编译进 ContextGraph 无法临时放大，等效旧"阈值1.5倍"），
+        // 但保持喂音频与回调，校准向导/音量显示不中断
+        boolean protectPeriod = frameCounter < 5;
+
         try {
-            // 1. Convert to float（唤醒阶段使用 audioGain，与 asrGain 无关）
-            // ★ 复用缓冲：输入长度正常固定（audioSamplesNeeded），仅在长度变化时扩容
+            // short → float（-1~1），×音频增益（保持旧增益语义）
             if (reuseFloatAudio == null || reuseFloatAudio.length != audio.length) {
                 reuseFloatAudio = new float[audio.length];
             }
-            for (int i = 0; i < audio.length; i++) {
-                reuseFloatAudio[i] = (float) audio[i] * audioGain;
-            }
             float[] floatAudio = reuseFloatAudio;
-
-            // 2. Mel spectrogram
-            OnnxTensor melIn = OnnxTensor.createTensor(env,
-                    FloatBuffer.wrap(floatAudio), new long[]{1, audio.length});
-            OrtSession.Result melOut = melSession.run(
-                    Collections.singletonMap("input", melIn));
-            float[][][][] mel = (float[][][][]) melOut.get(0).getValue();
-            melIn.close();
-            melOut.close();
-
-            int frames = mel[0][0].length;
-            if (frames < dscnnMelTime / 4) return null;  // need at least some frames
-
-            // 3. Apply transform: x/10 + 2
-            // ★ 复用缓冲：frames 变化时扩容，避免每帧 new 数组
-            if (reuseMel2d == null || reuseMel2d.length != frames) {
-                reuseMel2d = new float[frames][N_MELS];
+            for (int i = 0; i < audio.length; i++) {
+                floatAudio[i] = audio[i] * audioGain / 32768.0f;
             }
-            float[][] mel2d = reuseMel2d;
-            for (int f = 0; f < frames; f++) {
-                for (int m = 0; m < N_MELS; m++) {
-                    mel2d[f][m] = mel[0][0][f][m] / 10.0f + 2.0f;
+
+            if (spotter.isReady(stream)) {
+                stream.acceptWaveform(floatAudio, SAMPLE_RATE);
+                spotter.decode(stream);
+            }
+
+            // 每50帧打印音频整体状态（判断环境噪音水平）
+            float rms = 0;
+            for (short s : audio) rms += s * s;
+            rms = (float) Math.sqrt(rms / audio.length);
+            if (frameCounter % 50 == 0) {
+                LogUtils.d(TAG, String.format(Locale.US,
+                        "[WakeFrame] frame=%d rms=%.0f gain=%.1f",
+                        frameCounter, rms, audioGain));
+            }
+
+            if (protectPeriod) {
+                if (detectionListener != null) {
+                    detectionListener.onDetection(null, 0f, rms, false);
                 }
-            }
-
-            // 4. Prepare classifier input
-            // Skip first N frames to avoid cold-start false triggers
-            if (framesProcessed < STARTUP_SKIP_FRAMES) {
-                framesProcessed++;
                 return null;
             }
 
-            int melStart = Math.max(0, frames - dscnnMelTime);
-            // ★ 复用缓冲：dscnnMelTime / N_MELS 构造后固定，直接复用避免每帧 new
-            if (reuseDscnnInput == null) {
-                reuseDscnnInput = new float[1][dscnnMelTime][N_MELS];
-            }
-            float[][][] dscnnInput = reuseDscnnInput;
-            for (int f = 0; f < dscnnMelTime; f++) {
-                int srcF = melStart + f;
-                if (srcF >= 0 && srcF < frames) {
-                    System.arraycopy(mel2d[srcF], 0, dscnnInput[0][f], 0, N_MELS);
-                }
-            }
+            KeywordSpotterResult r = spotter.getResult(stream);
+            if (r != null && r.getKeyword() != null && !r.getKeyword().isEmpty()) {
+                String kw = r.getKeyword();
+                // 触发后复位流，等待下一次唤醒
+                spotter.reset(stream);
 
-            // Flatten to 1D（★ 复用缓冲，尺寸固定）
-            if (reuseFlatInput == null) {
-                reuseFlatInput = new float[dscnnMelTime * N_MELS];
-            }
-            float[] flatInput = reuseFlatInput;
-            for (int f = 0; f < dscnnMelTime; f++) {
-                System.arraycopy(dscnnInput[0][f], 0, flatInput, f * N_MELS, N_MELS);
-            }
-
-            // 5. Run classifier(s)
-            float bestSigmoid = 0;
-            String bestWord = null;
-            int bestConsFrames = 2;
-            // melMean for callback
-            float melMean = 0f;
-
-            if (isMultiKeyword) {
-                // ── New: single multi-keyword model → [1, N] output ──
-                OnnxTensor kwIn = OnnxTensor.createTensor(env,
-                        java.nio.FloatBuffer.wrap(flatInput),
-                        new long[]{1, dscnnMelTime, N_MELS});
-                OrtSession.Result kwOut = multiKwSession.run(
-                        Collections.singletonMap("input", kwIn));
-                float[][] scored = (float[][]) kwOut.get(0).getValue();  // [1, N]
-                kwIn.close();
-                kwOut.close();
-
-                for (int i = 0; i < keywords.length; i++) {
-                    if (scored[0][i] > bestSigmoid) {
-                        bestSigmoid = scored[0][i];
-                        bestWord = keywords[i];
-                    }
-                }
-                bestConsFrames = multiKwConsFrames;
-
-                // Debug: 只在接近触发时打印 top-3（避免日志爆炸）
-                if (bestSigmoid > 0.02f) {
-                    // Find top 3
-                    int[] topIdx = new int[]{-1, -1, -1};
-                    float[] topVal = new float[]{-1, -1, -1};
-                    for (int i = 0; i < keywords.length; i++) {
-                        float v = scored[0][i];
-                        if (v > topVal[0]) { topVal[2] = topVal[1]; topIdx[2] = topIdx[1];
-                            topVal[1] = topVal[0]; topIdx[1] = topIdx[0];
-                            topVal[0] = v; topIdx[0] = i; }
-                        else if (v > topVal[1]) { topVal[2] = topVal[1]; topIdx[2] = topIdx[1];
-                            topVal[1] = v; topIdx[1] = i; }
-                        else if (v > topVal[2]) { topVal[2] = v; topIdx[2] = i; }
-                    }
-                    LogUtils.d(TAG, String.format(Locale.US,
-                            "[WakeProb-top3] frame=%d %s(%.4f) %s(%.4f) %s(%.4f)",
-                            frameCounter,
-                            keywords[topIdx[0]], topVal[0],
-                            topIdx[1] >= 0 ? keywords[topIdx[1]] : "-", topVal[1],
-                            topIdx[2] >= 0 ? keywords[topIdx[2]] : "-", topVal[2]));
-                }
-
-            } else {
-                // ── Legacy: loop over multiple single-keyword models ──
-                for (ModelSlot model : models) {
-                    OnnxTensor dscnnIn = OnnxTensor.createTensor(env,
-                            java.nio.FloatBuffer.wrap(flatInput),
-                            new long[]{1, dscnnMelTime, N_MELS});
-                    OrtSession.Result dscnnOut = model.session.run(
-                            Collections.singletonMap("input", dscnnIn));
-                    Object rawOut = dscnnOut.get(0).getValue();
-                    float sigmoid;
-                    if (rawOut instanceof float[][]) {
-                        float[][] score = (float[][]) rawOut;
-                        sigmoid = score[0][0];
-                    } else if (rawOut instanceof float[]) {
-                        float[] score = (float[]) rawOut;
-                        sigmoid = score[0];
-                    } else {
-                        Log.e(TAG, "DS-CNN unexpected output type: " + rawOut.getClass().getName());
-                        sigmoid = 0f;
-                    }
-                    if (sigmoid > bestSigmoid) {
-                        bestSigmoid = sigmoid;
-                        bestWord = model.wakeWord;
-                        bestConsFrames = model.consFrames;
-                    }
-                    dscnnIn.close();
-                    dscnnOut.close();
-                }
-            }
-
-            // 统一计算 melMean（音频能量水平，判断爆音/噪音）
-            if (melMean == 0f) {
-                for (int f = 0; f < dscnnMelTime; f++)
-                    for (int m = 0; m < N_MELS; m++)
-                        melMean += dscnnInput[0][f][m];
-                melMean /= (dscnnMelTime * N_MELS);
-            }
-
-            // 每50帧打印一次音频整体状态（判断环境噪音水平）
-            if (frameCounter % 50 == 0) {
-                float rms = 0;
-                for (short s : audio) rms += s * s;
-                rms = (float) Math.sqrt(rms / audio.length);
-                LogUtils.d(TAG, String.format(Locale.US,
-                        "[WakeFrame] frame=%d rms=%.0f gain=%.1f melMean=%.2f",
-                        frameCounter, rms, audioGain, melMean));
-            }
-
-            float effectiveThreshold = getEffectiveThreshold();
-            // 启动保护期：前5帧（约5秒）麦克风启动可能有爆音，阈值1.5倍减少误唤醒。
-            // （原30帧/翻倍致对话结束后30秒内唤醒困难——实测得分0.64仍被0.36阈值拦截，
-            //   保护期后0.18阈值得分0.96秒醒；爆音集中在录音头1秒，5帧足够）
-            if (frameCounter < 5) {
-                effectiveThreshold *= 1.5f;
-            }
-            float bgProb = 1.0f - bestSigmoid;
-            String detected = bestSigmoid > effectiveThreshold ? bestWord : null;
-
-            // 持续概率日志：只打印概率超过 0.02 的帧（接近触发就打印，方便分析误唤醒）
-            if (bestSigmoid > 0.02f) {
                 String logLine = String.format(Locale.US,
-                        "[WakeProb] frame=%d word=%s prob=%.4f threshold=%.4f gain=%.1f melMean=%.2f %s",
-                        frameCounter,
-                        bestWord != null ? bestWord : "-",
-                        bestSigmoid, effectiveThreshold, audioGain, melMean,
-                        detected != null ? "TRIGGER" : "");
+                        "[WakeProb] frame=%d word=%s prob=1.0000 threshold=%.4f gain=%.1f rms=%.0f TRIGGER",
+                        frameCounter, kw, getEffectiveThreshold(), audioGain, rms);
                 LogUtils.d(TAG, logLine);
 
                 // 测试日志记录
@@ -568,46 +381,42 @@ public class WakeWordEngine {
                     String time = new java.text.SimpleDateFormat("HH:mm:ss.SSS", Locale.US)
                             .format(new java.util.Date());
                     String csvLine = String.format(Locale.US,
-                            "%s, %s, %.3f, %.2f, %.1f, %s",
-                            time,
-                            bestWord != null ? bestWord : "-",
-                            bestSigmoid, effectiveThreshold, audioGain,
-                            detected != null ? "YES" : "no");
+                            "%s, %s, 1.000, %.2f, %.1f, YES",
+                            time, kw, getEffectiveThreshold(), audioGain);
                     testLogs.add(csvLine);
                     if (testLogListener != null) {
                         testLogListener.onLog(csvLine);
                     }
                 }
+
+                // 实时检测回调（触发时）
+                if (detectionListener != null) {
+                    detectionListener.onDetection(kw, 1.0f, rms, true);
+                }
+
+                return new DetectionResult(kw, 1.0f, 0f, 1);
             }
 
-            // 实时检测回调（用于校准向导，每一帧都回调，确保静音/干扰也有数据）
+            // 未触发：每帧回调（校准向导需要持续数据）
             if (detectionListener != null) {
-                detectionListener.onDetection(
-                        bestWord, bestSigmoid, melMean, detected != null);
+                detectionListener.onDetection(null, 0f, rms, false);
             }
-
-            return new DetectionResult(detected, bestSigmoid, bgProb, bestConsFrames);
-
-        } catch (OrtException e) {
-            LogUtils.e(TAG, "Inference error", e);
+            return null;
+        } catch (Exception e) {
+            LogUtils.e(TAG, "KWS inference error", e);
             return null;
         }
     }
 
     public void close() {
         try {
-            if (melSession != null) melSession.close();
-            if (multiKwSession != null) multiKwSession.close();
-            for (ModelSlot m : models) {
-                if (m.session != null) m.session.close();
-            }
-            // 注意：不要调用 env.close()！
-            // OrtEnvironment.getEnvironment() 返回的是全局单例，整个进程共享一个。
-            // 如果在这里关闭，服务被系统杀掉又重启（START_STICKY）时，
-            // 第二次创建 WakeWordEngine 会拿到已关闭的 env，导致崩溃或推理失败。
-            // 全局 env 应该在进程退出时由系统自动清理，不需要手动关闭。
-        } catch (OrtException e) {
-            LogUtils.e(TAG, "Error closing sessions", e);
+            if (stream != null) stream.release();
+            if (spotter != null) spotter.release();
+            stream = null;
+            spotter = null;
+            // 注意：sherpa-onnx 由 JNI 管理生命周期，release() 已释放引擎资源，无需关闭全局环境。
+        } catch (Exception e) {
+            LogUtils.e(TAG, "Error closing KWS engine", e);
         }
     }
 }
