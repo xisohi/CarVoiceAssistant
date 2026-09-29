@@ -544,9 +544,11 @@ public class WakeWordEngine {
             }
 
             float effectiveThreshold = getEffectiveThreshold();
-            // 启动保护期：前30帧（约30秒）麦克风可能有爆音，阈值翻倍减少误唤醒
-            if (frameCounter < 30) {
-                effectiveThreshold *= 2.0f;
+            // 启动保护期：前5帧（约5秒）麦克风启动可能有爆音，阈值1.5倍减少误唤醒。
+            // （原30帧/翻倍致对话结束后30秒内唤醒困难——实测得分0.64仍被0.36阈值拦截，
+            //   保护期后0.18阈值得分0.96秒醒；爆音集中在录音头1秒，5帧足够）
+            if (frameCounter < 5) {
+                effectiveThreshold *= 1.5f;
             }
             float bgProb = 1.0f - bestSigmoid;
             String detected = bestSigmoid > effectiveThreshold ? bestWord : null;
