@@ -1350,8 +1350,10 @@ class VoiceAssistantService : Service() {
         }
         // ★ LAZY 启动：先完成赋值再 start，确保协程 finally 里
         // recognitionJob = null 不会与赋值竞态（修复：快速完成时误清新 job）
-        recognitionJob!!.start()
+        // ★ P0 修复：start() 必须在协程体外（方法体内）调用——
+        // LAZY 协程不自动执行，若 start() 在协程体内则循环依赖、协程永不启动
         }
+        recognitionJob!!.start()
     }
 
     /**
