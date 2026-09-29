@@ -1031,18 +1031,28 @@ class VoiceAssistantService : Service() {
                 withContext(Dispatchers.Main) { resumeWake() }
                 return@launch
             }
-            val record = AudioRecord(
-                MediaRecorder.AudioSource.MIC,  // 对齐原厂：MIC模式，VOICE_RECOGNITION无实际增益
-                SpeechRecognizer.SAMPLE_RATE.toInt(),
-                AudioFormat.CHANNEL_IN_MONO,
-                AudioFormat.ENCODING_PCM_16BIT,
-                maxOf(minBuf * 8, 256_000)  // minBuf*8，最小256KB（约8秒缓冲）
-            )
-            // ★ activeRecord 在下方主循环 try 内赋值：若 AudioNoiseReducer.create()/startRecording()
-            // 抛异常（try 外），activeRecord 保持 null，不会悬挂指向已废弃的 record
-
-            // 初始化音频降噪（系统降噪 + 高通滤波器）
-            val recNoiseReducer = AudioNoiseReducer.create(record)
+            val record = try {
+                AudioRecord(
+                    MediaRecorder.AudioSource.MIC,  // 对齐原厂：MIC模式，VOICE_RECOGNITION无实际增益
+                    SpeechRecognizer.SAMPLE_RATE.toInt(),
+                    AudioFormat.CHANNEL_IN_MONO,
+                    AudioFormat.ENCODING_PCM_16BIT,
+                    maxOf(minBuf * 8, 256_000)  // minBuf*8，最小256KB（约8秒缓冲）
+                )
+            } catch (e: Exception) {
+                LogUtils.e("VoiceService", "AudioRecord 创建失败: ${e.message}")
+                offlineRecognitionActive = false  // ★ 复位互斥标志，避免永久拦截后续离线识别
+                withContext(Dispatchers.Main) { resumeWake() }
+                return@launch
+            }
+            // ★ 初始化/运行段统一保护：AudioNoiseReducer.create()/startRecording() 原先在 try 外，
+            // 抛异常会绕过 finally 导致 offlineRecognitionActive 永久卡 true（与 modelDir==null/minBuf<=0 同类泄漏），
+            // 统一由协程体末尾的 catch 清理并恢复唤醒
+            try {
+                // ★ 提前登记：record 一旦创建成功，onDestroy 即可 stop 中断阻塞的 read
+                activeRecord = record
+                // 初始化音频降噪（系统降噪 + 高通滤波器）
+                val recNoiseReducer = AudioNoiseReducer.create(record)
 
             currentState = State.LISTENING
             lastPartialText = ""
@@ -1136,9 +1146,6 @@ class VoiceAssistantService : Service() {
             val audioBuffer = java.io.ByteArrayOutputStream()
 
             try {
-                // ★ 主循环期间才需要 onDestroy 主动 stop 中断阻塞的 read()；
-                // 放在 try 内保证任何异常路径都会走 finally 清 null
-                activeRecord = record
                 loop@ while (true) {
                     // 从队列取音频帧（阻塞等待，最多等100ms，避免队列空时卡死）
                     val frame = audioQueue.poll(100, java.util.concurrent.TimeUnit.MILLISECONDS)
@@ -1330,10 +1337,21 @@ class VoiceAssistantService : Service() {
                 }
             }
             withContext(Dispatchers.Main) { handleText(finalText) }
+        } catch (e: Exception) {
+            // ★ 初始化/运行段异常统一清理：任何路径都复位互斥标志 + 清 activeRecord + 恢复唤醒
+            LogUtils.e("VoiceService", "离线识别异常: ${e.message}")
+            offlineRecognitionActive = false
+            activeRecord = null
+            try { record.stop() } catch (_: Exception) {}
+            try { record.release() } catch (_: Exception) {}
+            try { recognizer.release() } catch (_: Exception) {}
+            withContext(Dispatchers.Main) { resumeWake() }
+            return@launch
         }
         // ★ LAZY 启动：先完成赋值再 start，确保协程 finally 里
         // recognitionJob = null 不会与赋值竞态（修复：快速完成时误清新 job）
         recognitionJob!!.start()
+    }
     }
 
     /**
