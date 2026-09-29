@@ -61,7 +61,7 @@ class SkillExecutor(private val context: Context) {
     private val mediaSkill = MediaSkill(context)
     private val bluetoothWifiSkill = BluetoothWifiSkill(context)
     private val carControlSkill = CarControlSkill()
-    private val appLaunchSkill = AppLaunchSkill(context, mediaSkill)
+    private val appLaunchSkill = AppLaunchSkill(context, mediaSkill, navigationSkill)
 
     /**
      * 车控扩展接口（兼容旧代码，转发给 CarControlSkill）

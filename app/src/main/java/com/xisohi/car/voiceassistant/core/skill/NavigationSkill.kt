@@ -1,6 +1,7 @@
 package com.xisohi.car.voiceassistant.core.skill
 
 import android.content.Context
+import android.content.Intent
 import com.xisohi.car.voiceassistant.core.ExecutionResult
 import com.xisohi.car.voiceassistant.core.VoiceIntent
 import com.xisohi.car.voiceassistant.core.nav.AmapAutoLauncher
@@ -39,6 +40,37 @@ class NavigationSkill(private val context: Context) {
         TencentAutoLauncher(),    // 6. 腾讯地图车机版（只启动主界面，用户手动搜索）
         GeoLauncher()             // 7. 通用 geo: 协议（兜底）
     )
+
+    /**
+     * 打开导航应用（不做目的地搜索）——供 AppLaunchSkill 的"打开导航/打开地图"复用。
+     * 直接遍历 launchers 完整列表（车机版优先、不占麦优先，与导航搜索同一份清单），
+     * 避免在 AppLaunchSkill 重复维护地图包名导致列表不全/不同步。
+     * GeoLauncher 无包名（走 geo: URI），不参与"打开应用"。
+     */
+    fun launchApp(): ExecutionResult {
+        for (launcher in launchers) {
+            if (launcher.packageName.isBlank()) continue  // GeoLauncher 兜底不参与打开应用
+            val launchIntent = context.packageManager.getLaunchIntentForPackage(launcher.packageName)
+            if (launchIntent == null) continue
+            try {
+                launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                context.startActivity(launchIntent)
+                val message = when (launcher) {
+                    is AmapAutoLauncher -> "已打开高德地图车机版"
+                    is AmapMobileLauncher -> "已打开高德地图"
+                    is BaiduAutoLauncher -> "已打开百度地图汽车版"
+                    is BaiduMobileLauncher -> "已打开百度地图"
+                    is TencentMobileLauncher -> "已打开腾讯地图"
+                    is TencentAutoLauncher -> "已打开腾讯地图车机版"
+                    else -> "已打开导航应用"
+                }
+                return ExecutionResult(true, message, needsMicPause = launcher.needsMicPause)
+            } catch (e: Exception) {
+                android.util.Log.w("NavigationSkill", "启动导航应用失败 ${launcher.packageName}: ${e.message}")
+            }
+        }
+        return ExecutionResult(false, "未找到可用的导航应用")
+    }
 
     fun execute(intent: VoiceIntent): ExecutionResult {
         return when (intent.action) {

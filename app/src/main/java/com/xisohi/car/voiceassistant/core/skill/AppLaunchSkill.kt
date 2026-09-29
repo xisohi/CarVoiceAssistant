@@ -19,7 +19,8 @@ import com.xisohi.car.voiceassistant.core.VoiceIntent
  */
 class AppLaunchSkill(
     private val context: Context,
-    private val mediaSkill: MediaSkill
+    private val mediaSkill: MediaSkill,
+    private val navigationSkill: NavigationSkill
 ) {
 
     /** 应用名到包名/Action 的映射表 */
@@ -54,20 +55,6 @@ class AppLaunchSkill(
     /** 通用音乐关键词（不指定具体播放器，自动选择优先级最高的已安装播放器） */
     private val genericMusicNames = setOf("音乐", "播放器", "音乐播放器", "听歌", "放歌")
 
-    /**
-     * 「导航/地图」别名候选：按优先级启动已安装的地图应用。
-     * 优先级：车机版优先、不占麦优先（与 NavigationSkill 的 Launcher 排序一致）；
-     * 第三元 = 该应用语音助手是否占麦（true 时需暂停唤醒监听让麦）。
-     */
-    private val navCandidates = listOf(
-        Triple("高德地图车机版", "com.autonavi.amapauto", false),
-        Triple("百度地图汽车版", "com.baidu.naviauto", true),
-        Triple("高德地图", "com.autonavi.minimap", false),
-        Triple("百度地图", "com.baidu.BaiduMap", false),
-        Triple("腾讯地图", "com.tencent.map", false),
-        Triple("腾讯地图车机版", "com.tencent.wecarnavi", false),
-    )
-
     /** 设置项到 Settings Action 的映射 */
     private val settingsActionMap = mapOf(
         "蓝牙" to android.provider.Settings.ACTION_BLUETOOTH_SETTINGS,
@@ -100,11 +87,10 @@ class AppLaunchSkill(
             return ExecutionResult(false, "未安装任何音乐播放器")
         }
 
-        // 0.5 「导航/地图」别名：用户说"打开导航/打开地图"时按优先级启动已安装的地图应用。
-        // 不依赖应用名是否含"导航"二字（车机上地图应用通常叫"高德地图/百度地图"），
-        // 全部候选未安装时返回 null，交下方模糊匹配兜底。
+        // 0.5 「导航/地图」别名：复用 NavigationSkill 的完整地图列表（车机版优先、不占麦优先），
+        // 不依赖应用名是否含"导航"二字（车机上地图应用通常叫"高德地图/百度地图"）。
         if (name == "导航" || name == "地图") {
-            launchNavigationApp()?.let { return it }
+            return navigationSkill.launchApp()
         }
 
         // 1. 精确匹配已知应用
@@ -140,20 +126,8 @@ class AppLaunchSkill(
         return ExecutionResult(false, "未找到应用「$name」")
     }
 
-    /** 启动已安装的地图应用（按优先级：车机版优先、不占麦优先）；全部未安装返回 null 交模糊匹配兜底 */
-    private fun launchNavigationApp(): ExecutionResult? {
-        for ((label, pkg, needPause) in navCandidates) {
-            if (context.packageManager.getLaunchIntentForPackage(pkg) != null) {
-                return launchByPackage(pkg, label, needPause)
-            }
-        }
-        return null
-    }
-
-    /** 通过包名启动应用
-     * @param needsMicPause 拉起导航类应用且其语音助手占麦时为 true（TTS 播完后暂停唤醒监听给导航让麦）
-     */
-    private fun launchByPackage(packageName: String, displayName: String, needsMicPause: Boolean = false): ExecutionResult {
+    /** 通过包名启动应用 */
+    private fun launchByPackage(packageName: String, displayName: String): ExecutionResult {
         return try {
             val intent = context.packageManager.getLaunchIntentForPackage(packageName)
             if (intent != null) {
@@ -164,7 +138,7 @@ class AppLaunchSkill(
                 if (mediaSkill.isMusicPlayer(packageName)) {
                     mediaSkill.setActivePlayer(packageName)
                 }
-                ExecutionResult(true, "已打开$displayName", needsMicPause)
+                ExecutionResult(true, "已打开$displayName")
             } else {
                 ExecutionResult(false, "未安装$displayName")
             }
