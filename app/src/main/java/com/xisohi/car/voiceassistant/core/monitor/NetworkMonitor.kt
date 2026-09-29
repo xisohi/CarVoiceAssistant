@@ -86,8 +86,12 @@ class NetworkMonitor(
     // 网络变化防抖时间（5秒内的连续回调只处理一次）
     private val NETWORK_CHANGE_DEBOUNCE_MS = 5000L
 
-    // 网络探测URL（百度AI主站，中性探测，不会触发限流）
-    private val PROBE_URL = "https://aip.baidubce.com"
+    // ★ 网络探测URL：百度语音服务域名（与在线识别实际使用的链路一致）
+    // 之前用 aip.baidubce.com 主站：模拟器/隔离环境下该域名可能可达（返回403）而
+    // vop/openapi 不可达 → 误判"通"→ 通缓存长期有效 → 每次唤醒都白等百度超时。
+    // 探测目标与实际服务一致，才能代表"百度语音是否可用"：
+    // 外网正常 → vop 可达（4xx 也算通）；无外网/服务不可达 → 判不通 → 60秒负缓存 → 唤醒直接走离线。
+    private val PROBE_URL = "https://vop.baidu.com"
 
     // 探测超时时间（2秒）
     private val PROBE_TIMEOUT_MS = 2000
