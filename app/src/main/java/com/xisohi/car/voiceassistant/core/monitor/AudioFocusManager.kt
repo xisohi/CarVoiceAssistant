@@ -34,6 +34,10 @@ class AudioFocusManager(private val context: Context) {
     /** 音频焦点申请结果 */
     private var audioFocusGranted = false
 
+    /** 恢复媒体音量连续失败次数（车机 ROM 可能永久禁止改音量，达到上限后放弃重试并清状态） */
+    private var restoreFailCount = 0
+    private val MAX_RESTORE_FAILS = 3
+
     /** 音频焦点变化监听（空实现：焦点变化不主动处理，音量由直接修改兜底）。
      *  部分车机 ROM 对 requestAudioFocus(null,...) 处理异常，传非 null listener 更稳妥。 */
     private val focusListener = object : AudioManager.OnAudioFocusChangeListener {
@@ -73,6 +77,7 @@ class AudioFocusManager(private val context: Context) {
                 try {
                     audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, 0, 0)
                     isMediaVolumeMuted = true
+                    restoreFailCount = 0  // 新周期开始，重置失败计数
                     Log.d(TAG, "✅ 已直接降低媒体音量到 0（原始音量: $originalMediaVolume）")
                 } catch (e: SecurityException) {
                     Log.w(TAG, "❌ 车机系统禁止直接改音量: ${e.message}")
@@ -108,10 +113,19 @@ class AudioFocusManager(private val context: Context) {
                     // 恢复成功才清状态
                     isMediaVolumeMuted = false
                     originalMediaVolume = -1
+                    restoreFailCount = 0
                 } catch (e: SecurityException) {
                     Log.w(TAG, "⚠️ 车机系统禁止直接改音量: ${e.message}")
-                    // 恢复失败保持状态（isMediaVolumeMuted/originalMediaVolume 不动），
-                    // 下次 restoreMediaVolume() 重试恢复，避免"假装已恢复"但音量实际仍为 0
+                    // 恢复失败保持状态重试；但连续 MAX_RESTORE_FAILS 次失败说明车机 ROM 永久禁止，
+                    // 放弃重试并清状态——否则 isMediaVolumeMuted 永久为 true，
+                    // 用户手动调回音量后下次识别不再静音（识别率下降）且每次识别结束都打失败日志
+                    restoreFailCount++
+                    if (restoreFailCount >= MAX_RESTORE_FAILS) {
+                        Log.w(TAG, "连续 ${MAX_RESTORE_FAILS} 次恢复失败，放弃重试并清状态（车机可能永久禁止改音量）")
+                        isMediaVolumeMuted = false
+                        originalMediaVolume = -1
+                        restoreFailCount = 0
+                    }
                 }
             }
         } catch (e: Exception) {

@@ -161,11 +161,13 @@ object LogUtils {
         if (logDir == null) return
         lock.lock()
         try {
-            val today = fileDateFormat.format(Date())
+            // ★ 复用同一个 now/today：避免两次 format(Date()) 跨过零点导致 writer 与文件日期不一致
+            val now = Date()
+            val today = fileDateFormat.format(now)
             // 首次写入或跨天时重建 writer（同时做 5MB 大小轮转）
             if (bufWriter == null || writerDate != today) {
                 closeWriter()
-                val file = getTodayFile()
+                val file = File(logDir, "$today.txt")
                 if (file.exists() && file.length() > MAX_LOG_SIZE) {
                     val backup = File(logDir, "${file.nameWithoutExtension}_backup.txt")
                     if (backup.exists()) backup.delete()
@@ -175,7 +177,7 @@ object LogUtils {
                 writerDate = today
                 linesSinceFlush = 0
             }
-            val timestamp = dateFormat.format(Date())
+            val timestamp = dateFormat.format(now)
             bufWriter?.write("$timestamp [$level] $tag: $message\n")
             linesSinceFlush++
             if (linesSinceFlush >= FLUSH_LINE_THRESHOLD) {
@@ -217,8 +219,15 @@ object LogUtils {
     }
 
     private fun getTodayFile(): File {
-        val dateStr = fileDateFormat.format(Date())
-        return File(logDir, "$dateStr.txt")
+        // ★ SimpleDateFormat 非线程安全，所有 format 调用统一放在 lock 保护下
+        //（writeToFile 已持锁，此处 ReentrantLock 可重入）
+        lock.lock()
+        try {
+            val dateStr = fileDateFormat.format(Date())
+            return File(logDir, "$dateStr.txt")
+        } finally {
+            lock.unlock()
+        }
     }
 
     private fun readLog(file: File): String {

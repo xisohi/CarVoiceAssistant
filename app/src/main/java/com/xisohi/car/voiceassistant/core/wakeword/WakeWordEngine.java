@@ -36,20 +36,20 @@ public class WakeWordEngine {
     private static final String MEL_MODEL = "melspectrogram.onnx";
 
     /** 音频增益系数：放大输入音频，提高小声说话的检测率（唤醒阶段专用）。 */
-    private static float audioGain = 4.5f;
+    private static volatile float audioGain = 4.5f;
 
     /**
      * 识别专用增益：指令识别阶段使用，比唤醒增益保守，避免近场说话时削顶失真。
      * 唤醒是远场检测（用户可能离麦克风较远），需要较大增益；
      * 识别是指令阶段（用户通常已靠近或音量正常），过大会导致波形截断，反而降低 sherpa-onnx 识别率。
      */
-    private static float asrGain = 8.0f;
+    private static volatile float asrGain = 8.0f;
 
     /** 唤醒检测阈值：sigmoid 概率超过此值即判定为唤醒。降低可提高灵敏度。 */
-    private static float detectionThreshold = 0.025f;
+    private static volatile float detectionThreshold = 0.025f;
 
     /** 灵敏度档位：0=低, 1=中(默认), 2=高 */
-    private static int sensitivityLevel = 1;
+    private static volatile int sensitivityLevel = 1;
     // 车机环境优化的三档预设（麦克风远、环境噪音大，需要更低阈值和更高增益）
     // 低：保守（误唤醒少）；中：平衡（推荐日常使用）；高：灵敏（适合行驶中/小声）
     // 对齐原厂天琴语音(思必驰方案)：主唤醒词阈值0.18
@@ -168,7 +168,7 @@ public class WakeWordEngine {
     /** 帧号计数器，用于调试日志时序定位 */
     private int frameCounter = 0;
     /** 临时阈值覆盖（播放音乐时提高阈值减少误唤醒，-1 表示不覆盖） */
-    private static float tempThresholdOverride = -1f;
+    private static volatile float tempThresholdOverride = -1f;
 
     // ===== 唤醒灵敏度测试日志 =====
     /** 测试日志回调接口 */

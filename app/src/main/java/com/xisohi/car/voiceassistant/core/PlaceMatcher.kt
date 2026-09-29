@@ -119,6 +119,9 @@ class PlaceMatcher private constructor(context: Context) {
      * 重新进入管理页即生效（共享单例，服务内也会同步更新）。
      */
     fun reload() {
+        // ★ 并发约束：只能在主线程调用（clear + 重新加载非原子）。
+        // 当前调用方（PlaceManagerActivity.onResume）与 match()（VoiceAssistantService.handleText，
+        // 主线程执行）均在同一线程，无并发问题；若将来识别移到后台线程需加同步。
         places.clear()
         builtinNames.clear()
         val ctx = appContext ?: return

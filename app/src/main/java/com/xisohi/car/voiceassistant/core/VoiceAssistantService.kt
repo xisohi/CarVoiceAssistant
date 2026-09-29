@@ -242,6 +242,10 @@ class VoiceAssistantService : Service() {
     private lateinit var baiduAsrManager: BaiduAsrManager  // 百度语音识别（在线，识别率更高）
 
     private var recognitionJob: Job? = null
+    // ★ 当前活动的离线识别录音器（onDestroy 时用于主动 stop，中断阻塞中的 record.read()；
+    //    协程 finally 里会置回 null）
+    @Volatile
+    private var activeRecord: android.media.AudioRecord? = null
     // 小模型加载快（<1秒），不需要预加载，每次识别时直接创建即可
 
     // 唤醒音频采集线程
@@ -1034,6 +1038,7 @@ class VoiceAssistantService : Service() {
                 AudioFormat.ENCODING_PCM_16BIT,
                 maxOf(minBuf * 8, 256_000)  // minBuf*8，最小256KB（约8秒缓冲）
             )
+            activeRecord = record
 
             // 初始化音频降噪（系统降噪 + 高通滤波器）
             val recNoiseReducer = AudioNoiseReducer.create(record)
@@ -1308,6 +1313,7 @@ class VoiceAssistantService : Service() {
                 LogUtils.d("VoiceService", "最终识别文本（sherpa-onnx离线）: '$finalText'")
             } finally {
                 offlineRecognitionActive = false  // ★ 识别结束，允许下一次离线识别启动
+                activeRecord = null
                 try { record.stop() } catch (_: Exception) {}
                 record.release()
                 recNoiseReducer.release()
@@ -1761,6 +1767,10 @@ class VoiceAssistantService : Service() {
         // 正确顺序：先 scope.cancel()（使 finally 里的 withContext 立即抛 CancellationException 退出，
         // 不再需要主线程），再限时等待协程真正退出（scope.cancel 后通常毫秒级返回；1.5s 仅兜底极端情况）。
         scope.cancel()
+        // ★ 主动中断阻塞中的 record.read() 并通知录音线程退出：
+        // read(READ_BLOCKING) 不响应协程取消，若不 stop，录音协程会一直空转 sleep 循环
+        shouldStopRecording.set(true)
+        try { activeRecord?.stop() } catch (_: Exception) {}
         runBlocking { withTimeoutOrNull(1500L) { recognitionJob?.join() } }
         // 注意顺序：先停止唤醒线程（会等待线程结束），再关闭 ONNX session
         // 防止线程还在访问已关闭的 session 导致崩溃
