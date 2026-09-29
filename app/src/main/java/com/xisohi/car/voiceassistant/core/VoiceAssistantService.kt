@@ -1351,7 +1351,7 @@ class VoiceAssistantService : Service() {
         // ★ LAZY 启动：先完成赋值再 start，确保协程 finally 里
         // recognitionJob = null 不会与赋值竞态（修复：快速完成时误清新 job）
         recognitionJob!!.start()
-    }
+        }
     }
 
     /**
