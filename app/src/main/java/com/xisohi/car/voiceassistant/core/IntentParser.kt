@@ -16,6 +16,7 @@ data class VoiceIntent(
 private data class IntentRule(
     val id: String,
     val action: String,
+    val priority: Int,                 // ★ 新增：数字大的先匹配（默认 0）
     val patterns: List<Pattern>,
     val slots: List<String>,
     val grammar: List<String>
@@ -29,6 +30,11 @@ private data class IntentRule(
  *  2. 兜底 assets/intents.json（随 APK 内置）
  *
  * 每条规则含一个或多个正则 pattern，正则中使用命名组 (?<slot>…) 提取槽位。
+ *
+ * 规则优先级（priority）：
+ *  - 数值大的先匹配；相同 priority 保持 JSON 数组顺序（稳定排序）。
+ *  - 旧 JSON 不填 priority 时默认 0，等价于原数组顺序，行为不变。
+ *  - 建议：具体规则（完全匹配/固定词）优先级高；通配规则（"打开XX"/"去XX"）优先级低。
  */
 class IntentParser(context: Context) {
 
@@ -88,6 +94,7 @@ class IntentParser(context: Context) {
                 val o = arr.getJSONObject(i)
                 val id = o.optString("id", "")
                 val action = o.optString("action", "")
+                val priority = o.optInt("priority", 0)   // ★ 新增：默认 0
                 val slots = o.optJSONArray("slots")
                     ?.let { (0 until it.length()).map { j -> it.getString(j) } }
                     ?: emptyList()
@@ -103,8 +110,10 @@ class IntentParser(context: Context) {
                     ?.let { ga -> (0 until ga.length()).map { j -> ga.getString(j) } }
                     ?: emptyList()
                 if (id.isEmpty() || patterns.isEmpty()) null
-                else IntentRule(id, action, patterns, slots, grammar)
+                else IntentRule(id, action, priority, patterns, slots, grammar)
             }
+                // ★ 新增：按 priority 降序排序（稳定排序，相同 priority 保持 JSON 数组顺序）
+                .sortedByDescending { it.priority }
         } catch (_: Exception) {
             emptyList()
         }
