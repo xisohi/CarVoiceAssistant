@@ -262,7 +262,7 @@ public class WakeWordEngine {
         model.setTokens(KWS_TOKENS);
         model.setNumThreads(2);
         model.setProvider("cpu");
-        model.setModelType("zipformer");
+        model.setModelType("zipformer2"); // ★ 该 KWS 模型为 zipformer2 架构（metadata model_type=zipformer2），标错为 zipformer 会走 v1 解析强读 attention_dims 缺失导致 native _Exit 杀进程
         model.setModelingUnit("phone+ppinyin");
 
         KeywordSpotterConfig config = new KeywordSpotterConfig();
@@ -356,17 +356,28 @@ public class WakeWordEngine {
                 floatAudio[i] = audio[i] * audioGain / 32768.0f;
             }
 
-            // ★ 流式喂法（官方用法）：无条件 acceptWaveform，内部按 0.1s 子块喂入（zipformer
-            //   chunk-8≈160ms 粒度），每子块 is_ready 后 decode。注意 is_ready 表示"可解码"，
-            //   必须在 accept 之后判断——旧写法 is_ready 前置导致音频从未进模型（永不触发）。
+            // ★ 流式喂法（官方用法）：无条件 acceptWaveform，内部按 0.1s 子块喂入（zipformer2
+            //   chunk-8≈160ms 粒度）。每子块 accept 后 while is_ready → decode，且【每次 decode 后
+            //   立即 getResult】——keyword result 在 decode 内部实时更新，若等到帧尾才读，命中假设
+            //   会被后续 decode 的 beam 竞争覆盖（长关键词如"您好小飞"实测漏检）。命中即 reset 并
+            //   停止本帧剩余喂入。
             final int SUB_BLOCK = SAMPLE_RATE / 10;  // 0.1s = 1600 采样
+            String hitKw = null;
             for (int off = 0; off < floatAudio.length; off += SUB_BLOCK) {
                 int len = Math.min(SUB_BLOCK, floatAudio.length - off);
                 float[] chunk = java.util.Arrays.copyOfRange(floatAudio, off, off + len);
                 stream.acceptWaveform(chunk, SAMPLE_RATE);
-                if (spotter.isReady(stream)) {
+                while (spotter.isReady(stream)) {
                     spotter.decode(stream);
+                    KeywordSpotterResult rr = spotter.getResult(stream);
+                    if (rr != null && rr.getKeyword() != null && !rr.getKeyword().isEmpty()) {
+                        // 命中即复位流（防止同帧连续触发），记录后跳出
+                        spotter.reset(stream);
+                        hitKw = rr.getKeyword();
+                        break;
+                    }
                 }
+                if (hitKw != null) break;  // 已命中，本帧剩余子块不再喂
             }
 
             // 每50帧打印音频整体状态（判断环境噪音水平）
@@ -386,11 +397,8 @@ public class WakeWordEngine {
                 return null;
             }
 
-            KeywordSpotterResult r = spotter.getResult(stream);
-            if (r != null && r.getKeyword() != null && !r.getKeyword().isEmpty()) {
-                String kw = r.getKeyword();
-                // 触发后复位流，等待下一次唤醒
-                spotter.reset(stream);
+            if (hitKw != null) {
+                String kw = hitKw;
 
                 String logLine = String.format(Locale.US,
                         "[WakeProb] frame=%d word=%s prob=1.0000 threshold=%.4f gain=%.1f rms=%.0f TRIGGER",
