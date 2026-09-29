@@ -1038,7 +1038,8 @@ class VoiceAssistantService : Service() {
                 AudioFormat.ENCODING_PCM_16BIT,
                 maxOf(minBuf * 8, 256_000)  // minBuf*8，最小256KB（约8秒缓冲）
             )
-            activeRecord = record
+            // ★ activeRecord 在下方主循环 try 内赋值：若 AudioNoiseReducer.create()/startRecording()
+            // 抛异常（try 外），activeRecord 保持 null，不会悬挂指向已废弃的 record
 
             // 初始化音频降噪（系统降噪 + 高通滤波器）
             val recNoiseReducer = AudioNoiseReducer.create(record)
@@ -1135,6 +1136,9 @@ class VoiceAssistantService : Service() {
             val audioBuffer = java.io.ByteArrayOutputStream()
 
             try {
+                // ★ 主循环期间才需要 onDestroy 主动 stop 中断阻塞的 read()；
+                // 放在 try 内保证任何异常路径都会走 finally 清 null
+                activeRecord = record
                 loop@ while (true) {
                     // 从队列取音频帧（阻塞等待，最多等100ms，避免队列空时卡死）
                     val frame = audioQueue.poll(100, java.util.concurrent.TimeUnit.MILLISECONDS)
