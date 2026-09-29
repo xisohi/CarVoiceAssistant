@@ -41,9 +41,8 @@ public class WakeWordEngine {
     private static final String KWS_JOINER = KWS_DIR + "/joiner.onnx";
     private static final String KWS_TOKENS = KWS_DIR + "/tokens.txt";
     private static final String KWS_KEYWORDS = KWS_DIR + "/keywords.txt";
-    /** 唤醒词列表（与 keywords.txt 的 @ 后原始词一致，createStream 时显式传入） */
+    /** 唤醒词列表（与 keywords.txt 的 @ 后原始词一致，仅供显示/日志） */
     private static final String[] WAKE_WORDS = {"小飞", "小飞小飞", "您好小飞"};
-    private static final String WAKE_WORDS_CSV = "小飞,小飞小飞,您好小飞";
 
     public static final int SAMPLE_RATE = 16000;
     /** 录音帧大小（保持旧 mel 方案的 16080≈1秒，WakeAudioThread 依赖此值分配缓冲） */
@@ -219,16 +218,29 @@ public class WakeWordEngine {
 
     public WakeWordEngine(Context context) {
         appContext = context.getApplicationContext();
+        // ★ 懒加载：构造时不加载模型（5.4MB 主线程加载会吃穿 startForegroundService 的 5 秒窗口，
+        //   导致 RemoteServiceException 杀进程）。首次 process()（唤醒线程）时 ensureLoaded() 加载，
+        //   此时灵敏度/增益配置已应用（setSensitivity/setGainAndThreshold 置 rebuildRequested）。
+        LogUtils.i(TAG, "KWS 引擎懒加载模式（首次唤醒时加载模型，唤醒词: " + getWakeWordDisplay() + "）");
+    }
+
+    /** 确保 KWS 引擎已加载（唤醒线程 process 前调用；WakeAudioThread 单线程调用，安全） */
+    private boolean ensureLoaded() {
+        if (spotter != null) return true;
         try {
-            // 构造时立即加载引擎（首次唤醒即用默认参数）
             rebuildInternal(appContext);
             loaded = true;
+            // 首次加载已应用最新阈值/增益（rebuildInternal 读取当前静态字段），
+            // 清除重建标志，避免紧接的惰性重建再重复加载一次
+            rebuildRequested = false;
             LogUtils.i(TAG, "KWS 引擎加载成功，唤醒词: " + getWakeWordDisplay()
                     + "（threshold=" + detectionThreshold + ", gain=" + audioGain + "）");
+            return true;
         } catch (Exception e) {
             LogUtils.e(TAG, "Failed to load KWS models — check assets/kws/", e);
             errorMessage = e.getMessage();
             loaded = false;
+            return false;
         }
     }
 
@@ -263,8 +275,9 @@ public class WakeWordEngine {
         config.setNumTrailingBlanks(1);
 
         spotter = new KeywordSpotter(context.getAssets(), config);
-        // 显式传入关键词（与 keywords.txt 一致），不依赖 createStream 的 keywordsFile 解析
-        stream = spotter.createStream(WAKE_WORDS_CSV);
+        // ★ createStream("")：空串 = 使用 keywordsFile 中的全部关键词（ContextGraph 已编译）。
+        //   切勿传中文逗号串——native 编码失败会导致进程崩溃（SIGSEGV）。
+        stream = spotter.createStream("");
         framesProcessed = 0;
         frameCounter = 0;
     }
@@ -309,7 +322,7 @@ public class WakeWordEngine {
      * 调用方（WakeAudioThread）判断 result != null && wakeWord != null 即触发。
      */
     public DetectionResult process(short[] audio) {
-        if (!loaded || spotter == null || stream == null) return null;
+        if (!ensureLoaded()) return null;
         frameCounter++;
 
         // 惰性重建：增益/阈值修改后，下次 process 时重建引擎（单线程安全）
@@ -343,9 +356,17 @@ public class WakeWordEngine {
                 floatAudio[i] = audio[i] * audioGain / 32768.0f;
             }
 
-            if (spotter.isReady(stream)) {
-                stream.acceptWaveform(floatAudio, SAMPLE_RATE);
-                spotter.decode(stream);
+            // ★ 流式喂法（官方用法）：无条件 acceptWaveform，内部按 0.1s 子块喂入（zipformer
+            //   chunk-8≈160ms 粒度），每子块 is_ready 后 decode。注意 is_ready 表示"可解码"，
+            //   必须在 accept 之后判断——旧写法 is_ready 前置导致音频从未进模型（永不触发）。
+            final int SUB_BLOCK = SAMPLE_RATE / 10;  // 0.1s = 1600 采样
+            for (int off = 0; off < floatAudio.length; off += SUB_BLOCK) {
+                int len = Math.min(SUB_BLOCK, floatAudio.length - off);
+                float[] chunk = java.util.Arrays.copyOfRange(floatAudio, off, off + len);
+                stream.acceptWaveform(chunk, SAMPLE_RATE);
+                if (spotter.isReady(stream)) {
+                    spotter.decode(stream);
+                }
             }
 
             // 每50帧打印音频整体状态（判断环境噪音水平）

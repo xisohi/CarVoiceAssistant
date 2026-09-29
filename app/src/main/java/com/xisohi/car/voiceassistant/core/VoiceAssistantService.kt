@@ -256,6 +256,12 @@ class VoiceAssistantService : Service() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        // ★ 立即进入前台：startForegroundService 后 Android 8+ 要求 5 秒内 startForeground，
+        //   否则 RemoteServiceException 杀进程。通知渠道 + 前台通知必须在任何耗时初始化之前完成
+        //   （此前 startForeground 在 onStartCommand 才调用，KWS 模型主线程加载会吃穿 5 秒窗口）。
+        createChannel()
+        startForegroundCompat()
+
         // 初始化音频焦点管理器
         audioFocusManager = AudioFocusManager(this)
         // 初始化网络监控器
@@ -277,13 +283,11 @@ class VoiceAssistantService : Service() {
         registerCarWakeupReceiver()
 
         currentState = State.IDLE
-        createChannel()
 
-        // 初始化官方 WakeWordEngine（构造函数自动加载 model_info.json）
+        // 初始化官方 WakeWordEngine（★ 懒加载：构造只注册配置，首次唤醒 process() 时才加载
+        // 5.4MB KWS 模型——服务 onCreate 不再被模型加载阻塞，startForeground 5 秒窗口安全）
         wakeWordEngine = WakeWordEngine(this)
-        if (!wakeWordEngine.isLoaded) {
-            LogUtils.e("VoiceService", "唤醒引擎加载失败: ${wakeWordEngine.errorMessage}")
-        }
+        LogUtils.i("VoiceService", "唤醒引擎就绪（懒加载，首次唤醒时加载 KWS 模型）")
         // 读取保存的灵敏度配置（手动参数优先，否则用档位）
         val prefs = getSharedPreferences("voice_assistant_prefs", MODE_PRIVATE)
         val savedThreshold = prefs.getFloat("wake_threshold_override", -1f)
