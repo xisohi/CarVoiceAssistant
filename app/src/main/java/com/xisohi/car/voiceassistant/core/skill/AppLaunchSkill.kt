@@ -47,8 +47,8 @@ class AppLaunchSkill(
         // 设置
         "设置" to "com.android.settings",
         "系统设置" to "com.android.settings",
-        // 浏览器
-        "浏览器" to "com.android.browser",
+        // 浏览器：不写死包名（车机浏览器包名各异：com.android.browser/chrome/厂商定制），
+        // ★ 审计 #20 修复：交给下方模糊匹配（应用名含"浏览器"）兜底，避免车机上精确匹配失败即报"未安装"
     )
 
     /** 通用音乐关键词（不指定具体播放器，自动选择优先级最高的已安装播放器） */

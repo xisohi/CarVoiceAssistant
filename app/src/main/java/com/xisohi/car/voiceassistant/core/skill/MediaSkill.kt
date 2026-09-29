@@ -176,6 +176,8 @@ class MediaSkill(private val context: Context) {
      * [MusicFree 专用] 播放指定序号的搜索结果。
      * 已移除无障碍自动搜索，需要用户手动在播放器中选择。
      */
+    // ★ 审计 #21 修复：无障碍自动搜索已移除，本方法恒返回失败；标注 @Deprecated 便于后续清理
+    @Deprecated("无障碍自动搜索已移除，恒返回失败；请手动在播放器中选择歌曲")
     fun selectSong(indexStr: String): ExecutionResult {
         val index = parseSongIndex(indexStr)
         if (index <= 0) return ExecutionResult(false, "请说第几首，比如第三首")

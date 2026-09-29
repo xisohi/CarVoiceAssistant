@@ -108,7 +108,10 @@ class VoiceAssistantService : Service() {
 
         // 需要监听的唤醒广播 Action 列表
         // 已通过系统日志验证：熄火时发送 DO_SHUTDOWN/ACC_OFF/DO_SLEEP，点火时发送 USER_PRESENT/DO_WAKEUP/DO_WAKEUP_DOFUN/ACC_ON
-        private val WAKEUP_ACTIONS = listOf(
+        // ★ 审计 #23 修复：允许通过 SharedPreferences("voice_assistant_prefs", "car_wakeup_actions", StringSet) 覆盖——
+        // 不同车机厂商广播不同，被厂商定制替换时可写入自定义列表后重启服务；无自定义时用内置默认 7 个。
+        private const val KEY_CAR_WAKEUP_ACTIONS = "car_wakeup_actions"
+        private val DEFAULT_WAKEUP_ACTIONS = listOf(
             // 屏幕点亮（熄火点火时屏幕会亮）
             android.content.Intent.ACTION_SCREEN_ON,
             // 电源连接（ACC 点火时可能触发）
@@ -121,6 +124,11 @@ class VoiceAssistantService : Service() {
             "com.unisound.intent.action.DO_WAKEUP_DOFUN",  // 点火时确认存在（新增）
             "com.unisound.intent.action.Baios_WAKEUP"      // 360 用的唤醒广播，保留备用
         )
+        private val WAKEUP_ACTIONS: List<String> by lazy {
+            val custom = instance?.getSharedPreferences("voice_assistant_prefs", MODE_PRIVATE)
+                ?.getStringSet(KEY_CAR_WAKEUP_ACTIONS, null)
+            if (custom.isNullOrEmpty()) DEFAULT_WAKEUP_ACTIONS else custom.toList()
+        }
 
         // 本次录音的 RMS 峰值（设置页显示这个值，车机上看不到日志，峰值更有意义）
         // 下次录音开始时重置为0
@@ -612,9 +620,6 @@ class VoiceAssistantService : Service() {
                 return
             }
 
-            // 初始化音频降噪（系统降噪 + 高通滤波器）
-            val noiseReducer = AudioNoiseReducer.create(record)
-
             // 官方引擎需要的帧大小（由 engine.audioSamplesNeeded 获取）
             val frameSize = wakeWordEngine.audioSamplesNeeded
             if (frameSize <= 0) {
@@ -648,6 +653,10 @@ class VoiceAssistantService : Service() {
                 record.release()
                 return
             }
+            // 初始化音频降噪（系统降噪 + 高通滤波器）
+            // ★ 审计 #4 修复：AudioNoiseReducer.create() 移到 startRecording() 成功之后创建——
+            // 修复前在 start 之前创建，audioSessionId 尚处未激活状态，AEC/AGC 可能拿不到有效会话而静默失效。
+            val noiseReducer = AudioNoiseReducer.create(record)
             LogUtils.d("WakeAudioThread", "开始录音，帧大小=$frameSize")
 
             try {
@@ -1080,14 +1089,16 @@ class VoiceAssistantService : Service() {
             try {
                 // ★ 提前登记：record 一旦创建成功，onDestroy 即可 stop 中断阻塞的 read
                 activeRecord = record
-                // 初始化音频降噪（系统降噪 + 高通滤波器）
-                val recNoiseReducer = AudioNoiseReducer.create(record)
 
             currentState = State.LISTENING
             lastPartialText = ""
             record.startRecording()
             LogUtils.d("VoiceService", "开始录音识别")
             sendRecognitionLog("🎙️ 开始录音识别")
+            // 初始化音频降噪（系统降噪 + 高通滤波器）
+            // ★ 审计 #4 修复：AudioNoiseReducer.create() 移到 startRecording() 成功之后——
+            // 修复前在 start 之前创建，audioSessionId 尚处未激活状态，AEC/AGC 可能拿不到有效会话而静默失效。
+            val recNoiseReducer = AudioNoiseReducer.create(record)
 
             // ===== 环境噪音采样，动态设定静音阈值 =====
             val warmupSamples = (NOISE_WARMUP_MS * SpeechRecognizer.SAMPLE_RATE / 1000).toInt()
@@ -1628,8 +1639,10 @@ class VoiceAssistantService : Service() {
             FloatViewService.updateSubtitle("🔍 $searchingText")
             ttsEngine.speak(searchingText)
 
-            // 在后台线程执行网络请求
-            Thread {
+            // 在后台协程执行网络请求
+            // ★ 审计 #8 修复：裸 Thread{} 改为 scope.launch(Dispatchers.IO)——统一生命周期管理：
+            // 服务销毁时 scope.cancel() 级联取消进行中的查询；线程池复用，避免每次 new Thread。
+            scope.launch(Dispatchers.IO) {
                 try {
                     // 从识别文本中提取时间词（今天/明天/后天）
                     val timeIndex = skillExecutor.getTimeIndex(correctedText)
@@ -1682,7 +1695,7 @@ class VoiceAssistantService : Service() {
                         resumeWake()
                     }
                 }
-            }.start()
+            }
             return
         }
 
@@ -1704,8 +1717,9 @@ class VoiceAssistantService : Service() {
             FloatViewService.updateSubtitle("⛽ $searchingText")
             ttsEngine.speak(searchingText)
 
-            // 在后台线程执行网络请求
-            Thread {
+            // 在后台协程执行网络请求
+            // ★ 审计 #8 修复：裸 Thread{} 改为 scope.launch(Dispatchers.IO)——统一生命周期管理。
+            scope.launch(Dispatchers.IO) {
                 try {
                     val oilResult = skillExecutor.queryOilPrice(specifiedProvince)
                     LogUtils.i("VoiceService", "油价查询结果: $oilResult")
@@ -1738,7 +1752,7 @@ class VoiceAssistantService : Service() {
                         resumeWake()
                     }
                 }
-            }.start()
+            }
             return
         }
 

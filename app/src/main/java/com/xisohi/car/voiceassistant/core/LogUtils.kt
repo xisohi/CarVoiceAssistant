@@ -233,10 +233,17 @@ object LogUtils {
     private fun readLog(file: File): String {
         flushBeforeRead()  // 读取前先落盘缓冲
         if (!file.exists()) return "（日志文件不存在）"
+        // ★ 审计 #18 修复：readText 也放进 lock 内（ReentrantLock 可重入）——
+        // 修复前 flush 持锁、readText 在锁外，写入线程可能正在写同一文件，读到写一半的内容。
+        lock.lock()
         return try {
-            file.readText()
-        } catch (e: Exception) {
-            "读取日志失败: ${e.message}"
+            try {
+                file.readText()
+            } catch (e: Exception) {
+                "读取日志失败: ${e.message}"
+            }
+        } finally {
+            lock.unlock()
         }
     }
 

@@ -381,9 +381,13 @@ class BaiduAsrManager private constructor(private val context: Context) {
                 // 延迟 150ms 再 unregisterListener 和释放引用，给百度SDK异步处理 asr.exit 的时间
                 // 用局部变量 oldManager 保存引用，避免覆盖新创建的引擎
                 handler.postDelayed({
-                    // 只在没有新引擎创建时才清理旧引擎，避免误注销新引擎的监听
+                    // ★ 审计 #6 修复：无条件注销旧引擎的 listener——
+                    // 修复前仅当 asrManager === oldManager 才 unregister；若 150ms 内 init() 已替换新引擎，
+                    // 旧引擎 listener 永远不会注销（EventManager 引用泄漏）。
+                    // 现在：unregister 作用于局部引用 oldManager，不会误伤新引擎；
+                    // 仅当未被替换（仍是当前引擎）时才置空全局引用。
+                    try { oldManager.unregisterListener(eventListener) } catch (_: Exception) {}
                     if (asrManager === oldManager) {
-                        try { oldManager.unregisterListener(eventListener) } catch (_: Exception) {}
                         asrManager = null
                         factory = null
                         Log.d(TAG, "百度语音识别引擎延迟释放完成")

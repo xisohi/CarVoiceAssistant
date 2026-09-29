@@ -199,6 +199,11 @@ class PlaceMatcher private constructor(context: Context) {
         var bestSimilarity = 0f
 
         for (place in places) {
+            // ★ 审计 #10 修复：候选硬约束——拼音首字符必须一致 且 编辑距离 ≤ 2。
+            // 修复前仅靠 0.70 相似度阈值，"北京"vs"南京"（beijing/nanjing，距离1，相似度0.857）会误匹配；
+            // 地名词库越大误匹配风险越高。约束不影响"牛为春"→"牛圩村"这类同音近音纠正（首字同、距离1）。
+            if (inputPinyin.firstOrNull() != place.pinyin.firstOrNull()) continue
+            if (levenshteinDistance(inputPinyin, place.pinyin) > 2) continue
             val similarity = calculateSimilarity(inputPinyin, place.pinyin)
             if (similarity > bestSimilarity) {
                 bestSimilarity = similarity

@@ -143,7 +143,10 @@ class VolumeSkill(private val context: Context) {
             
             android.util.Log.d("VolumeSkill", "模拟音量键: current=$current, target=$target, diff=$diff")
             
-            repeat(kotlin.math.abs(diff)) {
+            // ★ 审计 #14 修复：限制最大按键次数（20 次）——
+            // 修复前 diff 无上限（如 max=100、目标 100% 时按键 100 次），慢且可能触发系统限流。
+            val steps = kotlin.math.min(kotlin.math.abs(diff), 20)
+            repeat(steps) {
                 if (diff > 0) {
                     simulateVolumeKey(true)
                 } else {

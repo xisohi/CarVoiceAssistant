@@ -101,12 +101,16 @@ class WeatherSkill(private val context: Context) {
                 return "天气查询失败，服务器返回 $responseCode"
             }
 
-            val inputStream = conn.inputStream
-            val json = inputStream.bufferedReader().use { it.readText() }
-            inputStream.close()
-            conn.disconnect()
-
-            parseWeatherJson(json, targetCity, timeIndex)
+            // ★ 审计 #15 修复：conn.disconnect() 放进 finally——
+            // 修复前 readText() 抛异常时 disconnect() 不会执行（连接泄漏）；
+            // inputStream.close() 与 bufferedReader().use 重复关闭（无害）一并移除。
+            try {
+                val inputStream = conn.inputStream
+                val json = inputStream.bufferedReader().use { it.readText() }
+                parseWeatherJson(json, targetCity, timeIndex)
+            } finally {
+                conn.disconnect()
+            }
         } catch (e: java.net.SocketTimeoutException) {
             "天气查询超时，请检查网络连接"
         } catch (e: java.net.UnknownHostException) {

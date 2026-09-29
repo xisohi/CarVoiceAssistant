@@ -259,6 +259,9 @@ class OilPriceSkill(private val context: Context) {
     /**
      * 获取油价数据（带当日缓存，双源自动切换）
      */
+    // ★ 审计 #16 修复：加 @Synchronized——修复前 cachedDate/cachedPrices 无同步，
+    // 并发查询（天气/油价同时触发）会重复 fetchOilPricesFromUrl 且缓存读写竞态。
+    @Synchronized
     private fun getOilPrices(): Map<String, OilPriceInfo> {
         val today = todayStr()
         if (cachedDate == today && cachedPrices != null) {

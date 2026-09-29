@@ -72,10 +72,21 @@ class SpeechRecognizer private constructor(
          * 如果模型已预加载缓存，直接复用 OnlineRecognizer，只创建 OnlineStream（毫秒级）
          * 否则创建新的 OnlineRecognizer（耗时，车机上可能 1-2 秒）
          *
+         * ★ 审计 #1 修复：整个方法加 @Synchronized，缓存读/写/替换在同一把锁内完成。
+         * 修复前：缓存读（cachedRecognizer/cachedModelDir）在锁外判断，且"路径不同"时
+         * 锁内 release 旧缓存——若另一线程正用旧识别器跑活动流，release 会使其 stream 失效崩溃。
+         * 修复后：create 全流程串行，同一时刻只有一个识别器被创建/替换；
+         * 上层（VoiceAssistantService.offlineRecognitionActive）也保证同一时刻只有一个识别会话，双保险。
+         *
+         * 注意：缓存不区分 grammar——复用缓存时 decodingMethod 沿用首次 buildRecognizer 的值。
+         * 项目当前始终以 create(modelDir) 无 grammar 调用（greedy_search 自由听写），无实际影响；
+         * 若未来引入热词模式，需在缓存命中时校验 decodingMethod 或按 grammar 重建。
+         *
          * @param grammar 可选热词短语（对应原 Vosk grammar 词表）。
          *        传入非空列表时启用 modified_beam_search 解码 + 热词提升，提高指令命中率；
          *        为空时使用 greedy_search 自由听写（默认，项目当前使用方式）。
          */
+        @Synchronized
         fun create(modelDir: File, grammar: List<String>? = null): SpeechRecognizer {
             val dirPath = modelDir.absolutePath
             val recognizer: OnlineRecognizer
@@ -87,12 +98,10 @@ class SpeechRecognizer private constructor(
             } else {
                 // 没有缓存，创建新识别器（同时缓存起来供后续使用）
                 recognizer = buildRecognizer(modelDir, grammar)
-                synchronized(this) {
-                    if (cachedRecognizer == null || cachedModelDir != dirPath) {
-                        try { cachedRecognizer?.release() } catch (_: Exception) {}
-                        cachedRecognizer = recognizer
-                        cachedModelDir = dirPath
-                    }
+                if (cachedRecognizer == null || cachedModelDir != dirPath) {
+                    try { cachedRecognizer?.release() } catch (_: Exception) {}
+                    cachedRecognizer = recognizer
+                    cachedModelDir = dirPath
                 }
             }
 
