@@ -181,6 +181,9 @@ class VoiceAssistantService : Service() {
     private lateinit var audioFocusManager: AudioFocusManager
     // 没听懂后是否需要重新监听（true=TTS说完后直接开始录音，不需要唤醒词）
     private var isRetryListening = false
+    // "网络不好，请再说一遍"提示播报中（true=TTS播完后直接启动离线识别，不需要唤醒词）
+    // 用于在线识别失败/超时回退场景：用户第一遍语音已丢，提示后让用户重说
+    private var isNetworkRetryPromptSpeaking = false
 
     // 待执行的导航意图（TTS播完后再拉起高德，避免TTS和高德语音同时响）
     private var pendingNavIntent: VoiceIntent? = null
@@ -200,7 +203,11 @@ class VoiceAssistantService : Service() {
     // 连续在线识别失败次数（用于网络不通或Key错误时自动降级为离线，避免每次都要等在线超时）
     private var consecutiveOnlineFailures = 0
     private val MAX_CONSECUTIVE_ONLINE_FAILURES = 3  // 连续失败3次后暂时降级为离线
-    private val ONLINE_RECOGNITION_TIMEOUT_MS = 15_000L  // 在线识别超时15秒（网络不通时百度可能一直不返回）
+    // ★ 在线识别超时6秒：实测无网环境下百度 SDK token 获取失败内部重试可达 14 秒，
+    // 期间用户第一遍语音已被百度录走丢弃，回退离线时用户早已说完 → 离线识别必然为空。
+    // 缩短到 6 秒：正常网络下流式识别 1-4 秒即出结果，6 秒足够；
+    // 无网/弱网下应用层先于 SDK 失败回调触发回退，用户语音仍在录音窗口内，离线能接住。
+    private val ONLINE_RECOGNITION_TIMEOUT_MS = 6_000L
     // 在线识别超时定时器（用于取消超时回调）
     private var onlineTimeoutRunnable: Runnable? = null
     private var recognitionSessionId = 0L  // 识别会话ID，防止旧协程误清新job
@@ -331,6 +338,7 @@ class VoiceAssistantService : Service() {
                     // 如果已经是 IDLE 且没有待处理标志，说明是重复回调，忽略
                     // 注意：pendingNavIntent 和 pendingExternalNavPause 也是待处理标志，不能忽略
                     if (currentState == State.IDLE && !isWakePromptSpeaking && !isRetryListening
+                        && !isNetworkRetryPromptSpeaking
                         && pendingNavIntent == null && !pendingExternalNavPause) {
                         return
                     }
@@ -355,6 +363,19 @@ class VoiceAssistantService : Service() {
                         mainHandler.postDelayed({
                             muteMediaVolume()
                             startRecognition()
+                        }, 50)
+                        return
+                    }
+                    // 如果是"网络不好，请再说一遍"刚说完，启动离线识别（用户会重说）
+                    // 注：若 5 秒兜底已抢先启动离线识别，startRecognitionOffline() 的
+                    // offlineRecognitionActive 互斥标志会拦截重复启动，无副作用
+                    if (isNetworkRetryPromptSpeaking) {
+                        isNetworkRetryPromptSpeaking = false
+                        LogUtils.d("VoiceService", "网络提示播报完成，开始离线识别")
+                        // 延迟 50ms 再开始录音，确保 TTS 完全停止，不被录进语音
+                        mainHandler.postDelayed({
+                            muteMediaVolume()
+                            startRecognitionOffline()
                         }, 50)
                         return
                     }
@@ -930,15 +951,22 @@ class VoiceAssistantService : Service() {
         LogUtils.w("VoiceService", "连续在线失败次数: $consecutiveOnlineFailures / $MAX_CONSECUTIVE_ONLINE_FAILURES")
         // ★ 标记：本次是在线失败回退离线，防止离线失败后又重试在线导致无限循环
         isFallbackFromOnline = true
-        // ★ 不播报"在线识别失败"，静默降级
-        // 用户体验：用户唤醒后说指令，系统应该直接执行，而不是告诉用户"识别失败"
-        // 直接走离线识别，用户感知是"多等了几秒"，而不是"被系统告知失败"
-        // 延迟800ms，给百度SDK释放麦克风的时间
-        val delayMs = 800L
-        LogUtils.d("VoiceService", "延迟 ${delayMs}ms 后启动离线识别（静默降级）")
+        // ★ 播报"网络不好，请再说一遍"：
+        // 用户第一遍语音已被在线识别录走丢弃（超时/失败），需要用户重说。
+        // TTS 播报（约1-2秒）天然覆盖了原 800ms 的"等百度释放麦克风"窗口，
+        // 播报完成（onSpeakDone）后再启动离线录音，避免把提示音录进识别音频。
+        isNetworkRetryPromptSpeaking = true
+        LogUtils.i("VoiceService", "网络不好，播报'请再说一遍'提示后开始离线识别")
+        ttsEngine.speak(getString(R.string.tts_network_retry_prompt))
+        // ★ 超时兜底：若 onSpeakDone 未回调（TTS引擎异常），5秒后仍启动离线识别，避免卡死。
+        // 注意：不清 isNetworkRetryPromptSpeaking —— 若兜底已启动离线（互斥标志拦截重复），
+        // 迟到的 onSpeakDone 走网络分支再调 startRecognitionOffline() 会被 offlineRecognitionActive 拦住。
         mainHandler.postDelayed({
-            startRecognitionOffline()
-        }, delayMs)
+            if (isNetworkRetryPromptSpeaking) {
+                LogUtils.w("VoiceService", "网络提示播报超时（5秒未收到onSpeakDone），直接启动离线识别")
+                startRecognitionOffline()
+            }
+        }, 5000)
     }
 
     /**

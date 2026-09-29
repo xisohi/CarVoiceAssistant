@@ -93,6 +93,7 @@
     <string name="tts_not_heard">没有听清，请再说一遍</string>
     <string name="subtitle_not_understood">❌ 没听懂，请重说</string>
     <string name="tts_not_understood">没听懂，请重说</string>
+    <string name="tts_network_retry_prompt">网络不好，请再说一遍</string>
     <string name="subtitle_cancelled">已取消</string>
     <string name="result_executed">已执行: %1$s</string>
     <string name="result_unmatched">未匹配: %1$s</string>
