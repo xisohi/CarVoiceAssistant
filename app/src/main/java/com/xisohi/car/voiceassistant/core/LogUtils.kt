@@ -28,6 +28,13 @@ object LogUtils {
     private var context: Context? = null
     private var logDir: File? = null
 
+    // ★ 缓冲写入：避免每行日志都 open/close 文件句柄（唤醒线程/识别循环日志量大时降低 IO 抖动）
+    // 每 FLUSH_LINE_THRESHOLD 行 flush 一次；读取/导出前会主动 flush，进程被杀最多丢最后不足 100 行
+    private var bufWriter: java.io.BufferedWriter? = null
+    private var writerDate: String? = null
+    private var linesSinceFlush = 0
+    private val FLUSH_LINE_THRESHOLD = 100
+
     private val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault())
     private val fileDateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
 
@@ -128,6 +135,7 @@ object LogUtils {
      * 获取今天的日志文件路径（用于分享/导出）
      */
     fun getTodayLogFile(): File? {
+        flushBeforeRead()  // 导出前先落盘缓冲
         val file = getTodayFile()
         return if (file.exists()) file else null
     }
@@ -138,6 +146,7 @@ object LogUtils {
     fun clearAllLogs() {
         lock.lock()
         try {
+            closeWriter()  // 先关闭并删除缓冲 writer，避免删除后仍写旧文件句柄
             if (logDir != null && logDir!!.exists()) {
                 logDir!!.listFiles()?.forEach { it.delete() }
             }
@@ -152,18 +161,56 @@ object LogUtils {
         if (logDir == null) return
         lock.lock()
         try {
-            val file = getTodayFile()
-            // 如果文件太大，重命名为备份文件，创建新文件
-            if (file.exists() && file.length() > MAX_LOG_SIZE) {
-                val backup = File(logDir, "${file.nameWithoutExtension}_backup.txt")
-                if (backup.exists()) backup.delete()
-                file.renameTo(backup)
+            val today = fileDateFormat.format(Date())
+            // 首次写入或跨天时重建 writer（同时做 5MB 大小轮转）
+            if (bufWriter == null || writerDate != today) {
+                closeWriter()
+                val file = getTodayFile()
+                if (file.exists() && file.length() > MAX_LOG_SIZE) {
+                    val backup = File(logDir, "${file.nameWithoutExtension}_backup.txt")
+                    if (backup.exists()) backup.delete()
+                    file.renameTo(backup)
+                }
+                bufWriter = java.io.BufferedWriter(java.io.FileWriter(file, true), 8192)
+                writerDate = today
+                linesSinceFlush = 0
             }
             val timestamp = dateFormat.format(Date())
-            val logLine = "$timestamp [$level] $tag: $message\n"
-            FileWriter(file, true).use { it.write(logLine) }
+            bufWriter?.write("$timestamp [$level] $tag: $message\n")
+            linesSinceFlush++
+            if (linesSinceFlush >= FLUSH_LINE_THRESHOLD) {
+                bufWriter?.flush()
+                linesSinceFlush = 0
+            }
         } catch (e: Exception) {
             android.util.Log.w("LogUtils", "写入日志文件失败: ${e.message}")
+        } finally {
+            lock.unlock()
+        }
+    }
+
+    /**
+     * 关闭当前缓冲 writer（读取/清空/销毁前调用，保证缓冲内容落盘）
+     */
+    private fun closeWriter() {
+        try {
+            bufWriter?.flush()
+            bufWriter?.close()
+        } catch (_: Exception) {
+        }
+        bufWriter = null
+        writerDate = null
+        linesSinceFlush = 0
+    }
+
+    /**
+     * 读取前把缓冲内容落盘，避免漏读未 flush 的日志
+     */
+    private fun flushBeforeRead() {
+        lock.lock()
+        try {
+            bufWriter?.flush()
+        } catch (_: Exception) {
         } finally {
             lock.unlock()
         }
@@ -175,6 +222,7 @@ object LogUtils {
     }
 
     private fun readLog(file: File): String {
+        flushBeforeRead()  // 读取前先落盘缓冲
         if (!file.exists()) return "（日志文件不存在）"
         return try {
             file.readText()

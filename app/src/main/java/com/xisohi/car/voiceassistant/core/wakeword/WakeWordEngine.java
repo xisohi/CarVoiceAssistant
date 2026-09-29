@@ -132,6 +132,7 @@ public class WakeWordEngine {
     // 注意：以下复用缓冲（reuseFloatAudio/reuseDscnnInput/reuseFlatInput）仅限单线程使用，
     // 调用方保证 process() 只由 WakeAudioThread 单线程调用；若将来多线程并发调用会互相踩踏。
     private float[] reuseFloatAudio = null;   // 长度 = audio.length（正常固定为 audioSamplesNeeded）
+    private float[][] reuseMel2d = null;      // mel2d 复用（frames 变化时扩容）
     private float[][][] reuseDscnnInput = null; // [1][dscnnMelTime][N_MELS]，构造后尺寸固定
     private float[] reuseFlatInput = null;    // [dscnnMelTime * N_MELS]
 
@@ -406,7 +407,11 @@ public class WakeWordEngine {
             if (frames < dscnnMelTime / 4) return null;  // need at least some frames
 
             // 3. Apply transform: x/10 + 2
-            float[][] mel2d = new float[frames][N_MELS];
+            // ★ 复用缓冲：frames 变化时扩容，避免每帧 new 数组
+            if (reuseMel2d == null || reuseMel2d.length != frames) {
+                reuseMel2d = new float[frames][N_MELS];
+            }
+            float[][] mel2d = reuseMel2d;
             for (int f = 0; f < frames; f++) {
                 for (int m = 0; m < N_MELS; m++) {
                     mel2d[f][m] = mel[0][0][f][m] / 10.0f + 2.0f;

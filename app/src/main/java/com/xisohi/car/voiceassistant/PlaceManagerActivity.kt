@@ -57,6 +57,13 @@ class PlaceManagerActivity : AppCompatActivity() {
         }, 300)
     }
 
+    override fun onResume() {
+        super.onResume()
+        // 重新进入页面时重载词库（共享单例；用户手动编辑 places_custom.json 后重新进入即生效）
+        placeMatcher.reload()
+        refreshPlaces()
+    }
+
     private fun addPlace() {
         val name = binding.etPlaceName.text?.toString()?.trim() ?: ""
         val pinyin = binding.etPlacePinyin.text?.toString()?.trim() ?: ""

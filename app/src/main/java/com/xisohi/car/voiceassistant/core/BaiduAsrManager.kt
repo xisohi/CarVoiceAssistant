@@ -79,11 +79,20 @@ class BaiduAsrManager private constructor(private val context: Context) {
     // 百度 SDK 里 EventManager 内部可能持有 factory 的引用，也可能不持有——
     // 这是个未定义的依赖关系，模拟器上运气好不崩，车机上可能偶发 NullPointerException 或鉴权失败。
     private var factory: AipeEventManagerFactory? = null
-    private var isInitialized = false
-    private var recognitionCallback: ((String?) -> Unit)? = null
-    private var isRecognizing = false
-    private var lastFinalResult: String? = null  // 保存 asr.partial 中的最终结果
+
+    // ★ 以下字段跨线程访问（主线程 / 百度 SDK 回调线程 / 超时 Runnable），加 @Volatile 保证可见性
+    @Volatile private var isInitialized = false
+    @Volatile private var recognitionCallback: ((String?) -> Unit)? = null
+    @Volatile private var isRecognizing = false
+    @Volatile private var lastFinalResult: String? = null  // 保存 asr.partial 中的最终结果
     private val handler = Handler(Looper.getMainLooper())
+
+    // ★ cancel 的 send() 放后台单线程执行，避免主线程阻塞（SDK 内部可能同步清理音频资源）。
+    // 不用每次 new Thread：单线程池复用线程、线程名便于日志定位；daemon 化不阻止进程退出。
+    // 不做 shutdown()：配置变更/服务重启会复用该池，shutdown 后再 execute 会抛 RejectedExecutionException。
+    private val cancelExecutor = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+        Thread(r, "BaiduAsrCancel").apply { isDaemon = true }
+    }
 
     // 百度检测到说话结束的回调（asr.end 事件）
     // 用于流式识别：百度自己判 VAD 结束，通知上层停止录音
@@ -508,16 +517,16 @@ class BaiduAsrManager private constructor(private val context: Context) {
         Log.i(TAG, "百度语音识别已取消")
         // ★ 修复：send() 可能阻塞（SDK 内部同步清理音频资源，旧版 SDK 可能等数百毫秒）。
         // 取消常被超时分支在主线程调用（VoiceAssistantService 的 timeoutRunnable），
-        // 若同步 send 会卡住 handleOnlineFailure / TTS 播报，故移到后台线程执行。
+        // 若同步 send 会卡住 handleOnlineFailure / TTS 播报，故放到后台单线程池执行。
         try {
             val m = asrManager ?: return
-            Thread {
+            cancelExecutor.execute {
                 try {
                     m.send("asr.cancel", null, null, 0, 0)
                 } catch (e: Exception) {
                     Log.e(TAG, "发送取消指令失败: ${e.message}")
                 }
-            }.start()
+            }
         } catch (e: Exception) {
             Log.e(TAG, "取消百度语音识别失败: ${e.message}", e)
         }

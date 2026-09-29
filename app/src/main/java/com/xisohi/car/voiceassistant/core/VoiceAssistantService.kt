@@ -60,7 +60,6 @@ class VoiceAssistantService : Service() {
         private const val NOTIF_ID = 1
         private const val MAX_RECORD_MS = 20_000L  // 最长录音 20 秒（给用户足够时间说话）
         private const val MIN_RECORD_MS = 800L     // 最短录音 800ms（和静音判定一致）
-        private const val MAX_SILENCE_MS = 2000L     // 连续静音超过 2000ms 才认为用户说完了（避免说话中间间隙误判）
         private const val WAIT_SPEECH_TIMEOUT_MS = 8_000L  // 用户开口前的等待上限（8秒没有效声音就自动退出，避免无限循环"没有听清"）
         private const val EXTERNAL_NAV_PAUSE_MS = 30_000L   // 拉起支持语音选择的导航后，暂停唤醒监听的时长（给导航让出麦克风）
 
@@ -1084,7 +1083,9 @@ class VoiceAssistantService : Service() {
             val recordingFinished = java.util.concurrent.atomic.AtomicBoolean(false)
 
             // ★ 录音线程（生产者）：只做录音和入队，极轻量，不会阻塞
-            val recordingJob = scope.launch(Dispatchers.IO) {
+            // ★ 修复：用当前协程的 launch（recognitionJob 的子协程），recognitionJob.cancel() 可级联取消录音线程；
+            // 原 scope.launch 使 recordingJob 独立于 recognitionJob，cancel 不会级联
+            val recordingJob = launch(Dispatchers.IO) {
                 try {
                     val recordBuf = ShortArray(512)
                     while (!shouldStopRecording.get()) {
@@ -1755,12 +1756,12 @@ class VoiceAssistantService : Service() {
     override fun onDestroy() {
         instance = null
         currentState = State.IDLE
-        recognitionJob?.cancel()
-        // ★ 修复：cancel() 只是标记，协程可能正阻塞在 record.read()/feed() 中不会立即退出；
-        // 限时等待其退出（上限 1.5s），避免随后 wakeWordEngine.close()/releaseCachedModel()
-        // 与仍在运行的协程并发访问已释放的原生 ONNX/sherpa 资源导致崩溃
-        runBlocking { withTimeoutOrNull(1500L) { recognitionJob?.join() } }
+        // ★ 修复（死锁）：识别协程的 finally 里有 withContext(Dispatchers.Main)（清理 recognitionJob），
+        // 若先 runBlocking 阻塞主线程等 join，协程的 withContext 也要等主线程 → 互相等待直到超时。
+        // 正确顺序：先 scope.cancel()（使 finally 里的 withContext 立即抛 CancellationException 退出，
+        // 不再需要主线程），再限时等待协程真正退出（scope.cancel 后通常毫秒级返回；1.5s 仅兜底极端情况）。
         scope.cancel()
+        runBlocking { withTimeoutOrNull(1500L) { recognitionJob?.join() } }
         // 注意顺序：先停止唤醒线程（会等待线程结束），再关闭 ONNX session
         // 防止线程还在访问已关闭的 session 导致崩溃
         stopWakeListening()

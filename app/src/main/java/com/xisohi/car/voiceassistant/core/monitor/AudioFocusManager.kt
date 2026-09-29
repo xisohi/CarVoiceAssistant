@@ -105,14 +105,14 @@ class AudioFocusManager(private val context: Context) {
                 try {
                     audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, originalMediaVolume, 0)
                     Log.d(TAG, "✅ 已直接恢复媒体音量到: $originalMediaVolume")
+                    // 恢复成功才清状态
+                    isMediaVolumeMuted = false
+                    originalMediaVolume = -1
                 } catch (e: SecurityException) {
                     Log.w(TAG, "⚠️ 车机系统禁止直接改音量: ${e.message}")
-                    // ★ 修复：恢复失败不清状态——isMediaVolumeMuted 保持 true、originalMediaVolume 保留，
-                    // 下次 restoreMediaVolume() 会重试恢复；否则"假装已恢复"但音量实际仍为 0
-                    return
+                    // 恢复失败保持状态（isMediaVolumeMuted/originalMediaVolume 不动），
+                    // 下次 restoreMediaVolume() 重试恢复，避免"假装已恢复"但音量实际仍为 0
                 }
-                isMediaVolumeMuted = false
-                originalMediaVolume = -1
             }
         } catch (e: Exception) {
             Log.w(TAG, "恢复媒体音量失败: ${e.message}")

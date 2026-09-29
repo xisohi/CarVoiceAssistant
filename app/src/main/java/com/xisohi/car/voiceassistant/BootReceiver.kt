@@ -58,7 +58,9 @@ class BootReceiver : BroadcastReceiver() {
                 .build()
             WorkManager.getInstance(context).enqueueUniqueWork(
                 BOOT_WORK_NAME,
-                ExistingWorkPolicy.REPLACE,  // 同一次开机重复广播时替换，避免堆积
+                // ★ 修复：用 KEEP——开机常连续收到 BOOT_COMPLETED + USER_PRESENT，
+                // REPLACE 会取消第一个的 8 秒延迟任务重新计时（8 秒变 8+X 秒）；KEEP 保留已有任务
+                ExistingWorkPolicy.KEEP,
                 workRequest
             )
         } catch (e: Exception) {

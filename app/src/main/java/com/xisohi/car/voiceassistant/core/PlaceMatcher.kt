@@ -114,6 +114,18 @@ class PlaceMatcher private constructor(context: Context) {
     }
 
     /**
+     * 重新加载词库（内置 + 自定义文件）。
+     * 用户手动编辑 places_custom.json 后调用；PlaceManagerActivity.onResume 会自动调用，
+     * 重新进入管理页即生效（共享单例，服务内也会同步更新）。
+     */
+    fun reload() {
+        places.clear()
+        builtinNames.clear()
+        val ctx = appContext ?: return
+        loadPlaces(ctx)
+    }
+
+    /**
      * 创建自定义词库示例文件
      */
     private fun createSampleCustomFile(file: java.io.File) {
