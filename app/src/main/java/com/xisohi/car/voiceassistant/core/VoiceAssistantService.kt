@@ -28,7 +28,6 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
 import android.media.ToneGenerator
 import android.media.AudioManager
@@ -254,6 +253,17 @@ class VoiceAssistantService : Service() {
     //    协程 finally 里会置回 null）
     @Volatile
     private var activeRecord: android.media.AudioRecord? = null
+    // ★ P1（审计 v6 追加）：活动识别器/降噪器引用——onDestroy 主线程直接 release，
+    // 不再依赖协程 finally 释放（消除 runBlocking 主线程阻塞 ≤1.5s 的 ANR 风险）。
+    // 协程 finally/catch 在非销毁路径（serviceDestroyed=false）释放并置回 null。
+    @Volatile
+    private var activeRecognizer: SpeechRecognizer? = null
+    @Volatile
+    private var activeNoiseReducer: AudioNoiseReducer? = null
+    // ★ P1：服务销毁标志——置位后协程 finally/catch 跳过资源释放（由 onDestroy 统一释放），
+    // 避免主线程 release 与协程 finally release 双释放。
+    @Volatile
+    private var serviceDestroyed = false
     // 小模型加载快（<1秒），不需要预加载，每次识别时直接创建即可
 
     // 唤醒音频采集线程
@@ -1089,6 +1099,7 @@ class VoiceAssistantService : Service() {
             try {
                 // ★ 提前登记：record 一旦创建成功，onDestroy 即可 stop 中断阻塞的 read
                 activeRecord = record
+                activeRecognizer = recognizer
 
             currentState = State.LISTENING
             lastPartialText = ""
@@ -1099,6 +1110,7 @@ class VoiceAssistantService : Service() {
             // ★ 审计 #4 修复：AudioNoiseReducer.create() 移到 startRecording() 成功之后——
             // 修复前在 start 之前创建，audioSessionId 尚处未激活状态，AEC/AGC 可能拿不到有效会话而静默失效。
             val recNoiseReducer = AudioNoiseReducer.create(record)
+            activeNoiseReducer = recNoiseReducer
 
             // ===== 环境噪音采样，动态设定静音阈值 =====
             val warmupSamples = (NOISE_WARMUP_MS * SpeechRecognizer.SAMPLE_RATE / 1000).toInt()
@@ -1365,10 +1377,16 @@ class VoiceAssistantService : Service() {
             } finally {
                 offlineRecognitionActive = false  // ★ 识别结束，允许下一次离线识别启动
                 activeRecord = null
-                try { record.stop() } catch (_: Exception) {}
-                record.release()
-                recNoiseReducer.release()
-                try { recognizer.release() } catch (_: Exception) {}
+                activeRecognizer = null
+                activeNoiseReducer = null
+                // ★ P1：服务销毁时资源由 onDestroy 主线程统一释放（serviceDestroyed=true 时跳过），
+                // 避免与 onDestroy 直接 release 造成双释放；正常结束路径仍在此释放。
+                if (!serviceDestroyed) {
+                    try { record.stop() } catch (_: Exception) {}
+                    record.release()
+                    recNoiseReducer.release()
+                    try { recognizer.release() } catch (_: Exception) {}
+                }
                 withContext(Dispatchers.Main) {
                     // 只清理自己的 job，避免快速连续调用时误清新job
                     if (recognitionSessionId == mySessionId) {
@@ -1382,9 +1400,14 @@ class VoiceAssistantService : Service() {
             LogUtils.e("VoiceService", "离线识别异常: ${e.message}")
             offlineRecognitionActive = false
             activeRecord = null
-            try { record.stop() } catch (_: Exception) {}
-            try { record.release() } catch (_: Exception) {}
-            try { recognizer.release() } catch (_: Exception) {}
+            activeRecognizer = null
+            activeNoiseReducer = null
+            // ★ P1：服务销毁时由 onDestroy 统一释放
+            if (!serviceDestroyed) {
+                try { record.stop() } catch (_: Exception) {}
+                try { record.release() } catch (_: Exception) {}
+                try { recognizer.release() } catch (_: Exception) {}
+            }
             withContext(Dispatchers.Main) { resumeWake() }
             return@launch
         }
@@ -1829,16 +1852,23 @@ class VoiceAssistantService : Service() {
     override fun onDestroy() {
         instance = null
         currentState = State.IDLE
-        // ★ 修复（死锁）：识别协程的 finally 里有 withContext(Dispatchers.Main)（清理 recognitionJob），
-        // 若先 runBlocking 阻塞主线程等 join，协程的 withContext 也要等主线程 → 互相等待直到超时。
-        // 正确顺序：先 scope.cancel()（使 finally 里的 withContext 立即抛 CancellationException 退出，
-        // 不再需要主线程），再限时等待协程真正退出（scope.cancel 后通常毫秒级返回；1.5s 仅兜底极端情况）。
+        // ★ P1（审计 v6 追加）：不再 runBlocking 等待识别协程（主线程阻塞 ≤1.5s 有 ANR 风险，车机 CPU 慢时更甚）。
+        // 释放流程改为：先置 serviceDestroyed（协程 finally/catch 检测后跳过资源释放），再 scope.cancel()，
+        // 然后主线程直接 stop/release 活动资源（record/recognizer/noiseReducer），协程在 IO 线程自行退出。
+        // 死锁问题随之消失：不再有主线程等待 join，也就没有与协程 withContext(Main) 的互相等待。
+        serviceDestroyed = true
         scope.cancel()
         // ★ 主动中断阻塞中的 record.read() 并通知录音线程退出：
         // read(READ_BLOCKING) 不响应协程取消，若不 stop，录音协程会一直空转 sleep 循环
         shouldStopRecording.set(true)
         try { activeRecord?.stop() } catch (_: Exception) {}
-        runBlocking { withTimeoutOrNull(1500L) { recognitionJob?.join() } }
+        // ★ P1：主线程直接释放识别资源（协程 finally 已因 serviceDestroyed 跳过，不会双 release）
+        try { activeRecord?.release() } catch (_: Exception) {}
+        try { activeRecognizer?.release() } catch (_: Exception) {}
+        try { activeNoiseReducer?.release() } catch (_: Exception) {}
+        activeRecord = null
+        activeRecognizer = null
+        activeNoiseReducer = null
         // 注意顺序：先停止唤醒线程（会等待线程结束），再关闭 ONNX session
         // 防止线程还在访问已关闭的 session 导致崩溃
         stopWakeListening()

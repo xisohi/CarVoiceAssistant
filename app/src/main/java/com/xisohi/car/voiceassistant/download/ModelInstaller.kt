@@ -47,7 +47,16 @@ object ModelInstaller {
             // 解压全部成功：清空旧目录，再移动临时目录内容（同分区 rename，失败前旧模型始终可用）
             modelsDir.listFiles()?.forEach { it.deleteRecursively() }
             modelsDir.mkdirs()
-            tmpDir.listFiles()?.forEach { it.renameTo(File(modelsDir, it.name)) }
+            tmpDir.listFiles()?.forEach { src ->
+                val dst = File(modelsDir, src.name)
+                // ★ P2-3（审计 v6 追加）：renameTo 失败（跨分区/权限）时回退 copy+delete，
+                // 避免"旧模型已删、新模型未移入"的残缺态
+                if (!src.renameTo(dst)) {
+                    android.util.Log.w("ModelInstaller", "模型文件 rename 失败: ${src.name}，回退为 copy+delete")
+                    src.copyRecursively(dst, overwrite = true)
+                    src.deleteRecursively()
+                }
+            }
         } finally {
             // 无论成功失败都清理临时目录（成功时内容已移走，只剩空目录）
             tmpDir.deleteRecursively()
