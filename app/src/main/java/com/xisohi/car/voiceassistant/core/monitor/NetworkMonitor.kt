@@ -7,7 +7,10 @@ import android.net.NetworkCapabilities
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -71,6 +74,11 @@ class NetworkMonitor(
 
     // 网络变化回调
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
+
+    // ★ 延迟连通性检测任务（onLost 时取消）：
+    // 网络抖动时 onAvailable→onLost 可能 1 秒内连续触发，若不取消，
+    // 旧协程会在 onLost 之后仍探测 1 秒前的网络状态并写缓存，覆盖"已断开"语义。
+    private var pendingCheckJob: Job? = null
 
     // 上次网络变化时间（用于防抖）
     private var lastNetworkChangeTime = 0L
@@ -165,6 +173,9 @@ class NetworkMonitor(
     /**
      * 后台异步检测网络连通性（不阻塞主线程，检测完成后更新缓存）。
      *
+     * 注意：内部 onAvailable 的延迟探测已改为内联路径（pendingCheckJob 内 withContext，
+     * 支持 onLost 取消级联），本方法当前无内部调用方，保留供外部按需使用。
+     *
      * 为什么用异步而不是同步？
      * - 如果同步等待，会阻塞主线程，导致ANR
      * - 检测完成后更新缓存（通/不通都会写），后续唤醒用正确的网络状态决策
@@ -242,15 +253,46 @@ class NetworkMonitor(
                     Log.d(TAG, "网络已连接，延迟1秒后检测（等网络完全就绪）")
                     // 延迟1秒再检测，避免网络刚连上还没就绪时误判为不通
                     invalidateCache()
-                    scope.launch(Dispatchers.Main) {
+                    // ★ 取消上一次待执行的检测，只保留最新的（防止抖动时旧探测写过期缓存）
+                    pendingCheckJob?.cancel()
+                    // ★ 探测与写缓存全部在 pendingCheckJob 内完成：
+                    // onLost 的 cancel() 会级联取消这里。注意 probeNetwork() 是阻塞 HTTP（最多2秒），
+                    // 取消无法立即中断它，但 withContext 恢复时协程已取消 → 会抛 CancellationException
+                    // 跳过写缓存；即使极端时序未抛，写缓存前的 isActive 复查也会拦住。
+                    // 旧实现调用 checkReachableAsync()（scope 直接子协程），cancel 级联不到 → 已弃用。
+                    pendingCheckJob = scope.launch(Dispatchers.Main) {
                         kotlinx.coroutines.delay(1000)
-                        checkReachableAsync()
+                        // ★ 复查1：延迟期间网络已断开（抖动）→ 跳过探测、不写缓存
+                        if (!isAvailable()) {
+                            Log.d(TAG, "延迟期间网络已断开，跳过连通性检测（不写缓存）")
+                            return@launch
+                        }
+                        val reachable = withContext(Dispatchers.IO) { probeNetwork() }
+                        // ★ 复查2：探测期间 onLost 已取消本协程，或当前网络不可用 → 放弃写缓存，
+                        // 保证 onLost 的"已断开"语义不被过期探测覆盖
+                        if (!isActive || !isAvailable()) {
+                            Log.d(TAG, "探测期间网络状态已变化，放弃写入缓存")
+                            return@launch
+                        }
+                        // 通/不通都写缓存：
+                        // "通"长期有效；"不通"为60秒负缓存（isCacheValid 里做过期判断）
+                        networkReachable = reachable
+                        networkCacheValid = true
+                        networkCacheTime = System.currentTimeMillis()
+                        if (reachable) {
+                            Log.i(TAG, "网络连通性检测: 正常（能访问外网，下次唤醒走在线）")
+                        } else {
+                            Log.w(TAG, "网络连通性检测: 不通（已缓存60秒，期间唤醒直接走离线）")
+                        }
                     }
                     callback.onNetworkAvailable()
                 }
 
                 override fun onLost(network: Network) {
                     Log.d(TAG, "网络已断开，清空缓存（下次唤醒重新判断）")
+                    // ★ 取消待执行的延迟检测：onAvailable 的 1 秒延迟探测不应覆盖"已断开"语义
+                    pendingCheckJob?.cancel()
+                    pendingCheckJob = null
                     // onLost 不用防抖，只清缓存，不做耗时操作
                     invalidateCache()
                     callback.onNetworkLost()
