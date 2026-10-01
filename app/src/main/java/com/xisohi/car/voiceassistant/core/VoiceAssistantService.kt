@@ -68,7 +68,10 @@ class VoiceAssistantService : Service() {
         // 公式：adaptiveThreshold = ambientRms * NOISE_MULTIPLIER，并限制在 [MIN, MAX] 区间
         // 注意：车机环境通常很安静（环境噪音 RMS 50-150），下限不能设太高，
         // 否则正常说话的轻音（辅音、轻声）会被误判为静音，导致录音只录前半段。
-        private const val SILENCE_RMS_MIN = 300f      // 绝对下限（提高到300，避免底噪尖峰导致静音尾巴过长）
+        // ★ 2026-10-01 真车机实测：拾音弱/远场时正常语音原始 RMS 仅 24~140，
+        // 旧下限 300 会把"识别器仍在出字"的语音帧全判成静音，累计 800ms 即切断录音（半截话）。
+        // 下限降到 150：底噪（实测 23~115）×2 后 46~230，150 仍能区分底噪，同时放过正常轻音。
+        private const val SILENCE_RMS_MIN = 150f      // 绝对下限（真车机拾音弱，150 放过轻音、仍隔底噪）
         private const val SILENCE_RMS_MAX = 1200f     // 绝对上限（防止噪音过大导致阈值过高）
         private const val NOISE_MULTIPLIER = 2.0f     // 环境噪音倍数（稍微提高，让安静环境下阈值更合理）
         private const val NOISE_WARMUP_MS = 100L      // 丢弃前 100ms（录音启动爆音）
