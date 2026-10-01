@@ -1206,6 +1206,7 @@ class VoiceAssistantService : Service() {
             val startMs = SystemClock.elapsedRealtime()
             var lastPartial = ""
             var lastPartialUpdateMs = 0L
+            var lastPartialChangeMs = SystemClock.elapsedRealtime()  // ★ VAD修复③：最后一次识别文本变化时间（结束判定要求 partial 稳定）
             var silenceDuration = 0L
             var consecutiveSilenceFrames = 0  // ★ 连续静音帧数（用于端点检测）
             var hasSpeechStarted = false
@@ -1278,13 +1279,8 @@ class VoiceAssistantService : Service() {
                     if (!partial.isNullOrEmpty() && partial != lastPartial) {
                         lastPartial = partial
                         lastPartialText = partial
+                        lastPartialChangeMs = SystemClock.elapsedRealtime()  // ★ 记录变化时间，不立即清静音
                         LogUtils.d("VoiceService", "识别中: '$partial' (RMS=${rms.toInt()}, 静音=$isSilence)")
-                        // ★ VAD修复③：识别器仍在出新字 = 用户仍在说话，
-                        // 重置静音计数，避免"识别持续出字但RMS低"被误判为静音而提前切断录音
-                        if (hasSpeechStarted) {
-                            consecutiveSilenceFrames = 0
-                            silenceDuration = 0
-                        }
                         val nowMs = SystemClock.elapsedRealtime()
                         if (nowMs - lastPartialUpdateMs >= 100) {
                             lastPartialUpdateMs = nowMs
@@ -1305,13 +1301,20 @@ class VoiceAssistantService : Service() {
 
                             // VAD 诊断日志（每 500ms 一次）
                             if (recordDuration % 500 < 32) {
+                                val sinceLastPartialChange = SystemClock.elapsedRealtime() - lastPartialChangeMs
                                 LogUtils.d("VoiceService",
-                                    "VAD诊断: duration=${recordDuration}ms, silence=${silenceDuration}ms, frames=${consecutiveSilenceFrames}, rms=${rms.toInt()}, 阈值=${adaptiveSilenceThreshold.toInt()}")
+                                    "VAD诊断: duration=${recordDuration}ms, silence=${silenceDuration}ms, frames=${consecutiveSilenceFrames}, rms=${rms.toInt()}, 阈值=${adaptiveSilenceThreshold.toInt()}, partial静置=${sinceLastPartialChange}ms")
                             }
 
-                            // 动态静音阈值：有结果 800ms，无结果 600ms
-                            val dynamicSilenceMs = if (lastPartial.isNotEmpty()) 800L else 600L
-                            if (silenceDuration >= dynamicSilenceMs && recordDuration >= MIN_RECORD_MS) {
+                            // 动态静音阈值：有结果 1200ms，无结果 800ms
+                            val dynamicSilenceMs = if (lastPartial.isNotEmpty()) 1200L else 800L
+                            // ★ VAD修复③（方案B）：结束还需 partial 稳定 800ms——
+                            // sherpa partial 滞后于真实语音，识别器仍在出新字时不结束；
+                            // 噪声吐字场景下 partial 终会停顿，800ms 无新字即可收尾，避免卡到 20s 超时
+                            val sinceLastPartialChange = SystemClock.elapsedRealtime() - lastPartialChangeMs
+                            if (silenceDuration >= dynamicSilenceMs
+                                && recordDuration >= MIN_RECORD_MS
+                                && sinceLastPartialChange >= 800L) {
                                 LogUtils.d("VoiceService",
                                     "连续静音${silenceDuration}ms（${consecutiveSilenceFrames}帧），结束录音 (RMS=${rms.toInt()}, 阈值=${adaptiveSilenceThreshold.toInt()})")
                                 sendRecognitionLog("⏹️ 结束录音 (静音${silenceDuration}ms, RMS=${rms.toInt()})")
@@ -1379,7 +1382,14 @@ class VoiceAssistantService : Service() {
                     shortsToBytes(shortBuf, n, baiduBytes)
                     audioBuffer.write(baiduBytes)
                     shortsToBytes(shortBuf, n, byteBuf)
-                    recognizer.feed(byteBuf, n * 2)
+                    val remainingPartial = recognizer.feed(byteBuf, n * 2)
+                    // ★ VAD修复③（隐患2）：剩余帧中识别器仍在出新字 = 语音未结束，
+                    // 重置剩余静音计数，避免丢弃仍含有效语音的帧
+                    if (!remainingPartial.isNullOrEmpty() && remainingPartial != lastPartial) {
+                        lastPartial = remainingPartial
+                        lastPartialText = remainingPartial
+                        remainingSilenceFrames = 0
+                    }
                     remainingProcessedFrames++
                 }
 
