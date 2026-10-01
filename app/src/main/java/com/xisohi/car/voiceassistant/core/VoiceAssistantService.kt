@@ -1279,6 +1279,12 @@ class VoiceAssistantService : Service() {
                         lastPartial = partial
                         lastPartialText = partial
                         LogUtils.d("VoiceService", "识别中: '$partial' (RMS=${rms.toInt()}, 静音=$isSilence)")
+                        // ★ VAD修复③：识别器仍在出新字 = 用户仍在说话，
+                        // 重置静音计数，避免"识别持续出字但RMS低"被误判为静音而提前切断录音
+                        if (hasSpeechStarted) {
+                            consecutiveSilenceFrames = 0
+                            silenceDuration = 0
+                        }
                         val nowMs = SystemClock.elapsedRealtime()
                         if (nowMs - lastPartialUpdateMs >= 100) {
                             lastPartialUpdateMs = nowMs
