@@ -73,7 +73,7 @@ class VoiceAssistantService : Service() {
         // 下限降到 150：底噪（实测 23~115）×2 后 46~230，150 仍能区分底噪，同时放过正常轻音。
         private const val SILENCE_RMS_MIN = 150f      // 绝对下限（真车机拾音弱，150 放过轻音、仍隔底噪）
         private const val SILENCE_RMS_MAX = 1200f     // 绝对上限（防止噪音过大导致阈值过高）
-        private const val NOISE_MULTIPLIER = 2.0f     // 环境噪音倍数（稍微提高，让安静环境下阈值更合理）
+        private const val NOISE_MULTIPLIER = 1.5f     // 环境噪音倍数（1.5：开口检测更敏感，应对车机播报/轻声场景）
         private const val NOISE_WARMUP_MS = 100L      // 丢弃前 100ms（录音启动爆音）
         private const val NOISE_SAMPLE_MS = 300L      // 环境噪音采样时长
 
