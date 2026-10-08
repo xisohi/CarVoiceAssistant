@@ -792,7 +792,7 @@ class MainActivity : AppCompatActivity() {
         val thresholdProgress = ((threshold - 0.10f) / 0.01f).toInt().coerceIn(0, 20)
         binding.seekThreshold.progress = thresholdProgress
         binding.tvThresholdValue.text = String.format("%.3f", threshold)
-        val gainProgress = ((gain - 1.0f) / 0.1f).toInt().coerceIn(0, 70)
+        val gainProgress = ((gain - 1.0f) / 0.1f).toInt().coerceIn(0, 110)
         binding.seekGain.progress = gainProgress
         binding.tvGainValue.text = String.format("%.1fx", gain)
     }
