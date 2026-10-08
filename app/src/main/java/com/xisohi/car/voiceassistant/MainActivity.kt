@@ -189,11 +189,12 @@ class MainActivity : AppCompatActivity() {
         )
         binding.btnSaveCarWakeupActions.setOnClickListener {
             val raw = binding.etCarWakeupActions.text?.toString()?.trim().orEmpty()
-            val actions = raw.split(",", "，", " ", "\n").map { it.trim() }.filter { it.isNotEmpty() }
-            prefs.edit().apply {
-                if (actions.isEmpty()) remove(KEY_CAR_WAKEUP_ACTIONS)
-                else putStringSet(KEY_CAR_WAKEUP_ACTIONS, actions.toSet())
-            }.apply()
+            // 只支持逗号/中文逗号/换行作为分隔符：广播 action 不含空格，空格作为分隔符会误拆合法 action
+            val actions = raw.split(",", "，", "\n").map { it.trim() }.filter { it.isNotEmpty() }
+            val editor = prefs.edit()
+            if (actions.isEmpty()) editor.remove(KEY_CAR_WAKEUP_ACTIONS)
+            else editor.putStringSet(KEY_CAR_WAKEUP_ACTIONS, actions.toSet())
+            editor.apply()
             toast(if (actions.isEmpty()) "已恢复内置 7 个唤醒广播，重启服务生效" else "已保存 ${actions.size} 个唤醒广播，重启服务生效")
         }
         binding.btnReloadIntentRules.setOnClickListener {

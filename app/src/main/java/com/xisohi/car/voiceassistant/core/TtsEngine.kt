@@ -164,12 +164,17 @@ class TtsEngine(private val context: Context) : TextToSpeech.OnInitListener {
      */
     private fun prewarm(engine: TextToSpeech?) {
         if (prewarmed || engine == null) return
-        prewarmed = true
         try {
             val params = Bundle()
             params.putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, 0.0f)  // 静音合成，不出声
-            engine.speak("在呢", TextToSpeech.QUEUE_FLUSH, params, "$PREWARM_PREFIX${UUID.randomUUID()}")
-            Log.d("TtsEngine", "TTS 已预热（静音合成，消除首次出声延迟）")
+            val result = engine.speak("在呢", TextToSpeech.QUEUE_FLUSH, params, "$PREWARM_PREFIX${UUID.randomUUID()}")
+            // 只在调用成功后置 true；失败（返回 ERROR 或抛异常）保持 false，下次 init 可重试
+            prewarmed = result == TextToSpeech.SUCCESS
+            if (prewarmed) {
+                Log.d("TtsEngine", "TTS 已预热（静音合成，消除首次出声延迟）")
+            } else {
+                Log.w("TtsEngine", "TTS 预热失败（speak 返回 ERROR=${result}），下次 init 将重试")
+            }
         } catch (e: Exception) {
             Log.w("TtsEngine", "TTS 预热失败: ${e.message}")
         }
