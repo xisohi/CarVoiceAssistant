@@ -169,13 +169,6 @@ public class WakeWordEngine {
         LogUtils.i(TAG, "唤醒参数已更新(自定义): gain=" + gain + ", threshold=" + threshold + "（下次唤醒生效）");
     }
 
-    /** 仅调整唤醒增益（音乐播放时动态提增益用）；不触发引擎重建、不改阈值、即时生效 */
-    public static void setAudioGainOnly(float gain) {
-        if (gain < 1.0f) gain = 1.0f;
-        audioGain = gain;
-        LogUtils.d(TAG, "唤醒增益动态调整: " + gain);
-    }
-
     /** 获取实际生效的阈值（临时覆盖优先，仅供日志显示） */
     public static float getEffectiveThreshold() {
         return tempThresholdOverride > 0 ? tempThresholdOverride : detectionThreshold;

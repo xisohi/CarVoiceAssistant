@@ -686,14 +686,6 @@ class VoiceAssistantService : Service() {
             LogUtils.d("WakeAudioThread", "开始录音，帧大小=$frameSize")
 
             try {
-                // ★ 音乐播放检测：播放中音乐声会压低语音信噪比（AEC/RNNoise 不能完全消除），
-                // 唤醒困难（用户反馈"播放音乐时要很大声"）。每 10 秒检测一次，
-                // 播放中把唤醒增益临时提到 12.0（无音乐恢复原值 8.0）。增益只放大信号
-                // 不改变 KWS 打分语义，AEC+RNNoise 已在前端抑制音乐，不会引入误唤醒。
-                val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-                val baseWakeGain = WakeWordEngine.getAudioGain()  // 用户设定的原增益（8.0）
-                var musicBoosted = false
-                var lastMusicCheckMs = SystemClock.elapsedRealtime()
                 while (isWakeListening && !isInterrupted()) {
                     val read = record.read(audioBuffer, 0, frameSize, AudioRecord.READ_BLOCKING)
                     if (read < 0) {
@@ -701,21 +693,6 @@ class VoiceAssistantService : Service() {
                         break
                     }
                     if (read == frameSize) {
-                        // 每 10 秒检测一次音乐播放状态；状态变化时才调整增益
-                        val now = SystemClock.elapsedRealtime()
-                        if (now - lastMusicCheckMs >= 10_000L) {
-                            lastMusicCheckMs = now
-                            val musicPlaying = try { audioManager.isMusicActive() } catch (e: Exception) { false }
-                            if (musicPlaying && !musicBoosted) {
-                                musicBoosted = true
-                                WakeWordEngine.setAudioGainOnly(12.0f)
-                                LogUtils.d("WakeAudioThread", "检测到音乐播放，唤醒增益 ${baseWakeGain}x→12.0x（避免音乐下唤醒困难）")
-                            } else if (!musicPlaying && musicBoosted) {
-                                musicBoosted = false
-                                WakeWordEngine.setAudioGainOnly(baseWakeGain)
-                                LogUtils.d("WakeAudioThread", "音乐停止，唤醒增益恢复 ${baseWakeGain}x")
-                            }
-                        }
                         // 音乐动态阈值保护已禁用（用户反馈会导致唤不醒）
                         // 保持固定阈值0.18，误唤醒靠AEC+RNNoise+高通滤波解决
                         // 应用降噪处理（高通滤波，去除低频发动机噪音）
