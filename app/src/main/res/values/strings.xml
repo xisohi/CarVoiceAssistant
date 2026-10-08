@@ -87,7 +87,7 @@
     <!-- ===== VoiceAssistantService 相关 ===== -->
     <string name="notification_running">语音助手运行中</string>
     <string name="notification_channel_name">语音助手</string>
-    <string name="tts_wake_prompt">在呢，您请说</string>
+    <string name="tts_wake_prompt">在呢</string>
     <string name="tts_model_unavailable">语音模型不可用，请先在主界面完成初始化</string>
     <string name="subtitle_not_heard">❌ 没有听清</string>
     <string name="tts_not_heard">没有听清，请再说一遍</string>

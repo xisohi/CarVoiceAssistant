@@ -36,11 +36,16 @@ class TtsEngine(private val context: Context) : TextToSpeech.OnInitListener {
         "com.tencent.speech.tts"        // 腾讯 TTS
     )
 
+    /** 预热合成专用 utteranceId 前缀：onStart/onDone 据此跳过 listener，避免污染服务状态机 */
+    private val PREWARM_PREFIX = "prewarm-"
+
     private var tts: TextToSpeech? = null
     @Volatile
     private var ready = false
     private val appContext = context.applicationContext
     private var currentEngineIndex = -1
+    /** 预热标志：首次合成（加载声库）已触发，避免唤醒时 TTS 冷启动出声慢 */
+    private var prewarmed = false
 
     // 音频焦点管理：TTS 播报时请求音频焦点，让音乐自动降低音量（duck）
     private val audioManager = appContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
@@ -84,6 +89,10 @@ class TtsEngine(private val context: Context) : TextToSpeech.OnInitListener {
                     currentTts.setPitch(1.1f)
                     setupListener(currentTts)
                     Log.d("TtsEngine", "TTS 就绪 ✅")
+                    // ★ 预热：TTS 引擎首次合成需加载声库/模型（车机上可达 300~800ms），
+                    // 若等用户唤醒时才首次 speak，会显著拉长"唤醒→提示音出声"延迟。
+                    // 服务启动即用零音量合成一次，静默加载声库；正式播报时直接出声。
+                    prewarm(currentTts)
                     return
                 } else {
                     Log.w("TtsEngine", "当前引擎不支持中文，切换...")
@@ -123,10 +132,14 @@ class TtsEngine(private val context: Context) : TextToSpeech.OnInitListener {
     private fun setupListener(tts: TextToSpeech) {
         tts.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(utteranceId: String?) {
+                // 预热合成不回调 listener（避免污染服务状态机：currentState=SPEAKING）
+                if (utteranceId?.startsWith(PREWARM_PREFIX) == true) return
                 listener?.onSpeakStart()
             }
 
             override fun onDone(utteranceId: String?) {
+                // 预热合成不回调 listener（避免误触发 resumeWake() 等流程）
+                if (utteranceId?.startsWith(PREWARM_PREFIX) == true) return
                 // TTS 播报完成，释放音频焦点，音乐恢复正常音量
                 releaseAudioFocus()
                 listener?.onSpeakDone()
@@ -136,12 +149,31 @@ class TtsEngine(private val context: Context) : TextToSpeech.OnInitListener {
             override fun onError(utteranceId: String?) {
                 // 出错时也释放音频焦点
                 releaseAudioFocus()
+                if (utteranceId?.startsWith(PREWARM_PREFIX) == true) return
                 listener?.onSpeakDone()
             }
         })
     }
 
     val isReady: Boolean get() = ready
+
+    /**
+     * 静默预热：以 0 音量合成一次短文本，让 TTS 引擎完成声库/模型加载。
+     * 播放延迟（从 speak() 到真正出声）是车机唤醒反馈慢的主因之一，
+     * 预热后首次正式 speak 直接出声，避免用户以为没唤醒。
+     */
+    private fun prewarm(engine: TextToSpeech?) {
+        if (prewarmed || engine == null) return
+        prewarmed = true
+        try {
+            val params = Bundle()
+            params.putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, 0.0f)  // 静音合成，不出声
+            engine.speak("在呢", TextToSpeech.QUEUE_FLUSH, params, "$PREWARM_PREFIX${UUID.randomUUID()}")
+            Log.d("TtsEngine", "TTS 已预热（静音合成，消除首次出声延迟）")
+        } catch (e: Exception) {
+            Log.w("TtsEngine", "TTS 预热失败: ${e.message}")
+        }
+    }
 
     fun speak(text: String) {
         if (!ready) {
