@@ -172,15 +172,17 @@
             android:enabled="true">
             <!-- ★ 刻意不声明 android.intent.action.LOCKED_BOOT_COMPLETED：
                  该 action 只有在 receiver 声明 android:directBootAware="true" 且数据放在
-                 设备加密存储（device-encrypted）时才有意义。而 BootReceiver.onReceive() 第一行就
-                 LogUtils.init(context)（往 /data/user/0/... 写日志）、随后读凭据加密存储
-                 （credential-encrypted）的 SharedPreferences("voice_assistant_prefs")，
-                 用户解锁前这两处都会抛 IllegalStateException 把接收器打崩。
+                 设备加密存储（device-encrypted）时才有意义。而 BootReceiver.onReceive() 会读
+                 凭据加密存储（credential-encrypted）的 SharedPreferences("voice_assistant_prefs")
+                 并调用 WorkManager，用户解锁前这些都会抛 IllegalStateException 把接收器打崩。
                  所以这里只注册解锁后才会收到的 BOOT_COMPLETED / USER_PRESENT，
-                 删掉那个收不到的死声明，避免"以为注册了锁屏开机启动"的误判。 -->
+                 删掉那个收不到的死声明，避免"以为注册了锁屏开机启动"的误判。
+                 （文件日志初始化已上移到 VoiceAssistantApp.onCreate()，与本决定无关。） -->
             <intent-filter android:priority="1000">
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
                 <action android:name="android.intent.action.USER_PRESENT" />
+                <!-- ★ ACTION_SHUTDOWN 只用于在日志里留一行"设备正在关机"（BootReceiver 的
+                     bootActions 刻意不含它），不会在关机时拉起服务。 -->
                 <action android:name="android.intent.action.ACTION_SHUTDOWN" />
             </intent-filter>
         </receiver>

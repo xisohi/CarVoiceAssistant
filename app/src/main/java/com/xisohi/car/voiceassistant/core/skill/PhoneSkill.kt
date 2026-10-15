@@ -24,6 +24,21 @@ import com.xisohi.car.voiceassistant.core.VoiceIntent
  */
 class PhoneSkill(private val context: Context) {
 
+    /**
+     * 联系人查找结果：把"没找到"和"没权限"两种失败区分开。
+     *
+     * 修复前 findContact() 一律返回 null，上层只能播报"未找到联系人「X」"——
+     * 明明是用户没授权读通讯录，却被说成联系人不存在，用户反复重试、甚至去删了重加联系人也没用。
+     *
+     * 用 sealed 结果类型而不是"私有字段记录失败原因"：编译器强制 when 穷举所有分支，
+     * 不会出现"新增一种失败却忘了处理"；也完全不引入可变状态（无跨调用残留的风险）。
+     */
+    private sealed interface ContactLookup {
+        data class Found(val displayName: String, val number: String) : ContactLookup
+        object NotFound : ContactLookup
+        object NoPermission : ContactLookup
+    }
+
     fun execute(intent: VoiceIntent): ExecutionResult = when (intent.action) {
         "phone.call" -> callPhone(
             intent.params["name"] ?: intent.params["number"] ?: ""
@@ -47,12 +62,14 @@ class PhoneSkill(private val context: Context) {
         }
 
         // 2. 否则从联系人中查找
-        val contact = findContact(clean)
-        if (contact != null) {
-            return makeCall(contact.first, contact.second)
+        return when (val lookup = findContact(clean)) {
+            is ContactLookup.Found -> makeCall(lookup.displayName, lookup.number)
+            // ★ 权限被拒时说清是权限问题，不要误导成"联系人不存在"
+            ContactLookup.NoPermission ->
+                ExecutionResult(false, "没有读取通讯录的权限，请在设置里授权后再试")
+            ContactLookup.NotFound ->
+                ExecutionResult(false, "未找到联系人「$clean」，请说拨打加电话号码")
         }
-
-        return ExecutionResult(false, "未找到联系人「$clean」，请说拨打加电话号码")
     }
 
     /**
@@ -65,9 +82,9 @@ class PhoneSkill(private val context: Context) {
 
     /**
      * 从联系人中查找（模糊匹配姓名）。
-     * 返回 Pair(姓名, 电话号码)，找不到返回 null。
+     * 返回 [ContactLookup]：找到 / 没找到 / 没权限三种结果。
      */
-    private fun findContact(name: String): Pair<String, String>? {
+    private fun findContact(name: String): ContactLookup {
         return try {
             val contentResolver = context.contentResolver
             val uri = ContactsContract.CommonDataKinds.Phone.CONTENT_URI
@@ -81,28 +98,41 @@ class PhoneSkill(private val context: Context) {
             val cursor: Cursor? = contentResolver.query(
                 uri, projection, selection, selectionArgs, null
             )
+            // 列下标提到循环外：每行都查一次没必要（Cursor 下标在本查询内固定）
             cursor?.use {
-                if (it.moveToFirst()) {
-                    val nameIndex = it.getColumnIndex(
-                        ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME
-                    )
-                    val numberIndex = it.getColumnIndex(
-                        ContactsContract.CommonDataKinds.Phone.NUMBER
-                    )
-                    val contactName = if (nameIndex >= 0) it.getString(nameIndex) ?: name else name
-                    val phoneNumber = if (numberIndex >= 0) it.getString(numberIndex) ?: "" else ""
-                    if (phoneNumber.isNotEmpty()) {
-                        return Pair(contactName, phoneNumber)
+                val nameIndex = it.getColumnIndex(
+                    ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME
+                )
+                val numberIndex = it.getColumnIndex(
+                    ContactsContract.CommonDataKinds.Phone.NUMBER
+                )
+                // ★ 审计修复：原来只 `if (it.moveToFirst())` 看第一行——首行 NUMBER 为空
+                //（同一联系人多个号码时的空号码行、SIM 卡行、仅存 email 的行都很常见）
+                // 就直接返回 null，后面明明有号码的行全被丢掉，表现为"联系人明明存在却说未找到"。
+                // 改成遍历所有行，返回第一个号码非空的行；游标为空时 while 一次都不进，
+                // 自然覆盖原来"查不到就返回 null"的情况。
+                // moveToNext() 在刚 query 出来的游标上就等价于 moveToFirst()，不需要先 moveToFirst。
+                while (it.moveToNext()) {
+                    val number = if (numberIndex >= 0) it.getString(numberIndex).orEmpty() else ""
+                    if (number.isNotBlank()) {
+                        // 姓名列缺失/为空时退回用查询词当显示名（沿用原逻辑）
+                        val contactName = if (nameIndex >= 0) {
+                            it.getString(nameIndex)?.takeIf { n -> n.isNotBlank() } ?: name
+                        } else {
+                            name
+                        }
+                        // cursor?.use 是 inline，非局部 return 安全（它会正常关闭游标）
+                        return ContactLookup.Found(contactName, number)
                     }
                 }
             }
-            null
+            ContactLookup.NotFound
         } catch (e: SecurityException) {
             android.util.Log.w("PhoneSkill", "读取联系人权限被拒绝: ${e.message}")
-            null
+            ContactLookup.NoPermission
         } catch (e: Exception) {
             android.util.Log.w("PhoneSkill", "查找联系人失败: ${e.message}")
-            null
+            ContactLookup.NotFound
         }
     }
 

@@ -31,6 +31,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -144,6 +145,20 @@ class MainActivity : AppCompatActivity() {
                         openOverlaySettings()
                         return@setOnClickListener
                     }
+                    // ★ 审计修复：原来只校验了「离线模型 + 悬浮窗」就启动服务，
+                    // 没校验 RECORD_AUDIO——权限没给也能把服务起来，之后录音静默失败
+                    //（只在 logcat 里能看到 AudioRecord 报错），用户以为 App 坏了。
+                    // Android 13+ 的前台服务通知还需要 POST_NOTIFICATIONS，没它通知栏
+                    // 不显示"语音助手正在运行"，服务状态对用户完全不可见。
+                    // 权限请求复用已有的 permissionLauncher/hasPermission()（见 ensurePermissions），
+                    // 不另写一套请求回调。
+                    val missing = missingStartServicePermissions()
+                    if (missing.isNotEmpty()) {
+                        toast("启动语音助手需要${missing.joinToString("、") { permissionLabel(it) }}权限，请在弹窗中允许")
+                        permissionLauncher.launch(missing.toTypedArray())
+                        // 未授权就不启动服务：宁可让用户看到"没启动"，也不要起一个录不了音的服务
+                        return@setOnClickListener
+                    }
                     // 无障碍服务不再强制要求（导航使用 URI scheme）
                     VoiceAssistantService.start(this)
                     toast(getString(R.string.toast_service_started))
@@ -247,6 +262,11 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         super.onDestroy()
         handler.removeCallbacks(stateRefresher)
+        // ★ 审计修复：scope 用的是 SupervisorJob，不 cancel 就不会随 Activity 结束——
+        // 页面销毁后 startDownload() 里 launch 的协程仍在跑（下载/解压最长的就是这个），
+        // 完成后还会碰 binding/progress 控件（已 detach 的 View），既漏内存又可能崩。
+        // import kotlinx.coroutines.cancel 之前已导入却没用上，这里正是它的用途。
+        scope.cancel()
         ttsChecker?.shutdown()
         ttsChecker = null
     }
@@ -1073,7 +1093,13 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
                 log("下载完成（${pack.length() / 1024 / 1024}MB），正在解压…")
-                ModelInstaller.install(this@MainActivity, pack)
+                // ★ 修复：install() 要解压约 300MB 并做多轮 rename/校验，必须放到 IO 线程。
+                // scope 是 CoroutineScope(SupervisorJob() + Dispatchers.Main)，原来直接在这里调用
+                // ⇒ 主线程解压，几乎必然 ANR / 黑屏（旁边那些 runOnUiThread 说明作者误以为
+                // 已经在后台线程了）。download() 内部自带 withContext(IO)，install() 没有。
+                withContext(Dispatchers.IO) {
+                    ModelInstaller.install(this@MainActivity, pack)
+                }
                 log("模型安装完成")
                 refreshModelState()
                 toast(getString(R.string.toast_model_ready))
@@ -1093,6 +1119,24 @@ class MainActivity : AppCompatActivity() {
         try {
             com.xisohi.car.voiceassistant.core.LogUtils.i("MainActivity", msg)
         } catch (_: Exception) {}
+    }
+
+    /**
+     * 启动语音服务前必须拿到的运行时权限（btnToggleService 的启动分支用）。
+     * - RECORD_AUDIO：服务起来就要录音，没权限时 AudioRecord 静默失败，用户只看到"没反应"；
+     * - Android 13+ 的 POST_NOTIFICATIONS：前台服务通知不显示，用户看不到服务在运行。
+     */
+    private fun missingStartServicePermissions(): List<String> {
+        val required = mutableListOf(Manifest.permission.RECORD_AUDIO)
+        if (Build.VERSION.SDK_INT >= 33) required.add(Manifest.permission.POST_NOTIFICATIONS)
+        return required.filter { !hasPermission(it) }
+    }
+
+    /** 权限名 → 中文提示（只服务上面那条 toast；其他提示仍走 strings.xml） */
+    private fun permissionLabel(permission: String): String = when (permission) {
+        Manifest.permission.RECORD_AUDIO -> "麦克风"
+        Manifest.permission.POST_NOTIFICATIONS -> "通知"
+        else -> permission
     }
 
     private fun ensurePermissions() {

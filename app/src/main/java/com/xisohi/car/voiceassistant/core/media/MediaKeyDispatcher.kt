@@ -23,13 +23,10 @@ class MediaKeyDispatcher(private val context: Context) {
      *
      * @param keyCode 按键码（如 KeyEvent.KEYCODE_MEDIA_PLAY）
      * @param targetPackage 目标播放器包名（仅用于日志；实际由系统按活跃 MediaSession 决定）
-     * @param allPlayerPackages 已废弃，仅为兼容 MediaSkill 的既有调用而保留，内部不再使用
      */
-    @Suppress("UNUSED_PARAMETER")
     fun dispatch(
         keyCode: Int,
-        targetPackage: String? = null,
-        allPlayerPackages: List<String> = emptyList()
+        targetPackage: String? = null
     ) {
         val down = android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, keyCode)
         val up = android.view.KeyEvent(android.view.KeyEvent.ACTION_UP, keyCode)

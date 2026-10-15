@@ -423,8 +423,9 @@ class LogViewerActivity : AppCompatActivity() {
     /**
      * 只读日志文件尾部 [MAX_TAIL_BYTES] 字节并转成文本。
      *
-     * 为什么不用 LogUtils.readTodayLog()/readLogByDate()：它们内部是 file.readText()（整文件），
-     * 而 LogUtils 在"别人正在改"的禁改清单里，所以这里自己按字节定位到文件尾部读。
+     * 为什么不复用 LogUtils 的读取接口：日志单文件上限 5MB（LogUtils.MAX_LOG_SIZE），
+     * 整文件 readText() + 全量 setText 会在车机上卡住主线程；这里按字节定位到文件尾部，
+     * 只读最后 64KB，再截到 [MAX_LINES] 行。
      */
     private fun readLogTail(file: File?): String {
         if (file == null || !file.exists()) return "（日志文件不存在）"

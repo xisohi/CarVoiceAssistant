@@ -42,15 +42,24 @@ class WeatherSkill(private val context: Context) {
         return try {
             val url = java.net.URL("https://ipapi.co/json/")
             val conn = url.openConnection() as java.net.HttpURLConnection
-            conn.connectTimeout = 5000
-            conn.readTimeout = 5000
-            conn.requestMethod = "GET"
-            conn.setRequestProperty("User-Agent", "Mozilla/5.0")
+            // ★ 审计 #25 修复：responseCode 判断 + 读取整体收进 try/finally——
+            // 修复前 `if (conn.responseCode != 200) return null` 在 try/finally 之外
+            //（只有紧随读取的手工 disconnect），非 200 直接 return 会漏掉 disconnect；
+            // 读取抛异常时同样跳过 disconnect（连接泄漏，反复失败会耗尽文件描述符）。
+            // 现在无论哪个 return / 哪条异常路径，finally 都会释放连接，且释放点在读取之后、
+            // 解析之前（不在解析期间白占着连接）。
+            val json = try {
+                conn.connectTimeout = 5000
+                conn.readTimeout = 5000
+                conn.requestMethod = "GET"
+                conn.setRequestProperty("User-Agent", "Mozilla/5.0")
 
-            if (conn.responseCode != 200) return null
+                if (conn.responseCode != 200) return null  // 非局部 return，依然会经过 finally
 
-            val json = conn.inputStream.bufferedReader().use { it.readText() }
-            conn.disconnect()
+                conn.inputStream.bufferedReader().use { it.readText() }
+            } finally {
+                conn.disconnect()
+            }
 
             val obj = org.json.JSONObject(json)
             val city = obj.optString("city", "")
@@ -91,20 +100,24 @@ class WeatherSkill(private val context: Context) {
         return try {
             val url = java.net.URL("https://wttr.in/${java.net.URLEncoder.encode(targetCity, "UTF-8")}?format=j1&lang=zh")
             val conn = url.openConnection() as java.net.HttpURLConnection
-            conn.connectTimeout = 8000
-            conn.readTimeout = 8000
-            conn.requestMethod = "GET"
-            conn.setRequestProperty("User-Agent", "curl/7.68.0")
 
-            val responseCode = conn.responseCode
-            if (responseCode != 200) {
-                return "天气查询失败，服务器返回 $responseCode"
-            }
-
-            // ★ 审计 #15 修复：conn.disconnect() 放进 finally——
-            // 修复前 readText() 抛异常时 disconnect() 不会执行（连接泄漏）；
-            // inputStream.close() 与 bufferedReader().use 重复关闭（无害）一并移除。
+            // ★ 审计 #15/#25 修复：responseCode 判断与读取整体放进 try/finally——
+            // 修复前 `if (responseCode != 200) return "..."` 在外层 try 里、内层 finally 之外，
+            // 非 200 直接 return 不会 disconnect（只有 200 的读取路径有 finally）；
+            // 修复更早期还有 readText() 抛异常时跳过 disconnect 的问题。
+            // 现在所有 return（含非 200 的 return）和异常路径都会走到 finally。
+            // 另：inputStream.close() 与 bufferedReader().use 重复关闭（无害）一并移除。
             try {
+                conn.connectTimeout = 8000
+                conn.readTimeout = 8000
+                conn.requestMethod = "GET"
+                conn.setRequestProperty("User-Agent", "curl/7.68.0")
+
+                val responseCode = conn.responseCode
+                if (responseCode != 200) {
+                    return "天气查询失败，服务器返回 $responseCode"
+                }
+
                 val inputStream = conn.inputStream
                 val json = inputStream.bufferedReader().use { it.readText() }
                 parseWeatherJson(json, targetCity, timeIndex)

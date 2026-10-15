@@ -101,7 +101,15 @@ class IntentParser(private val context: Context) {
                     ?.let { pa ->
                         (0 until pa.length()).mapNotNull { j ->
                             val re = pa.getJSONObject(j).optString("re", "")
-                            if (re.isEmpty()) null else Pattern.compile(re)
+                            if (re.isEmpty()) null
+                            else try {
+                                Pattern.compile(re)
+                            } catch (e: Exception) {
+                                // ★ 单条正则非法只丢这一条：原实现会让 Pattern.compile 抛异常，
+                                // 被下面的 catch 吞成空列表 —— 一条写错的正则废掉全部 30 条意图。
+                                LogUtils.e("IntentParser", "规则 $id 的正则非法，已跳过该条: ${e.message}")
+                                null
+                            }
                         }
                     }
                     ?: emptyList()
@@ -113,22 +121,32 @@ class IntentParser(private val context: Context) {
             }
                 // ★ 新增：按 priority 降序排序（稳定排序，相同 priority 保持 JSON 数组顺序）
                 .sortedByDescending { it.priority }
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            // ★ 原来这里是 catch (_: Exception) { emptyList() }，静默吞掉一切：配置一旦损坏，
+            // 30 条意图全部失效，而日志里一个字都没有，用户只会觉得"说什么都没反应"。
+            LogUtils.e("IntentParser", "意图规则解析失败，本次不加载任何规则（配置可能已损坏）: ${e.message}", e)
             emptyList()
         }
     }
 
     private fun readConfig(context: Context): JSONObject? {
-        // 1) 可热更新配置
+        // 1) 可热更新配置（优先）
         val configFile = File(ModelManager.configDir(context), "intents.json")
         if (configFile.exists()) {
-            return try { JSONObject(configFile.readText()) } catch (_: Exception) { null }
+            try {
+                return JSONObject(configFile.readText())
+            } catch (e: Exception) {
+                // ★ 热更新配置损坏时**回退到 APK 内置配置**（而不是像原来那样直接返回 null）：
+                // 否则一份写坏的 intents.json 会让助手彻底听不懂，哪怕内置配置完好无损。
+                LogUtils.e("IntentParser", "热更新意图配置损坏，回退到内置配置（${configFile.absolutePath}）: ${e.message}", e)
+            }
         }
         // 2) APK 内置配置
         return try {
             val text = context.assets.open("intents.json").bufferedReader().use { it.readText() }
             JSONObject(text)
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            LogUtils.e("IntentParser", "内置意图配置读取失败: ${e.message}", e)
             null
         }
     }

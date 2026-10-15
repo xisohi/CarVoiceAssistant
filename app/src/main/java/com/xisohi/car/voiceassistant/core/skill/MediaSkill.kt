@@ -70,11 +70,7 @@ class MediaSkill(private val context: Context) {
             // 记录当前活跃播放器
             musicPlayerManager.setActivePlayer(playerPkg)
             // 发送媒体按键
-            mediaKeyDispatcher.dispatch(
-                keyCode,
-                playerPkg,
-                musicPlayerManager.getAllPlayerPackages()
-            )
+            mediaKeyDispatcher.dispatch(keyCode, playerPkg)
             ExecutionResult(true, label)
         } catch (e: Exception) {
             ExecutionResult(false, "音乐控制失败：${e.message ?: "未知错误"}")
@@ -135,18 +131,10 @@ class MediaSkill(private val context: Context) {
     private fun scheduleAutoPlay(packageName: String) {
         cancelAutoPlay()
         val r1 = Runnable {
-            mediaKeyDispatcher.dispatch(
-                android.view.KeyEvent.KEYCODE_MEDIA_PLAY,
-                packageName,
-                musicPlayerManager.getAllPlayerPackages()
-            )
+            mediaKeyDispatcher.dispatch(android.view.KeyEvent.KEYCODE_MEDIA_PLAY, packageName)
         }
         val r2 = Runnable {
-            mediaKeyDispatcher.dispatch(
-                android.view.KeyEvent.KEYCODE_MEDIA_PLAY,
-                packageName,
-                musicPlayerManager.getAllPlayerPackages()
-            )
+            mediaKeyDispatcher.dispatch(android.view.KeyEvent.KEYCODE_MEDIA_PLAY, packageName)
         }
         autoPlayRunnables.add(r1)
         autoPlayRunnables.add(r2)

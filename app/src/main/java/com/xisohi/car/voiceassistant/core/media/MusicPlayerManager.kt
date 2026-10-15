@@ -65,11 +65,6 @@ class MusicPlayerManager(private val context: Context) {
     }
 
     /**
-     * 获取所有播放器包名列表（用于 MediaKeyDispatcher 兜底广播）
-     */
-    fun getAllPlayerPackages(): List<String> = musicPlayerPackages
-
-    /**
      * 判断包名是否是已知的音乐播放器
      */
     fun isMusicPlayer(packageName: String): Boolean =

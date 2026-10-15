@@ -162,15 +162,23 @@ class OilPriceSkill(private val context: Context) {
         return try {
             val url = java.net.URL("https://ipapi.co/json/")
             val conn = url.openConnection() as java.net.HttpURLConnection
-            conn.connectTimeout = 5000
-            conn.readTimeout = 5000
-            conn.requestMethod = "GET"
-            conn.setRequestProperty("User-Agent", "Mozilla/5.0")
+            // ★ 审计 #25 修复：responseCode 判断 + 读取整体收进 try/finally——
+            // 修复前 `if (conn.responseCode != 200) return null` 在 try/finally 之外
+            //（只有紧随读取的手工 disconnect），非 200 直接 return 会漏掉 disconnect；
+            // 读取抛异常时同样跳过 disconnect（连接泄漏）。
+            // 现在所有 return / 异常路径都由 finally 释放，释放点在读取之后、解析之前。
+            val json = try {
+                conn.connectTimeout = 5000
+                conn.readTimeout = 5000
+                conn.requestMethod = "GET"
+                conn.setRequestProperty("User-Agent", "Mozilla/5.0")
 
-            if (conn.responseCode != 200) return null
+                if (conn.responseCode != 200) return null  // 非局部 return，依然会经过 finally
 
-            val json = conn.inputStream.bufferedReader().use { it.readText() }
-            conn.disconnect()
+                conn.inputStream.bufferedReader().use { it.readText() }
+            } finally {
+                conn.disconnect()
+            }
 
             val obj = org.json.JSONObject(json)
             val region = obj.optString("region", "")
@@ -297,25 +305,33 @@ class OilPriceSkill(private val context: Context) {
     private fun fetchOilPricesFromUrl(url: String, sourceName: String): Map<String, OilPriceInfo> {
         return try {
             val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
-            conn.connectTimeout = 10000
-            conn.readTimeout = 10000
-            conn.requestMethod = "GET"
-            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
 
-            val responseCode = conn.responseCode
-            if (responseCode != 200) {
-                android.util.Log.w(TAG, "$sourceName 返回码: $responseCode")
-                return emptyMap()
+            // ★ 审计 #25 修复：responseCode 判断 + 读取整体收进 try/finally——
+            // 修复前非 200 直接 `return emptyMap()`、以及读取/解析抛异常，
+            // 两条路径都不会 disconnect（只有正常读完才手工 disconnect）。
+            // 现在所有 return / 异常路径都由 finally 释放。
+            try {
+                conn.connectTimeout = 10000
+                conn.readTimeout = 10000
+                conn.requestMethod = "GET"
+                conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+
+                val responseCode = conn.responseCode
+                if (responseCode != 200) {
+                    android.util.Log.w(TAG, "$sourceName 返回码: $responseCode")
+                    return emptyMap()
+                }
+
+                val html = conn.inputStream.bufferedReader(java.nio.charset.StandardCharsets.UTF_8).use { it.readText() }
+
+                val prices = parseOilPriceTable(html)
+                if (prices.isEmpty()) {
+                    android.util.Log.w(TAG, "$sourceName 解析结果为空")
+                }
+                prices
+            } finally {
+                conn.disconnect()
             }
-
-            val html = conn.inputStream.bufferedReader(java.nio.charset.StandardCharsets.UTF_8).use { it.readText() }
-            conn.disconnect()
-
-            val prices = parseOilPriceTable(html)
-            if (prices.isEmpty()) {
-                android.util.Log.w(TAG, "$sourceName 解析结果为空")
-            }
-            prices
         } catch (e: java.net.SocketTimeoutException) {
             android.util.Log.w(TAG, "$sourceName 请求超时: ${e.message}")
             emptyMap()
