@@ -290,9 +290,9 @@ public class WakeWordEngine {
             framesProcessed++;
             return null;
         }
-        // 启动保护期：前5帧忽略触发（KWS 阈值编译进 ContextGraph 无法临时放大，等效旧"阈值1.5倍"），
-        // 但唤醒线程照常推理并打印音量日志
-        boolean protectPeriod = frameCounter < 5;
+        // 启动保护期：前3帧忽略触发（KWS 阈值编译进 ContextGraph 无法临时放大，等效旧"阈值1.5倍"），
+        // 但唤醒线程照常推理并打印音量日志（2026-10-15：与流式接口保持一致，5帧→3帧）
+        boolean protectPeriod = frameCounter < 3;
 
         try {
             // short → float（-1~1），×音频增益（保持旧增益语义）
@@ -390,9 +390,10 @@ public class WakeWordEngine {
             framesProcessed++;
             return null;
         }
-        // 启动保护期：前 50 块（≈5s）忽略触发（原前5帧语义等价，防启动误唤醒）
+        // 启动保护期：前 30 块（≈3s）忽略触发（原5s过保守，实测误唤醒没有；
+        // 对话结束监听重启后用户 3~5s 内再次唤醒能及时响应）
         blockCounter++;
-        boolean protectPeriod = blockCounter < 50;
+        boolean protectPeriod = blockCounter < 30;
 
         try {
             // short → float（-1~1），×音频增益（保持旧增益语义）
