@@ -13,7 +13,6 @@ import com.xisohi.car.voiceassistant.core.media.MusicPlayerManager
  *
  * 职责：
  * - 播放/暂停/下一首/上一首
- * - 选择歌曲（占位，需要用户手动操作）
  * - 打开音乐播放器时自动播放
  *
  * 依赖：Context + MediaKeyDispatcher + MusicPlayerManager
@@ -173,18 +172,6 @@ class MediaSkill(private val context: Context) {
     }
 
     /**
-     * [MusicFree 专用] 播放指定序号的搜索结果。
-     * 已移除无障碍自动搜索，需要用户手动在播放器中选择。
-     */
-    // ★ 审计 #21 修复：无障碍自动搜索已移除，本方法恒返回失败；标注 @Deprecated 便于后续清理
-    @Deprecated("无障碍自动搜索已移除，恒返回失败；请手动在播放器中选择歌曲")
-    fun selectSong(indexStr: String): ExecutionResult {
-        val index = parseSongIndex(indexStr)
-        if (index <= 0) return ExecutionResult(false, "请说第几首，比如第三首")
-        return ExecutionResult(false, "请手动在播放器中选择第${indexStr}首歌曲")
-    }
-
-    /**
      * 搜索并播放歌曲（MusicFree 专用）
      * 格式: musicfree://play?keyword=<URL编码的关键词>
      */
@@ -230,19 +217,4 @@ class MediaSkill(private val context: Context) {
         }
     }
 
-    /** 解析歌曲序号（支持"3"、"第三首"、"两首"等） */
-    private fun parseSongIndex(str: String): Int {
-        val clean = str.trim()
-        // 纯数字
-        clean.toIntOrNull()?.let { return it }
-        // 中文数字
-        val cnNum = mapOf(
-            "一" to 1, "二" to 2, "两" to 2, "三" to 3, "四" to 4,
-            "五" to 5, "六" to 6, "七" to 7, "八" to 8, "九" to 9, "十" to 10
-        )
-        for ((cn, num) in cnNum) {
-            if (clean.contains(cn)) return num
-        }
-        return 0
-    }
 }

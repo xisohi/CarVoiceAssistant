@@ -1,7 +1,6 @@
 package com.xisohi.car.voiceassistant.core.media
 
 import android.content.Context
-import android.content.Intent
 import android.media.AudioManager
 
 /**
@@ -9,9 +8,8 @@ import android.media.AudioManager
  *
  * 职责：发送媒体按键（播放/暂停/下一首/上一首）
  *
- * 两层策略（按优先级）：
- * 1. [通用] AudioManager.dispatchMediaKeyEvent（系统级媒体按键，发给当前活跃 MediaSession）
- * 2. [兜底] 逐个指定常见播放器包名发送广播（跳过目标，避免和第1层双重触发）
+ * 只走一层策略：
+ * - AudioManager.dispatchMediaKeyEvent（系统级媒体按键，由系统发给当前活跃的 MediaSession）
  *
  * 依赖：Context + AudioManager
  */
@@ -24,9 +22,10 @@ class MediaKeyDispatcher(private val context: Context) {
      * 发送媒体按键
      *
      * @param keyCode 按键码（如 KeyEvent.KEYCODE_MEDIA_PLAY）
-     * @param targetPackage 目标播放器包名（null=系统默认）
-     * @param allPlayerPackages 所有播放器包名列表（用于兜底广播）
+     * @param targetPackage 目标播放器包名（仅用于日志；实际由系统按活跃 MediaSession 决定）
+     * @param allPlayerPackages 已废弃，仅为兼容 MediaSkill 的既有调用而保留，内部不再使用
      */
+    @Suppress("UNUSED_PARAMETER")
     fun dispatch(
         keyCode: Int,
         targetPackage: String? = null,
@@ -35,7 +34,7 @@ class MediaKeyDispatcher(private val context: Context) {
         val down = android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, keyCode)
         val up = android.view.KeyEvent(android.view.KeyEvent.ACTION_UP, keyCode)
 
-        // 1. 系统级媒体按键（发送给当前活跃的 MediaSession，最可靠）
+        // 系统级媒体按键（发送给当前活跃的 MediaSession，最可靠）
         try {
             audioManager.dispatchMediaKeyEvent(down)
             audioManager.dispatchMediaKeyEvent(up)
@@ -44,20 +43,10 @@ class MediaKeyDispatcher(private val context: Context) {
             android.util.Log.w("MediaKeyDispatcher", "dispatchMediaKeyEvent 失败: ${e.message}")
         }
 
-        // 2. 兜底：逐个指定所有播放器包名发送广播（跳过目标，避免和系统级按键双重触发）
-        for (pkg in allPlayerPackages) {
-            if (pkg == targetPackage) continue // 目标已通过系统级按键收到，跳过
-            try {
-                val downIntent = Intent(Intent.ACTION_MEDIA_BUTTON)
-                    .setPackage(pkg)
-                    .putExtra(Intent.EXTRA_KEY_EVENT, down)
-                val upIntent = Intent(Intent.ACTION_MEDIA_BUTTON)
-                    .setPackage(pkg)
-                    .putExtra(Intent.EXTRA_KEY_EVENT, up)
-                context.sendBroadcast(downIntent)
-                context.sendBroadcast(upIntent)
-            } catch (_: Exception) {
-            }
-        }
+        // ★ 修复4：删掉"逐个播放器包名 sendBroadcast(ACTION_MEDIA_BUTTON)"的兜底。
+        // 原兜底会对除目标外的每一个播放器包（MusicPlayerManager 里共 12 个）单独发广播，
+        // 等于把媒体键塞给所有未被系统选中的播放器 —— 车机上会出现多个播放器同时响应
+        // （典型现象：说"下一首"时后台 App 一起切歌）。而媒体键本就该由系统按活跃
+        // MediaSession 路由（上面的 dispatchMediaKeyEvent），广播兜底收益低、副作用大。
     }
 }

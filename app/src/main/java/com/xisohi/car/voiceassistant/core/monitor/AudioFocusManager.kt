@@ -153,11 +153,6 @@ class AudioFocusManager(private val context: Context) {
     }
 
     /**
-     * 当前是否处于静音状态（媒体音量已被降低）。
-     */
-    fun isMuted(): Boolean = isMediaVolumeMuted
-
-    /**
      * 重置状态：先恢复音量并放弃音频焦点，再清空记录。
      *
      * ★ 修复：原实现只清状态、不恢复音量也不 abandonAudioFocus —— 这是个危险函数。

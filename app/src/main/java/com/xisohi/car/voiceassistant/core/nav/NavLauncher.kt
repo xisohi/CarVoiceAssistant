@@ -52,11 +52,14 @@ abstract class NavLauncher {
      * 用关键字拉起导航
      * @return true=成功拉起，false=失败
      *
-     * open：子类可以重写（比如 AmapAutoLauncher 需要在最后加"直接启动主界面"的兜底）
+     * open：子类可以重写（比如 TencentAutoLauncher 车机版不支持 URI，只启动主界面）
      */
     open fun navigateByKeyword(context: Context, keyword: String): Boolean {
         if (!isAvailable(context)) return false
-        val encoded = java.net.URLEncoder.encode(keyword, "UTF-8")
+        // ★ 修复7：URLEncoder 把空格编成 '+'，而导航 App（高德/百度/腾讯）的 URI 解析
+        // 不会把 '+' 还原成空格，导致"去人民 广场"这类带空格的地点名搜不到。
+        // 必须替换成 %20（与 MediaSkill 里为 MusicFree 做的同款修复一致）。
+        val encoded = java.net.URLEncoder.encode(keyword, "UTF-8").replace("+", "%20")
         val intents = buildKeywordIntents(context, encoded)
         for (intent in intents) {
             if (tryStartActivity(context, intent)) {

@@ -186,8 +186,11 @@ class WeatherSkill(private val context: Context) {
      * 时间词列表
      */
     private val timeWords = listOf(
-        "今日", "今天", "明日", "明天", "后天", "大后天",
-        "昨日", "昨天", "前天", "大前天",
+        // ★ 长词必须排在短词前面：isOnlyTimeWord()/extractCity() 是按列表顺序逐个 replace 剥离的，
+        // 若"后天"排在"大后天"之前，"大后天天气"会先被剥成"大"，然后拿"大"当城市名去查天气。
+        "大后天", "大前天",
+        "今日", "今天", "明日", "明天", "后天",
+        "昨日", "昨天", "前天",
         "现在", "当前", "目前", "此刻",
         "这周", "本周", "下周", "下星期",
         "这个月", "本月", "下个月", "下月",
@@ -226,7 +229,8 @@ class WeatherSkill(private val context: Context) {
     fun getTimeIndex(text: String?): Int {
         if (text.isNullOrBlank()) return 0
         return when {
-            text.contains("后天") || text.contains("大后天") -> 2
+            // "大后天"也含"后天"，无需单独判断（原写法后半句永远不可达）
+            text.contains("后天") -> 2
             text.contains("明天") || text.contains("明日") -> 1
             else -> 0
         }

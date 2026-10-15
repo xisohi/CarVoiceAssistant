@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  FileProvider 可分享路径白名单
+
+  为什么需要这个文件：
+  LogViewerActivity.shareLog() 用 FileProvider.getUriForFile() 分享日志，
+  而 FileProvider 只允许分享下面显式声明的目录 —— 不声明就会抛
+  IllegalArgumentException: "Failed to find configured root that contains ..."，
+  被 catch 后降级成"分享失败"提示，等于日志分享功能永久不可用。
+
+  路径说明（getUriForFile 取"最长的匹配 root"，所以日志文件会命中 logs 这条）：
+  - logs：getExternalFilesDir(null)/logs，日志实际存放目录（LogUtils.LOG_DIR = "logs"）
+  - root：getExternalFilesDir(null) 根目录，用于分享单文件录音（如录音导出到 files/ 根下）
+  - files_root：getFilesDir() 内部私有根目录，覆盖写入内部存储的文件
+-->
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <external-files-path
+        name="logs"
+        path="logs/" />
+    <external-files-path
+        name="root"
+        path="." />
+    <files-path
+        name="files_root"
+        path="." />
+</paths>

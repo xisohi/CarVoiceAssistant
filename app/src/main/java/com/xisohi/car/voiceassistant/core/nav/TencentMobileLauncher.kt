@@ -26,6 +26,11 @@ class TencentMobileLauncher : NavLauncher() {
         context: Context,
         encodedKeyword: String
     ): List<Intent> {
+        // ★ 修复8：from 参数与其他参数保持一致，先 URLEncoder 再拼接。
+        // 原实现把中文"我的位置"直接写进 URI（from=我的位置），中文没有百分号编码，
+        // URI 在某些 ROM/Intent 传递链上会被截断或解析失败（腾讯地图拿不到 from）。
+        // 注意 URLEncoder 会把空格编成 '+'，这里同样替换成 %20（见 NavLauncher 修复7）。
+        val encodedFrom = java.net.URLEncoder.encode("我的位置", "UTF-8").replace("+", "%20")
         return listOf(
             // 方式1：qqmap search（搜索，显示结果列表让用户选择，避免直接导航到错误的第一个结果）
             // 官方文档：https://lbs.qq.com/webApi/uriV1/uriGuide/uriMobilePoisearch
@@ -46,7 +51,7 @@ class TencentMobileLauncher : NavLauncher() {
                     "qqmap://map/routeplan?" +
                             "type=drive" +
                             "&to=$encodedKeyword" +
-                            "&from=我的位置" +
+                            "&from=$encodedFrom" +
                             "&referer=${context.packageName}"
                 )
                 setPackage(packageName)

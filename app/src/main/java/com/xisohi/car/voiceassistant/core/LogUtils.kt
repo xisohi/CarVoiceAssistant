@@ -43,7 +43,12 @@ object LogUtils {
      */
     fun init(ctx: Context) {
         context = ctx.applicationContext
-        logDir = File(ctx.getExternalFilesDir(null), LOG_DIR)
+        // ★ 外部存储不可用（未挂载/被弹出）时 getExternalFilesDir() 返回 null，
+        // 而 File(null, "logs") 会退化成相对路径 "logs"：mkdirs() 静默失败、每次写入都被
+        // 下面的 catch 吞掉 —— 结果是文件日志整体静默失效且毫无提示。
+        // 这里按 AudioSaver.init() 的既有做法兜底到内部存储。
+        val baseDir = ctx.getExternalFilesDir(null) ?: ctx.filesDir
+        logDir = File(baseDir, LOG_DIR)
         if (!logDir!!.exists()) {
             logDir!!.mkdirs()
         }

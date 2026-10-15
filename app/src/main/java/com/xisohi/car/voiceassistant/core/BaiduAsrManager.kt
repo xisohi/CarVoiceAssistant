@@ -221,6 +221,16 @@ class BaiduAsrManager private constructor(private val context: Context) {
                     Log.w(TAG, "配置验证失败（鉴权错误）: $error - $errorDesc")
                     VerifyResult.AuthError("验证失败: $error - $errorDesc")
                 }
+            } else if (responseCode in 500..599) {
+                // ★ 5xx 是服务端/网关问题，不是用户的 Key 错。原实现把它归为 AuthError，
+                // MainActivity 收到 AuthError 会写入 CONFIG_STATUS_ERROR，之后识别就一直
+                // 走离线，直到用户手动重测 —— 一次服务端抖动就能"废掉"在线识别。
+                Log.w(TAG, "配置验证服务端错误: $responseCode（判定为网络/服务端问题，不标记配置错误）")
+                VerifyResult.NetworkError("服务端返回 HTTP $responseCode，请稍后重试")
+            } else if (responseCode == 429) {
+                // 限流同理：不是配置错误，重试即可
+                Log.w(TAG, "配置验证被限流: $responseCode")
+                VerifyResult.NetworkError("请求过于频繁（HTTP 429），请稍后重试")
             } else {
                 Log.w(TAG, "配置验证 HTTP 错误: $responseCode")
                 VerifyResult.AuthError("HTTP 错误: $responseCode")
@@ -442,8 +452,10 @@ class BaiduAsrManager private constructor(private val context: Context) {
             // 上一次会话可能因上层 6 秒超时先回退离线而残留（百度 SDK 内部 20 秒超时才自收尾），
             // 此时 isRecognizing 仍为 true，若忽略本次调用，后续所有在线识别都会被拒。
             // 正确做法：先 cancel() 释放旧会话（不回调旧 callback），再正常启动新会话。
-            Log.w(TAG, "正在识别中，先取消上一次会话再启动")
-            cancel()
+            // ★ 必须同步等待取消完成：cancel() 是异步投递，若 asr.cancel 排到下面的
+            // asr.start 之后才执行，会把刚启动的新会话立刻取消掉。
+            Log.w(TAG, "正在识别中，先取消上一次会话再启动（同步等待取消完成）")
+            cancel(waitForCompletion = true)
         }
 
         recognitionCallback = callback
@@ -522,23 +534,40 @@ class BaiduAsrManager private constructor(private val context: Context) {
     // 现在的方案是"唤醒阶段我们占麦，识别阶段释放麦克风让百度自己录"，所以不需要喂音频了。
     // 如果以后需要外部喂音频，再加回来。
 
-    fun cancel() {
+    /**
+     * 取消当前在线识别。
+     *
+     * @param waitForCompletion true = 同步等待 asr.cancel 发送完成（最多 2 秒）。
+     *   启动新会话前必须传 true：send() 是投递到后台单线程池异步执行的，异步模式下
+     *   asr.cancel 可能排到紧接着的 asr.start 之后才执行，把刚启动的新会话立刻取消掉
+     *   （新会话于是只能干等 6/20 秒超时）。默认 false 保持原语义——取消常被超时分支
+     *   在主线程调用，不能无条件阻塞主线程。
+     */
+    fun cancel(waitForCompletion: Boolean = false) {
         if (!isRecognizing) return
         handler.removeCallbacks(timeoutRunnable)
         isRecognizing = false
         recognitionCallback = null
         onPartialListener = null
         Log.i(TAG, "百度语音识别已取消")
-        // ★ 修复：send() 可能阻塞（SDK 内部同步清理音频资源，旧版 SDK 可能等数百毫秒）。
-        // 取消常被超时分支在主线程调用（VoiceAssistantService 的 timeoutRunnable），
-        // 若同步 send 会卡住 handleOnlineFailure / TTS 播报，故放到后台单线程池执行。
+        // ★ send() 可能阻塞（SDK 内部同步清理音频资源，旧版 SDK 可能等数百毫秒），
+        // 故一律放到后台单线程池执行；需要严格顺序时用 Future 等它完成。
         try {
             val m = asrManager ?: return
-            cancelExecutor.execute {
+            // 显式 Runnable：ExecutorService.submit 同时有 submit(Runnable) 和
+            // submit(Callable) 两个重载，传裸 lambda 会走重载歧义解析，这里固定成 Runnable。
+            val task = cancelExecutor.submit(Runnable {
                 try {
                     m.send("asr.cancel", null, null, 0, 0)
                 } catch (e: Exception) {
                     Log.e(TAG, "发送取消指令失败: ${e.message}")
+                }
+            })
+            if (waitForCompletion) {
+                try {
+                    task.get(2, java.util.concurrent.TimeUnit.SECONDS)
+                } catch (e: Exception) {
+                    Log.w(TAG, "等待 asr.cancel 发送完成超时/被中断: ${e.javaClass.simpleName}")
                 }
             }
         } catch (e: Exception) {

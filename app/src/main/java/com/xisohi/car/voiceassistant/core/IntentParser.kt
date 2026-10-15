@@ -19,6 +19,7 @@ private data class IntentRule(
     val priority: Int,                 // ★ 新增：数字大的先匹配（默认 0）
     val patterns: List<Pattern>,
     val slots: List<String>,
+    // 当前无读取方（grammarPhrases 已移除）；保留字段以兼容 intents.json / README 里已公开的 JSON 契约
     val grammar: List<String>
 )
 
@@ -82,23 +83,6 @@ class IntentParser(private val context: Context) {
             }
         }
         return null
-    }
-
-    /**
-     * 生成可选的识别热词（原 Vosk grammar 词表）——可选增强。
-     *
-     * 默认 intents.json 中 grammar 为空数组 → 返回空列表 → 自由识别
-     * （NLU 用正则抽取，开箱即用）。
-     * 若你希望限定识别域以提升准确率，可为每个意图填写 grammar 短语，
-     * 例如 ["音量 [unk]", "[unk] 音量 [unk]"]（[unk] 为任意词通配）。
-     * 注意：启用后识别只输出能匹配 grammar 的指令，需要逐条验证。
-     */
-    fun grammarPhrases(): List<String> {
-        val phrases = LinkedHashSet<String>()
-        for (rule in rules) {
-            phrases.addAll(rule.grammar)
-        }
-        return phrases.toList()
     }
 
     private fun loadRules(context: Context): List<IntentRule> {

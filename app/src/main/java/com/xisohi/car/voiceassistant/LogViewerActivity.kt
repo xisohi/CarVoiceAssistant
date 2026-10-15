@@ -14,6 +14,11 @@ import androidx.core.content.FileProvider
 import com.xisohi.car.voiceassistant.core.LogUtils
 import com.xisohi.car.voiceassistant.databinding.ActivityLogViewerBinding
 import java.io.File
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 
 /**
  * 日志查看页面
@@ -29,12 +34,26 @@ class LogViewerActivity : AppCompatActivity() {
 
     companion object {
         private const val REQUEST_CODE_SAVE_FILE = 1001
+
+        // ★ 修复3：一次最多读文件尾部 64KB（而不是整文件读——LogUtils.MAX_LOG_SIZE 单文件上限 5MB）
+        private const val MAX_TAIL_BYTES = 64 * 1024L
+        // 最多显示的行数：64KB 的短行日志可能有上千行，限制行数可直接减少 TextView 排版开销
+        private const val MAX_LINES = 2000
     }
 
     private lateinit var binding: ActivityLogViewerBinding
     private val handler = Handler(Looper.getMainLooper())
     private var autoRefresh = true
     private var currentDate: String? = null
+
+    // ★ 修复3：日志"读文件 + setText"原先每 2 秒在主线程做一次（全量读最多 5MB + 全量 setText，
+    // TextView 排版会卡死 UI）。这里新建一个 IO 协程 scope：读文件在后台，setText 回主线程。
+    // 本 Activity 原先没有 scope 字段，无法复用；用 SupervisorJob 便于 onDestroy 统一 cancel，
+    // 不会随 Activity 销毁泄漏（这是原先裸 Handler 轮询之外新增的唯一持有物）。
+    private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    // 上一次显示的内容：内容没变就跳过 setText，避免每 2 秒做一次无意义的重新排版
+    private var lastLogText: String? = null
 
     private val refreshRunnable = object : Runnable {
         override fun run() {
@@ -356,29 +375,104 @@ class LogViewerActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * 刷新日志显示
+     *
+     * ★ 修复3（原实现每 2 秒在主线程做一次全文件 readText + 全量 setText，单文件上限 5MB）：
+     * 1. 读文件放到 [ioScope]（Dispatchers.IO），主线程只负责 setText；
+     * 2. 只读文件尾部 [MAX_TAIL_BYTES]（64KB），再截到 [MAX_LINES] 行——
+     *    5MB 文本即使只 setText 一次也会让 TextView 排版卡死，读尾部是最小改动且够用的方案；
+     * 3. 内容与上次相同（[lastLogText]）直接跳过 setText；
+     * 4. 回到主线程前校验日期快照：用户在读取期间切了日期就丢弃这次结果，
+     *    避免"旧日期的内容覆盖新日期"（异步化带来的新竞态）。
+     */
     private fun refreshLog() {
-        val logText = if (currentDate == null) {
-            LogUtils.readTodayLog()
-        } else {
-            LogUtils.readLogByDate(currentDate!!)
+        val dateSnapshot = currentDate  // 主线程取快照，用于丢弃过期结果
+        ioScope.launch {
+            val file = resolveLogFile(dateSnapshot)
+            val logText = readLogTail(file)
+            val sizeKB = (file?.length() ?: 0L) / 1024
+            runOnUiThread {
+                // 页面已销毁 / 用户已切换日期：丢弃这次结果
+                if (isFinishing || isDestroyed || dateSnapshot != currentDate) return@runOnUiThread
+                if (logText != lastLogText) {
+                    lastLogText = logText
+                    binding.tvLog.text = logText
+                    // 滚动到底部（只有内容变化时才需要滚动）
+                    binding.scrollView.post {
+                        binding.scrollView.fullScroll(View.FOCUS_DOWN)
+                    }
+                }
+                binding.tvLogSize.text = "日志大小: ${sizeKB}KB"
+            }
         }
+    }
 
-        binding.tvLog.text = logText
+    /**
+     * 解析当前要显示的日志文件。
+     *
+     * date == null 表示"今天"：走 LogUtils.getTodayLogFile()，它内部会先 flush 缓冲，
+     * 否则最近不足 100 行还没落盘的日志（LogUtils 每 100 行才 flush 一次）看不到。
+     */
+    private fun resolveLogFile(date: String?): File? {
+        if (date == null) return LogUtils.getTodayLogFile()
+        val f = File(getExternalFilesDir(null), "logs/$date.txt")
+        return if (f.exists()) f else null
+    }
 
-        // 滚动到底部
-        binding.scrollView.post {
-            binding.scrollView.fullScroll(View.FOCUS_DOWN)
+    /**
+     * 只读日志文件尾部 [MAX_TAIL_BYTES] 字节并转成文本。
+     *
+     * 为什么不用 LogUtils.readTodayLog()/readLogByDate()：它们内部是 file.readText()（整文件），
+     * 而 LogUtils 在"别人正在改"的禁改清单里，所以这里自己按字节定位到文件尾部读。
+     */
+    private fun readLogTail(file: File?): String {
+        if (file == null || !file.exists()) return "（日志文件不存在）"
+        return try {
+            val length = file.length()
+            val start = if (length > MAX_TAIL_BYTES) length - MAX_TAIL_BYTES else 0L
+            val size = (length - start).toInt()  // 最多 64KB，toInt 安全
+            val buf = ByteArray(size)
+            var read = 0
+            java.io.RandomAccessFile(file, "r").use { raf ->
+                raf.seek(start)
+                // ★ 用循环 read 而不是 readFully：日志写入线程可能同时在追加，甚至被"清空日志"截断，
+                // 读到 EOF 就停，避免 EOFException 让整次刷新退化成"读取日志失败"
+                while (read < size) {
+                    val n = raf.read(buf, read, size - read)
+                    if (n <= 0) break
+                    read += n
+                }
+            }
+            var text = String(buf, 0, read, Charsets.UTF_8)
+            if (start > 0L) {
+                // 从文件中间起读时首行几乎肯定是半行：丢掉第一个换行符之前的内容
+                //（被切断的多字节 UTF-8 字符也在首行里，一起丢掉，不会显示成乱码；
+                //  万一整段没有换行符，则只去掉开头可能出现的替换字符）
+                val nl = text.indexOf('\n')
+                text = if (nl >= 0) text.substring(nl + 1) else text.trimStart('\uFFFD')
+            }
+            takeLastLines(text)
+        } catch (e: Exception) {
+            "读取日志失败: ${e.message}"
         }
+    }
 
-        // 更新日志大小
-        val file = if (currentDate == null) {
-            LogUtils.getTodayLogFile()
-        } else {
-            val f = File(getExternalFilesDir(null), "logs/$currentDate.txt")
-            if (f.exists()) f else null
+    /**
+     * 只保留最后 maxLines 行。
+     * 从尾部往前数换行，避免对整段文本 split 出大量临时字符串（每 2 秒都会执行一次）。
+     */
+    private fun takeLastLines(text: String): String {
+        var index = text.length - 1
+        var lines = 1
+        while (index >= 0) {
+            if (text[index] == '\n') {
+                lines++
+                if (lines > MAX_LINES) return text.substring(index + 1)
+            }
+            index--
         }
-        val sizeKB = file?.length()?.div(1024) ?: 0
-        binding.tvLogSize.text = "日志大小: ${sizeKB}KB"
+        return text
     }
 
     private fun shareLog() {
@@ -413,8 +507,25 @@ class LogViewerActivity : AppCompatActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        // ★ 修复3：回到前台恢复 2 秒轮询（周期不变，仍是 2000ms；onPause 里已停掉）
+        handler.removeCallbacks(refreshRunnable)
+        handler.postDelayed(refreshRunnable, 2000)
+        refreshLog()
+    }
+
+    override fun onPause() {
+        super.onPause()
+        // ★ 修复3：页面不可见（如分享面板盖住、切到别的应用）时停掉轮询，
+        // 避免后台每 2 秒无意义地读一次日志文件
+        handler.removeCallbacks(refreshRunnable)
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         handler.removeCallbacks(refreshRunnable)
+        // ★ 修复3：取消后台读取协程，防止 Activity 销毁后仍有 runOnUiThread 回调
+        ioScope.cancel()
     }
 }

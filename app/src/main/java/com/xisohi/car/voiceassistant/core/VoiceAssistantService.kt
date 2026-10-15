@@ -226,6 +226,10 @@ class VoiceAssistantService : Service() {
     // 连续在线识别失败次数（用于网络不通或Key错误时自动降级为离线，避免每次都要等在线超时）
     private var consecutiveOnlineFailures = 0
     private val MAX_CONSECUTIVE_ONLINE_FAILURES = 3  // 连续失败3次后暂时降级为离线
+    // ★ 在线降级的恢复点：原实现降级后"直到应用重启"才回到在线（只有"在线成功"会清零计数），
+    // 网络恢复后用户也回不来。这里记录降级时刻，降级满 ONLINE_DOWNGRADE_RETRY_MS 就放行一次在线尝试。
+    private var onlineDowngradeAt = 0L
+    private val ONLINE_DOWNGRADE_RETRY_MS = 5 * 60_000L
     // ★ 在线识别超时6秒：实测无网环境下百度 SDK token 获取失败内部重试可达 14 秒，
     // 期间用户第一遍语音已被百度录走丢弃，回退离线时用户早已说完 → 离线识别必然为空。
     // 缩短到 6 秒：正常网络下流式识别 1-4 秒即出结果，6 秒足够；
@@ -849,6 +853,10 @@ class VoiceAssistantService : Service() {
      * 无网络或百度未配置 → sherpa-onnx 离线识别（我们自己录音 + sherpa-onnx 识别）
      */
     private fun startRecognition() {
+        // ★ 服务已销毁则直接返回。否则销毁后仍在主线程排队的 50ms 延迟任务
+        // （onSpeakDone 里 post 的 muteMediaVolume() + startRecognition()）会在服务
+        // 销毁后重新拉起识别：音量被再次静音、百度 SDK 被重新 init() 出僵尸会话并抢麦。
+        if (serviceDestroyed) return
         // 正常启动识别时，重置"在线失败回退离线"标志位
         isFallbackFromOnline = false
         // ★ 网络连通性决策：不"假设网络通"。
@@ -888,10 +896,19 @@ class VoiceAssistantService : Service() {
         // 连续在线失败超过阈值时，暂时降级为离线（避免每次都要等在线超时/失败）
         // 适用于：Key错误、网络不通（WiFi已连接但无外网）等场景
         if (consecutiveOnlineFailures >= MAX_CONSECUTIVE_ONLINE_FAILURES) {
-            LogUtils.w("VoiceService", "连续在线识别失败 ${consecutiveOnlineFailures} 次，暂时降级为离线识别（下次启动应用后恢复）")
-            sendRecognitionLog("⚠️ 连续在线失败${consecutiveOnlineFailures}次，暂时使用离线识别")
-            startRecognitionOffline()
-            return
+            val elapsed = if (onlineDowngradeAt == 0L) 0L else SystemClock.elapsedRealtime() - onlineDowngradeAt
+            if (onlineDowngradeAt == 0L) onlineDowngradeAt = SystemClock.elapsedRealtime()
+            if (elapsed < ONLINE_DOWNGRADE_RETRY_MS) {
+                LogUtils.w("VoiceService", "连续在线识别失败 ${consecutiveOnlineFailures} 次，暂时降级为离线识别（${(ONLINE_DOWNGRADE_RETRY_MS - elapsed) / 1000}s 后重新尝试在线）")
+                sendRecognitionLog("⚠️ 连续在线失败${consecutiveOnlineFailures}次，暂时使用离线识别")
+                startRecognitionOffline()
+                return
+            }
+            // ★ 降级已满重试窗口：清零计数，放行一次在线尝试（见字段 onlineDowngradeAt 的说明）
+            LogUtils.i("VoiceService", "离线降级已持续 ${elapsed / 1000}s，重新尝试一次在线识别")
+            sendRecognitionLog("🔄 重新尝试在线识别")
+            consecutiveOnlineFailures = 0
+            onlineDowngradeAt = 0L
         }
         // 配置验证状态（三态）：
         //   ok       = 测试连接通过 → 走在线
@@ -998,8 +1015,9 @@ class VoiceAssistantService : Service() {
                 if (!result.isNullOrEmpty()) {
                     LogUtils.i("VoiceService", "百度在线识别成功: '$result'")
                     sendRecognitionLog("✅ 百度识别: $result")
-                    // 在线识别成功，重置连续失败计数
+                    // 在线识别成功，重置连续失败计数与降级时刻
                     consecutiveOnlineFailures = 0
+                    onlineDowngradeAt = 0L
                     handleText(result)
                 } else {
                     LogUtils.w("VoiceService", "百度在线识别失败或结果为空，自动回退到离线识别")
@@ -1220,6 +1238,11 @@ class VoiceAssistantService : Service() {
 
             try {
                 loop@ while (true) {
+                    // ★ 服务销毁或协程已取消时立即退出：本循环里的 audioQueue.poll()、
+                    // record.read()、recognizer.feed() 全都不是挂起点，不检查就会在
+                    // onDestroy 已 release 掉 recognizer/stream 之后继续 feed() ——
+                    // 访问已释放的原生对象，可能直接 SIGSEGV（Java 层 catch 不住）。
+                    if (serviceDestroyed || !isActive) break@loop
                     // 从队列取音频帧（阻塞等待，最多等100ms，避免队列空时卡死）
                     val frame = audioQueue.poll(100, java.util.concurrent.TimeUnit.MILLISECONDS)
                     if (frame == null) {
@@ -1360,6 +1383,8 @@ class VoiceAssistantService : Service() {
                 var remainingSilenceFrames = 0
                 var remainingProcessedFrames = 0
                 while (true) {
+                    // ★ 同上：队列最多积压 500 帧，销毁后继续 feed() 同样是"访问已释放识别器"
+                    if (serviceDestroyed || !isActive) break
                     val frame = audioQueue.poll() ?: break
                     if (frame.length <= 0) break
                     val n = frame.length
@@ -1735,17 +1760,13 @@ class VoiceAssistantService : Service() {
                             if (!ttsEngine.isReady) {
                                 currentState = State.IDLE
                                 resumeWake()
-                            } else {
-                                // ★ 超时兜底：TTS播报后5秒内未收到 onSpeakDone 自动恢复唤醒监听
-                                // 防止TTS引擎异常导致 onSpeakDone 不回调，服务卡在 SPEAKING
-                                mainHandler.postDelayed({
-                                    if (currentState != State.IDLE) {
-                                        LogUtils.w("VoiceService", "天气播报超时（5秒未收到onSpeakDone），自动恢复唤醒监听")
-                                        currentState = State.IDLE
-                                        resumeWake()
-                                    }
-                                }, 5000)
                             }
+                            // ★ 原"5 秒未收到 onSpeakDone 就强制恢复"的兜底已删除，原因有二：
+                            //  1) 守卫只判 currentState != State.IDLE —— 用户 5 秒内再次唤醒时，
+                            //     这个陈旧 runnable 会把新会话强行拉回 IDLE 并 resumeWake()；
+                            //  2) TtsEngine 现在自带按 utterance 粒度的播报看门狗（不回调 onDone 时
+                            //     主动释放音频焦点 + 回调 onSpeakDone），覆盖同一失效场景且不会
+                            //     误伤长播报（时长按文本长度估算，而非固定 5 秒）。
                         }
                     }
                 } catch (e: Exception) {
@@ -1794,16 +1815,10 @@ class VoiceAssistantService : Service() {
                         if (!ttsEngine.isReady) {
                             currentState = State.IDLE
                             resumeWake()
-                        } else {
-                            // ★ 超时兜底：TTS播报后5秒内未收到 onSpeakDone 自动恢复唤醒监听
-                            mainHandler.postDelayed({
-                                if (currentState != State.IDLE) {
-                                    LogUtils.w("VoiceService", "油价播报超时（5秒未收到onSpeakDone），自动恢复唤醒监听")
-                                    currentState = State.IDLE
-                                    resumeWake()
-                                }
-                            }, 5000)
                         }
+                        // ★ 原"5 秒未收到 onSpeakDone 就强制恢复"的兜底已删除，原因同天气分支：
+                        // 守卫过弱（只判 currentState != IDLE，会打断 5 秒内的新一轮会话），
+                        // 且 TtsEngine 的播报看门狗已按 utterance 粒度覆盖该失效场景。
                     }
                 } catch (e: Exception) {
                     LogUtils.w("VoiceService", "油价查询异常: ${e.message}")

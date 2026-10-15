@@ -57,7 +57,7 @@ class BaiduMobileLauncher : NavLauncher() {
      */
     override fun navigateNearby(context: Context, keyword: String): Boolean {
         if (!isAvailable(context)) return false
-        val encoded = java.net.URLEncoder.encode(keyword, "UTF-8")
+        val encoded = java.net.URLEncoder.encode(keyword, "UTF-8").replace("+", "%20")  // ★ 空格不能编成 '+'（导航 App 不还原），同基类修复
         val intent = Intent(Intent.ACTION_VIEW).apply {
             data = Uri.parse(
                 "baidumap://map/place/nearby?" +

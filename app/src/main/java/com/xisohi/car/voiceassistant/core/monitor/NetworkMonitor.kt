@@ -246,6 +246,10 @@ class NetworkMonitor(
      * 开始监听网络状态变化。
      */
     fun start(callback: Callback) {
+        // ★ 幂等：重复 start() 会直接覆盖 networkCallback 字段，上一次注册的 callback
+        // 就再也拿不到引用、永远无法 unregister —— 默认网络回调泄漏 + 事件重复投递。
+        // 先注销再注册（首次调用时 networkCallback 为 null，stop() 内部是空操作）。
+        stop()
         try {
             val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
             val networkCallback = object : ConnectivityManager.NetworkCallback() {
@@ -314,6 +318,10 @@ class NetworkMonitor(
      * 停止监听网络状态变化。
      */
     fun stop() {
+        // ★ 取消待执行的延迟探测：stop() 之后那个协程仍会在 1 秒后醒来探测并写缓存，
+        // 把"已经停止监听"之后的陈旧网络状态写进缓存（onLost 分支是取消的，这里漏了）。
+        pendingCheckJob?.cancel()
+        pendingCheckJob = null
         try {
             networkCallback?.let {
                 val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager

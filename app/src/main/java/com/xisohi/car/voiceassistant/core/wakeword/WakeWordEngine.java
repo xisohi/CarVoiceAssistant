@@ -29,7 +29,8 @@ import java.util.Locale;
  * 注意：
  *   - 增益/阈值修改采用"惰性重建"：唤醒线程下次 process() 时重建引擎（KWS 阈值在构造时
  *     编译进 ContextGraph），避免与正在运行的唤醒线程竞态。
- *   - tempThresholdOverride 保留接口但不生效（KWS 不支持运行时阈值覆盖），仅供日志显示。
+ *   - KWS 阈值只在构造时编译进 ContextGraph，**不存在运行时覆盖**：原 tempThresholdOverride /
+ *     setTempThresholdOverride 接口已删除（0 调用方的死接口），日志阈值直接用 detectionThreshold。
  */
 public class WakeWordEngine {
 
@@ -68,8 +69,8 @@ public class WakeWordEngine {
     private int framesProcessed = 0;
     /** 帧号计数器，用于调试日志时序定位 */
     private int frameCounter = 0;
-    /** 临时阈值覆盖（KWS 不支持运行时生效，仅日志显示；-1 表示不覆盖） */
-    private static volatile float tempThresholdOverride = -1f;
+    // ★ 清理：tempThresholdOverride 字段已删除——0 调用方（grep 确认）；KWS 阈值在 ContextGraph
+    //   编译期固化，不存在运行时覆盖，该字段只会让日志阈值看起来可调。
 
     // ===== KWS 引擎 =====
     private KeywordSpotter spotter;
@@ -83,15 +84,11 @@ public class WakeWordEngine {
     // 复用缓冲（单线程，仅 WakeAudioThread 调用 process()）
     private float[] reuseFloatAudio = null;
 
-    // ===== 唤醒灵敏度测试日志（保持原接口） =====
-    public interface TestLogListener {
-        void onLog(String line);
-    }
-
-    private static TestLogListener testLogListener = null;
-    private static final java.util.List<String> testLogs = new java.util.ArrayList<>();
-    private static boolean testLogging = false;
-    private static String testScenario = "";
+    // ★ 清理：唤醒灵敏度测试日志整套 API 已删除——TestLogListener / setTestLogListener /
+    //   startTestLogging / stopTestLogging / getTestLogs / clearTestLogs 及
+    //   testLogListener / testLogs / testLogging / testScenario 字段，workspace 内 0 调用方（grep 确认）。
+    //   这套 API 服务于已废弃的自研 mel+sigmoid 概率引擎（逐帧概率 CSV 记录），
+    //   换成触发式 KWS 后"概率/阈值"语义已不成立，process() 内对应的写入块也已一并移除。
 
     /** Detection result with specific wake word name. */
     public static class DetectionResult {
@@ -157,45 +154,18 @@ public class WakeWordEngine {
         LogUtils.i(TAG, "唤醒参数已更新(自定义): gain=" + gain + ", threshold=" + threshold + "（下次唤醒生效）");
     }
 
-    /** 获取实际生效的阈值（临时覆盖优先，仅供日志显示） */
+    /** 获取实际生效的阈值（仅供日志显示） */
+    // ★ 清理：tempThresholdOverride 字段与 setTempThresholdOverride() 已删除（0 调用方，grep 确认）。
+    //   原实现语义是"临时覆盖优先"，覆盖源删掉后退化为直接返回 detectionThreshold；
+    //   这里**保留方法本体**（方案 a）：process() 的 [WakeProb] 日志行零改动，改动面最小，
+    //   同时为将来重新引入运行时阈值预留唯一出口。
     public static float getEffectiveThreshold() {
-        return tempThresholdOverride > 0 ? tempThresholdOverride : detectionThreshold;
+        return detectionThreshold;
     }
 
-    /** 设置临时阈值覆盖（KWS ContextGraph 阈值编译期固化，不支持运行时生效；保留接口兼容） */
-    public static void setTempThresholdOverride(float threshold) {
-        tempThresholdOverride = threshold;
-        LogUtils.i(TAG, "临时阈值覆盖(仅显示，KWS引擎不支持运行时生效): " + (threshold < 0 ? "清除" : threshold));
-    }
-
-    /** 设置测试日志监听器 */
-    public static void setTestLogListener(TestLogListener listener) {
-        testLogListener = listener;
-    }
-
-    /** 开始记录测试日志 */
-    public static void startTestLogging(String scenario) {
-        testScenario = scenario;
-        testLogging = true;
-        testLogs.clear();
-        testLogs.add("=== 测试场景: " + scenario + " ===");
-        testLogs.add("时间, 唤醒词, 概率, 阈值, 增益, 是否触发");
-    }
-
-    /** 停止记录测试日志 */
-    public static void stopTestLogging() {
-        testLogging = false;
-    }
-
-    /** 获取测试日志 */
-    public static java.util.List<String> getTestLogs() {
-        return new java.util.ArrayList<>(testLogs);
-    }
-
-    /** 清除测试日志 */
-    public static void clearTestLogs() {
-        testLogs.clear();
-    }
+    // ★ 清理：集中的测试日志 API 实现块（setTestLogListener / startTestLogging / stopTestLogging /
+    //   getTestLogs / clearTestLogs）已删除——整套 0 调用方（grep 确认），
+    //   它们读写的 testLogListener/testLogs/testLogging/testScenario 字段也已随之移除。
 
     // ===== 实例方法 =====
 
@@ -268,8 +238,8 @@ public class WakeWordEngine {
     public boolean isLoaded() { return loaded; }
     public String getErrorMessage() { return errorMessage; }
 
-    /** mel 帧数（KWS 无 mel，返回 1 兼容旧调用方） */
-    public int getMelFramesNeeded() { return 1; }
+    // ★ 清理：getMelFramesNeeded() 已删除——0 调用方（grep 确认）。KWS 没有 mel 帧概念，
+    //   它只是旧 mel+sigmoid 引擎的兼容残留，"兼容旧调用方"的前提已不成立。
     /** 录音帧大小（保持不变，WakeAudioThread 依赖） */
     public int getAudioSamplesNeeded() { return AUDIO_SAMPLES_NEEDED; }
 
@@ -285,7 +255,8 @@ public class WakeWordEngine {
 
     /** Number of wake word models loaded. */
     public int getModelCount() { return WAKE_WORDS.length; }
-    public boolean isDscnnMode() { return false; }
+    // ★ 清理：isDscnnMode() 已删除——0 调用方（grep 确认）；它恒返回 false，
+    //   是旧 DSCNN 模型的占位查询接口，对 KWS 引擎没有任何含义。
 
     /** 重置冷启动跳过计数（每次唤醒线程启动时调用） */
     public void resetSkipCounter() {
@@ -385,18 +356,9 @@ public class WakeWordEngine {
                         frameCounter, kw, getEffectiveThreshold(), audioGain, rms);
                 LogUtils.d(TAG, logLine);
 
-                // 测试日志记录
-                if (testLogging) {
-                    String time = new java.text.SimpleDateFormat("HH:mm:ss.SSS", Locale.US)
-                            .format(new java.util.Date());
-                    String csvLine = String.format(Locale.US,
-                            "%s, %s, 1.000, %.2f, %.1f, YES",
-                            time, kw, getEffectiveThreshold(), audioGain);
-                    testLogs.add(csvLine);
-                    if (testLogListener != null) {
-                        testLogListener.onLog(csvLine);
-                    }
-                }
+                // ★ 清理：此处原有的"测试日志记录"块（testLogging 判断 + java.text.SimpleDateFormat
+                //   生成 CSV 行 + testLogs.add + testLogListener.onLog）已随整套测试日志 API 删除——
+                //   0 调用方（grep 确认）。
 
                 return new DetectionResult(kw, 1.0f, 0f, 1);
             }
