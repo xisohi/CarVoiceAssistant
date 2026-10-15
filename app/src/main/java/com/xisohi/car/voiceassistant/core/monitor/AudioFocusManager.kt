@@ -1,7 +1,10 @@
 package com.xisohi.car.voiceassistant.core.monitor
 
 import android.content.Context
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
 import android.media.AudioManager
+import android.os.Build
 import com.xisohi.car.voiceassistant.core.LogUtils
 import android.view.KeyEvent
 import kotlin.jvm.Synchronized
@@ -46,6 +49,9 @@ class AudioFocusManager(private val context: Context) {
     /** 音频焦点申请结果 */
     private var audioFocusGranted = false
 
+    /** 识别期独占焦点请求（API 26+，导航用途）——随 restoreMediaVolume() 统一释放 */
+    private var recognitionFocusRequest: AudioFocusRequest? = null
+
     /** 恢复媒体音量连续失败次数（车机 ROM 可能永久禁止改音量，达到上限后放弃重试并清状态） */
     private var restoreFailCount = 0
     private val MAX_RESTORE_FAILS = 3
@@ -70,15 +76,37 @@ class AudioFocusManager(private val context: Context) {
             // ★ 2026-10-15：车机导航播报走独立"导航音量"通道，流静音压不住；MAY_DUCK
             //   焦点只要求对方"降低音量"，导航照播不误。改 EXCLUSIVE：遵循焦点的
             //   导航/音乐 App 在识别期间会主动暂停播报，识别结束放弃焦点后恢复。
+            // ★ 2026-10-15（二次）：焦点用途声明成"导航指引"（与导航 App 同通道）——
+            //   车机"导航播报优先"策略会把导航用途的独占焦点视为最高优先级：
+            //   1) 识别期系统自动压低音乐等其它音频（无需依赖手动静音）
+            //   2) 导航 App 想播报需申请同一通道焦点，被独占时让位 → 解决"压不住导航"
+            //   播报/识别结束统一 abandon（restoreMediaVolume），导航恢复正常。
             if (!audioFocusGranted) {
-                val result = audioManager.requestAudioFocus(
-                    focusListener,
-                    AudioManager.STREAM_MUSIC,
-                    AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE
-                )
+                val result = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    if (recognitionFocusRequest == null) {
+                        val attrs = AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                            .build()
+                        recognitionFocusRequest = AudioFocusRequest.Builder(
+                            AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE
+                        )
+                            .setAudioAttributes(attrs)
+                            .setWillPauseWhenDucked(false)
+                            .build()
+                    }
+                    audioManager.requestAudioFocus(recognitionFocusRequest!!)
+                } else {
+                    @Suppress("DEPRECATION")
+                    audioManager.requestAudioFocus(
+                        focusListener,
+                        AudioManager.STREAM_MUSIC,
+                        AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE
+                    )
+                }
                 audioFocusGranted = (result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED)
                 if (audioFocusGranted) {
-                    LogUtils.d(TAG, "✅ 音频焦点申请成功，音乐 App 应自动降低音量")
+                    LogUtils.d(TAG, "✅ 音频焦点申请成功（导航通道独占），导航/音乐 App 应暂停播报")
                 } else {
                     LogUtils.w(TAG, "⚠️ 音频焦点申请失败，尝试直接改音量")
                 }
@@ -115,9 +143,14 @@ class AudioFocusManager(private val context: Context) {
 
             // === 第一步：放弃音频焦点 ===
             if (audioFocusGranted) {
-                audioManager.abandonAudioFocus(focusListener)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    recognitionFocusRequest?.let { audioManager.abandonAudioFocusRequest(it) }
+                } else {
+                    @Suppress("DEPRECATION")
+                    audioManager.abandonAudioFocus(focusListener)
+                }
                 audioFocusGranted = false
-                LogUtils.d(TAG, "✅ 已放弃音频焦点，音乐 App 应恢复正常音量")
+                LogUtils.d(TAG, "✅ 已放弃音频焦点，导航/音乐 App 应恢复正常播报")
             }
 
             // === 第二步：恢复多音频流音量 ===

@@ -128,6 +128,19 @@ class TtsEngine(private val context: Context) : TextToSpeech.OnInitListener {
                     // 音调 1.1x：稍微调高一点，声音更清晰
                     currentTts.setSpeechRate(1.5f)
                     currentTts.setPitch(1.1f)
+                    // ★ 2026-10-15：TTS 输出走导航通道（车机实测导航播报走独立导航音量，
+                    //   且导航播报时系统自动压低其它音频）。声明成导航用途后：
+                    //   1) 助手播报时系统自动压低音乐，无需依赖 MAY_DUCK 焦点
+                    //   2) 播报音量跟随车机"导航音量"调节
+                    //   3) 播报完释放焦点（onDone/onError/看门狗路径都有 releaseAudioFocus），导航恢复正常
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                        currentTts.setAudioAttributes(
+                            AudioAttributes.Builder()
+                                .setUsage(AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
+                                .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                                .build()
+                        )
+                    }
                     setupListener(currentTts)
                     Log.d("TtsEngine", "TTS 就绪 ✅")
                     // ★ 预热：TTS 引擎首次合成需加载声库/模型（车机上可达 300~800ms），
