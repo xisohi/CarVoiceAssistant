@@ -76,6 +76,11 @@ class VoiceAssistantService : Service() {
         private const val NOISE_MULTIPLIER = 1.5f     // 环境噪音倍数（1.5：开口检测更敏感，应对车机播报/轻声场景）
         private const val NOISE_WARMUP_MS = 100L      // 丢弃前 100ms（录音启动爆音）
         private const val NOISE_SAMPLE_MS = 300L      // 环境噪音采样时长
+        // ★ 2026-10-15 VAD修复④：识别文本稳定结束阈值（ms）——
+        // 环境残留声（音乐/行驶噪声）原始 RMS 66~149 与静音阈值 150 临界抖动，静音计数永远凑不齐，
+        // 只靠"静音累计"会拖到 20s 超时。识别器已出过字且这么久不再出新字 = 用户说完了，直接收尾。
+        // 取 1500ms：比静音结束（1200ms）略长，正常长句停顿不会误切；比 20s 超时短得多。
+        private const val PARTIAL_STABLE_END_MS = 1_500L
 
         @Volatile
         private var instance: VoiceAssistantService? = null
@@ -1401,6 +1406,22 @@ class VoiceAssistantService : Service() {
                             consecutiveSilenceFrames = 0
                             silenceDuration = 0
                         }
+
+                        // ★ VAD修复④（2026-10-15）：识别文本稳定作为独立结束条件（与上方静音条件 OR）——
+                        // 环境残留声原始 RMS 66~149 与新阈值 150 临界抖动时，静音计数反复清零、永远凑不齐 1216ms，
+                        // 录音会拖到 20s 超时（实车日志"拜拜下一曲"等 3 次，partial 静置 5~12s 仍在录）。
+                        // 识别器已出过字且 1.5s 不再出新字 = 用户说完了，即使残留声 RMS 高于静音阈值也收尾。
+                        // 要求 lastPartial 非空：识别器从未出字（拾音弱/开口后无识别）时不能提前切，避免丢话。
+                        if (lastPartial.isNotEmpty()
+                            && recordDuration >= MIN_RECORD_MS
+                            && SystemClock.elapsedRealtime() - lastPartialChangeMs >= PARTIAL_STABLE_END_MS) {
+                            LogUtils.d("VoiceService",
+                                "识别文本稳定${PARTIAL_STABLE_END_MS}ms（环境残留声高于静音阈值），结束录音 (RMS=${rms.toInt()}, 阈值=${adaptiveSilenceThreshold.toInt()})")
+                            sendRecognitionLog("⏹️ 结束录音 (识别文本稳定${PARTIAL_STABLE_END_MS}ms)")
+                            shouldStopRecording.set(true)
+                            // audioQueue.clear()  // 不清空队列，确保剩余帧也被处理和保存
+                            break@loop
+                        }
                     }
 
                     // 超时保护
@@ -1582,7 +1603,10 @@ class VoiceAssistantService : Service() {
             // 导航："导航到"常被 sherpa 识别成"导航道"（dao 同音），纠正后 dest 不再带"道"字
             "导航道" to "导航到",
             "到行道" to "导航到",  // "导航"→"到行"的更离谱变体
-            "到行到" to "导航到"
+            "到行到" to "导航到",
+            "到航道" to "导航到",  // 10-15 实车："导航到"→"到航道"（"到航道米亚发园"未匹配重录）
+            "道行道" to "导航到",  // "导航"→"道行"变体
+            "下一局" to "下一曲"   // "下一曲"→"下一局"（局/曲近音，10-08 实车"下一局"未匹配）
             // 可以在这里继续添加其他同音字纠正，例如：
             // "七里香" to "七里香",  // 如果识别成其他同音字
             // "万达广场" to "万达广场",
