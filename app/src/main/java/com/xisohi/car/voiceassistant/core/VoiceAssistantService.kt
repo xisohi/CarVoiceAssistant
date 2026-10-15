@@ -291,6 +291,48 @@ class VoiceAssistantService : Service() {
     @Volatile
     private var isWakeListening = false
 
+    // ★ 唤醒线程抢占麦克风失败后的自动重试间隔
+    private val WAKE_START_RETRY_MS = 3_000L
+
+    /**
+     * 麦克风被占用导致唤醒线程启动失败时的延迟重试。
+     * 场景：导航/音乐 App 正占着麦克风（我们并不知道，needsMicPause=false），
+     * 或百度 SDK 尚未释放麦克风。只复位状态而不重试的话，虽然不会再"卡死"，
+     * 但在用户下次交互之前仍然是聋的 —— 这里让它在麦克风空出后自动恢复。
+     */
+    private val wakeRestartRunnable = Runnable {
+        if (serviceDestroyed || isWakeListening) return@Runnable
+        if (currentState != State.IDLE || recognitionJob?.isActive == true) {
+            // 正在播报/识别中，等这一轮走完后的 resumeWake() 自然启动监听即可
+            LogUtils.d("WakeState", "跳过唤醒监听重试（state=$currentState, 识别中=${recognitionJob?.isActive == true}）")
+            return@Runnable
+        }
+        LogUtils.i("WakeState", "麦克风已空出，重试启动唤醒监听")
+        startWakeListening()
+    }
+
+    /**
+     * 复位唤醒监听状态（仅当退出的就是"当前"那个线程时）。
+     *
+     * ★ 必须覆盖唤醒线程的**每一条**退出路径：`startRecording()` 重试三次仍失败
+     * （麦克风被占）、`AudioRecord` 初始化失败等早退分支都在 `try/finally` **之外**，
+     * 原先不复位状态 ⇒ isWakeListening 卡在 true，而 startWakeListening() 第一行就是
+     * `if (isWakeListening) return`，于是唤醒词彻底失效 —— 代码注释里写着"startRecording()
+     * 可能因为麦克风被占用而失败"说明作者知道会发生竞争，但只处理了重试、没处理重试也失败。
+     * 侥幸能自愈的路径只有：点悬浮球手动唤醒、来一通电话、重启服务。
+     */
+    private fun resetWakeStateIfCurrent(thread: Thread) {
+        if (wakeAudioThread === thread) {
+            isWakeListening = false
+            wakeAudioThread = null
+        }
+    }
+
+    private fun scheduleWakeRestart() {
+        mainHandler.removeCallbacks(wakeRestartRunnable)
+        mainHandler.postDelayed(wakeRestartRunnable, WAKE_START_RETRY_MS)
+    }
+
     override fun onCreate() {
         super.onCreate()
         instance = this
@@ -593,6 +635,7 @@ class VoiceAssistantService : Service() {
 
     private fun startWakeListening() {
         LogUtils.i("WakeState", "startWakeListening: isWakeListening=$isWakeListening, state=$currentState")
+        mainHandler.removeCallbacks(wakeRestartRunnable)  // ★ 已经在启动了，取消待执行的重试
         if (isWakeListening) return
         if (!wakeWordEngine.isLoaded) {
             // ★ 懒加载模式：构造后引擎未加载是正常状态，唤醒线程启动后首次 process() 自动加载模型。
@@ -635,6 +678,7 @@ class VoiceAssistantService : Service() {
             val minBufSize = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioFormat)
             if (minBufSize <= 0) {
                 LogUtils.e("WakeAudioThread", "无效的音频参数")
+                resetWakeStateIfCurrent(this)
                 return
             }
 
@@ -646,7 +690,10 @@ class VoiceAssistantService : Service() {
                 maxOf(minBufSize * 8, 256_000)  // minBuf*8，最小256KB（约8秒缓冲），避免车机CPU慢导致ring buffer溢出丢帧
             )
             if (record.state != AudioRecord.STATE_INITIALIZED) {
-                LogUtils.e("WakeAudioThread", "AudioRecord 初始化失败")
+                LogUtils.e("WakeAudioThread", "AudioRecord 初始化失败（麦克风可能被占用），${WAKE_START_RETRY_MS}ms 后重试")
+                record.release()  // ★ 原实现漏了 release：AudioRecord 对象连同其 native 缓冲一起泄漏
+                resetWakeStateIfCurrent(this)
+                scheduleWakeRestart()
                 return
             }
 
@@ -655,6 +702,7 @@ class VoiceAssistantService : Service() {
             if (frameSize <= 0) {
                 LogUtils.e("WakeAudioThread", "无效的帧大小")
                 record.release()
+                resetWakeStateIfCurrent(this)
                 return
             }
 
@@ -679,8 +727,10 @@ class VoiceAssistantService : Service() {
                 }
             }
             if (!startSuccess) {
-                LogUtils.e("WakeAudioThread", "AudioRecord 启动失败（重试3次均失败），麦克风可能被其他应用占用")
+                LogUtils.e("WakeAudioThread", "AudioRecord 启动失败（重试3次均失败），麦克风可能被其他应用占用；${WAKE_START_RETRY_MS}ms 后重试")
                 record.release()
+                resetWakeStateIfCurrent(this)
+                scheduleWakeRestart()
                 return
             }
             // 初始化音频降噪（系统降噪 + 高通滤波器）
@@ -740,13 +790,10 @@ class VoiceAssistantService : Service() {
                 try { record.stop() } catch (_: Exception) {}
                 record.release()
                 noiseReducer.release()
-                // 线程退出时重置监听状态：
+                // 线程退出时重置监听状态（与早退分支共用同一个出口，避免漏掉某条路径）：
                 // - 正常唤醒：onWakeWord→stopWakeListening 已清理，此处 if 为 false 不重复
                 // - 唤醒被丢弃：此处负责清理，resumeWake 后续会重启
-                if (wakeAudioThread === this) {
-                    isWakeListening = false
-                    wakeAudioThread = null
-                }
+                resetWakeStateIfCurrent(this)
                 LogUtils.d("WakeAudioThread", "录音线程结束")
             }
         }
@@ -1954,6 +2001,8 @@ class VoiceAssistantService : Service() {
         // 取消外部导航暂停定时器
         externalNavPauseRunnable?.let { mainHandler.removeCallbacks(it) }
         externalNavPauseRunnable = null
+        // 取消待执行的唤醒监听重试
+        mainHandler.removeCallbacks(wakeRestartRunnable)
         super.onDestroy()
     }
 

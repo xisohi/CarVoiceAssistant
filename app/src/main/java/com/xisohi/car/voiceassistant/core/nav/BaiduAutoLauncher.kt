@@ -76,29 +76,11 @@ class BaiduAutoLauncher : NavLauncher() {
         return super.navigateNearby(context, keyword)
     }
 
-    /**
-     * 重写 navigateByKeyword：前两种方式都失败时，直接启动百度地图主界面
-     */
-    override fun navigateByKeyword(context: Context, keyword: String): Boolean {
-        if (super.navigateByKeyword(context, keyword)) return true
-
-        // 方式3：直接启动百度地图主界面（兜底）
-        return try {
-            val launchIntent = context.packageManager.getLaunchIntentForPackage(packageName)
-            if (launchIntent != null) {
-                launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                context.startActivity(launchIntent)
-                android.util.Log.d("BaiduAutoLauncher", "直接启动百度地图汽车版主界面")
-                true
-            } else {
-                android.util.Log.w("BaiduAutoLauncher", "未找到百度地图汽车版的启动 Intent")
-                false
-            }
-        } catch (e: Exception) {
-            android.util.Log.w("BaiduAutoLauncher", "启动百度地图汽车版失败: ${e.message}")
-            false
-        }
-    }
+    // ★ 修复6：这里原本重写 navigateByKeyword，在 URI 全部失败时"直接启动主界面 + return true"，
+    // 使 NavigationSkill 认为已处理而停止遍历，优先级更低（搜索其实可用）的导航永远轮不到。
+    // 现沿用基类：URI 都失败 → 返回 false → 交给下一个 Launcher。
+    // navigateHome/navigateCompany 的兜底走 super.* → 虚调用本方法，因此也一并回到该语义。
+    // "启动主界面"这最后一层兜底只保留在 TencentAutoLauncher（优先级 6，geo 之前那个）。
 
     /**
      * 导航回家（百度地图专门接口）

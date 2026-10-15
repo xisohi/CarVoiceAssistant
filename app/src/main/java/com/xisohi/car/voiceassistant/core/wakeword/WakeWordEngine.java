@@ -68,8 +68,6 @@ public class WakeWordEngine {
     private int framesProcessed = 0;
     /** 帧号计数器，用于调试日志时序定位 */
     private int frameCounter = 0;
-    // ★ 清理：tempThresholdOverride 字段已删除——0 调用方（grep 确认）；KWS 阈值在 ContextGraph
-    //   编译期固化，不存在运行时覆盖，该字段只会让日志阈值看起来可调。
 
     // ===== KWS 引擎 =====
     private KeywordSpotter spotter;
@@ -82,12 +80,6 @@ public class WakeWordEngine {
 
     // 复用缓冲（单线程，仅 WakeAudioThread 调用 process()）
     private float[] reuseFloatAudio = null;
-
-    // ★ 清理：唤醒灵敏度测试日志整套 API 已删除——TestLogListener / setTestLogListener /
-    //   startTestLogging / stopTestLogging / getTestLogs / clearTestLogs 及
-    //   testLogListener / testLogs / testLogging / testScenario 字段，workspace 内 0 调用方（grep 确认）。
-    //   这套 API 服务于已废弃的自研 mel+sigmoid 概率引擎（逐帧概率 CSV 记录），
-    //   换成触发式 KWS 后"概率/阈值"语义已不成立，process() 内对应的写入块也已一并移除。
 
     /** Detection result with specific wake word name. */
     public static class DetectionResult {
@@ -154,17 +146,9 @@ public class WakeWordEngine {
     }
 
     /** 获取实际生效的阈值（仅供日志显示） */
-    // ★ 清理：tempThresholdOverride 字段与 setTempThresholdOverride() 已删除（0 调用方，grep 确认）。
-    //   原实现语义是"临时覆盖优先"，覆盖源删掉后退化为直接返回 detectionThreshold；
-    //   这里**保留方法本体**（方案 a）：process() 的 [WakeProb] 日志行零改动，改动面最小，
-    //   同时为将来重新引入运行时阈值预留唯一出口。
     public static float getEffectiveThreshold() {
         return detectionThreshold;
     }
-
-    // ★ 清理：集中的测试日志 API 实现块（setTestLogListener / startTestLogging / stopTestLogging /
-    //   getTestLogs / clearTestLogs）已删除——整套 0 调用方（grep 确认），
-    //   它们读写的 testLogListener/testLogs/testLogging/testScenario 字段也已随之移除。
 
     // ===== 实例方法 =====
 
@@ -237,8 +221,6 @@ public class WakeWordEngine {
     public boolean isLoaded() { return loaded; }
     public String getErrorMessage() { return errorMessage; }
 
-    // ★ 清理：getMelFramesNeeded() 已删除——0 调用方（grep 确认）。KWS 没有 mel 帧概念，
-    //   它只是旧 mel+sigmoid 引擎的兼容残留，"兼容旧调用方"的前提已不成立。
     /** 录音帧大小（保持不变，WakeAudioThread 依赖） */
     public int getAudioSamplesNeeded() { return AUDIO_SAMPLES_NEEDED; }
 
@@ -254,8 +236,6 @@ public class WakeWordEngine {
 
     /** Number of wake word models loaded. */
     public int getModelCount() { return WAKE_WORDS.length; }
-    // ★ 清理：isDscnnMode() 已删除——0 调用方（grep 确认）；它恒返回 false，
-    //   是旧 DSCNN 模型的占位查询接口，对 KWS 引擎没有任何含义。
 
     /** 重置冷启动跳过计数（每次唤醒线程启动时调用） */
     public void resetSkipCounter() {
@@ -354,10 +334,6 @@ public class WakeWordEngine {
                         "[WakeProb] frame=%d word=%s prob=1.0000 threshold=%.4f gain=%.1f rms=%.0f TRIGGER",
                         frameCounter, kw, getEffectiveThreshold(), audioGain, rms);
                 LogUtils.d(TAG, logLine);
-
-                // ★ 清理：此处原有的"测试日志记录"块（testLogging 判断 + java.text.SimpleDateFormat
-                //   生成 CSV 行 + testLogs.add + testLogListener.onLog）已随整套测试日志 API 删除——
-                //   0 调用方（grep 确认）。
 
                 return new DetectionResult(kw, 1.0f, 0f, 1);
             }

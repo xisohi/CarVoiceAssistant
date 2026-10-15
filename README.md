@@ -11,13 +11,13 @@
 - **车控封闭域语义**：本地规则引擎（模板 + 槽位 + 正则），30+ 内置意图，意图模板可热更新
 - **地名拼音模糊匹配**：pinyin4j + Levenshtein 距离，支持 57 个内置地名，可自行扩展
 - **同音字纠正**：内置同音字纠正机制，提高识别准确率
-- **RNNoise 深度学习降噪**：唤醒阶段启用 RNNoise 降噪，提高嘈杂环境下的唤醒率
+- **RNNoise 降噪（已接入但当前未启用）**：RNNoise 的代码与 4 个 ABI 的原生库都还在，但所有调用点都显式传 `enableRnNoise = false`——实测唤醒线程开着 RNNoise 时每帧处理 1.5~1.9s（而帧长仅 1.005s）会欠实时，把"唤醒→提示音"延迟拉长 1~2.5s，因此被刻意关闭。当前实际生效的是高通滤波 + AEC/AutomaticGainControl（硬件支持时）
 - **自适应静音判定**：RMS 能量端点检测 + 动态静音阈值（无识别1000ms/有识别1500ms），长句中间停顿不截断
 - **可调增益**：唤醒阈值、音频增益、识别增益三档可调，支持低/中/高 预设
 - **多导航支持**：支持 6 个导航 App（高德车机/手机、百度车机/手机、腾讯车机/手机），自动选择优先级最高的已安装导航
 - **附近搜索**：支持"附近的加油站""找个厕所""搜索附近的XX"，各导航 App 有专门 URI
 - **回家/去公司**：直接调用导航 App 内置的家/公司地址，无需在本 App 重复设置
-- **多播放器支持**：支持 11 个音乐播放器（车机版优先），MusicFree/网易云/QQ音乐/酷狗/酷我/汽水音乐
+- **多播放器支持**：支持 12 个音乐播放器（车机版优先），MusicFree/鼎微/网易云/QQ音乐/酷狗/酷我/汽水音乐
 - **打电话功能**：支持"给XXX打电话""拨打10086"，联系人模糊匹配，无 CALL_PHONE 权限时回退拨号界面
 - **电话状态监听**：通话中自动暂停唤醒监听，避免麦克风冲突和误唤醒，挂断后自动恢复
 - **音量控制**：音量调到XX、大点声、小点声、静音、取消静音
@@ -42,14 +42,14 @@
 | 唤醒词 KWS | sherpa-onnx KeywordSpotter | 官方 3M 中英 KWS 模型（zipformer2-int8，约 5.4MB），关键词由 `assets/kws/keywords.txt` 定义（小飞/小飞小飞/您好小飞），免训练可改；低功耗常驻监听 |
 | 语音识别 ASR（在线） | 百度语音识别 SDK | `bdasr_aipd_V3_20250717`，AipeEventManagerFactory 动态传入用户 Key，infile 模式识别 |
 | 语音识别 ASR（离线） | sherpa-onnx（流式 Zipformer） | 离线中文识别，模型约 31MB；支持 armv7；无网络时自动回退 |
-| 降噪 | RNNoise + AudioRecord 内置 | RNNoise 深度学习降噪（唤醒阶段）；NoiseSuppressor/AutomaticGainControl（硬件支持时） |
+| 降噪 | 高通滤波 + AudioRecord 内置（RNNoise 已接入未启用） | 一阶高通滤波去 100Hz 以下发动机噪音；AEC/AutomaticGainControl（硬件支持时）。RNNoise 因欠实时被 `enableRnNoise=false` 关闭，详见"已知限制" |
 | 端点检测 VAD | RMS 能量 + 动态阈值 | 自适应静音阈值，已识别内容→1500ms，未识别→1000ms |
 | 语义理解 NLU | 本地规则引擎 | 模板 + 槽位 + 正则；意图配置 `intents.json`，30+ 内置意图，可热更新 |
 | 地名匹配 | pinyin4j + Levenshtein | 拼音模糊匹配，57 个内置地名，支持同音字纠正 |
 | 语音合成 TTS | 系统离线 TTS | 多数车机预装中文离线音色；可换 sherpa-onnx VITS |
 | 技能执行 | Skill 体系 | NavigationSkill/MediaSkill/VolumeSkill/PhoneSkill/AppLaunchSkill/WeatherSkill/TimeHelpSkill |
 | 导航调度 | NavLauncher 体系 | 统一基类 + 6 个导航 App 独立 Launcher，优先级自动选择 |
-| 媒体控制 | MusicPlayerManager + MediaKeyDispatcher | 11 个播放器优先级管理，系统级媒体按键 + 广播兜底 |
+| 媒体控制 | MusicPlayerManager + MediaKeyDispatcher | 12 个播放器优先级管理，系统级媒体按键（★ 已移除广播兜底：原先会把媒体键推给全部未选中的播放器，导致多个播放器同时响应） |
 | 状态监控 | Monitor 体系 | PhoneStateMonitor/NetworkMonitor/AudioFocusManager |
 | 模型下载 | OkHttp Range 断点续传 | 支持续传 + MD5 校验 + 解压安装 |
 | 开机自启 | WorkManager + BootReceiver | 双重兜底，确保车机开机后自动启动语音服务 |
@@ -90,7 +90,7 @@
 │     → WeatherSkill（天气）                     │
 │     → TimeHelpSkill（时间/帮助）               │
 │   → TtsEngine(离线 TTS)                        │
-│   → RnNoiseDenoiser(深度学习降噪)              │
+│   → RnNoiseDenoiser(已接入，暂未启用)          │
 │   → AudioNoiseReducer(音频降噪管理)            │
 └──────────────┬───────────────────────────────┘
 ┌─ 导航层 ─────────────────────────────────────┐
@@ -104,8 +104,8 @@
 │   → GeoLauncher（geo: 协议兜底）               │
 └──────────────┬───────────────────────────────┘
 ┌─ 媒体层 ─────────────────────────────────────┐
-│ MusicPlayerManager（11个播放器优先级管理）     │
-│ MediaKeyDispatcher（系统级按键+广播兜底）      │
+│ MusicPlayerManager（12个播放器优先级管理）     │
+│ MediaKeyDispatcher（系统级媒体按键）           │
 └──────────────┬───────────────────────────────┘
 ┌─ 模型层（filesDir/va/，私有目录）─────────────┐
 │ models/asr/   sherpa-onnx 模型（识别用）              │
@@ -151,7 +151,7 @@ CarVoiceAssistant/
 │       │   │   ├── PlaceMatcher.kt           # 地名拼音模糊匹配
 │       │   │   ├── SkillExecutor.kt          # 执行器（Skill 调度）
 │       │   │   ├── TtsEngine.kt              # 离线 TTS
-│       │   │   ├── RnNoiseDenoiser.kt        # RNNoise 深度学习降噪
+│       │   │   ├── RnNoiseDenoiser.kt        # RNNoise 降噪（已接入，当前未启用）
 │       │   │   ├── AudioNoiseReducer.kt      # 音频降噪管理
 │       │   │   ├── FloatViewService.kt       # 机器人悬浮窗服务
 │       │   │   ├── AutoStartWorker.kt        # WorkManager 开机自启兜底
@@ -174,8 +174,8 @@ CarVoiceAssistant/
 │       │   │   │   ├── TencentMobileLauncher.kt # 腾讯手机版
 │       │   │   │   └── GeoLauncher.kt        # geo: 协议兜底
 │       │   │   ├── media/                    # 媒体层
-│       │   │   │   ├── MusicPlayerManager.kt # 11个播放器优先级管理
-│       │   │   │   └── MediaKeyDispatcher.kt # 媒体按键分发（系统级+广播）
+│       │   │   │   ├── MusicPlayerManager.kt # 12个播放器优先级管理
+│       │   │   │   └── MediaKeyDispatcher.kt # 媒体按键分发（系统级媒体按键）
 │       │   │   └── monitor/                  # 监控层
 │       │   │       ├── PhoneStateMonitor.kt  # 电话状态监控
 │       │   │       ├── NetworkMonitor.kt     # 网络状态监控+连通性检测
@@ -305,16 +305,17 @@ APP 会自动选择优先级最高的已安装播放器（车机版优先）：
 | 优先级 | 播放器 | 包名 |
 |--------|--------|------|
 | 1 | MusicFree | fun.upup.musicfree |
-| 2 | 网易云音乐车机版 | com.netease.cloudmusic.iot |
-| 3 | QQ音乐车机版 | com.tencent.qqmusiccar |
-| 4 | 酷狗音乐车机版 | com.kugou.android.auto |
-| 5 | 酷我音乐车机版 | cn.kuwo.kwmusiccar |
-| 6 | 酷我音乐车简版 | cn.kuwo.autolite |
-| 7 | 网易云音乐手机版 | com.netease.cloudmusic |
-| 8 | 汽水音乐 | com.luna.music |
-| 9 | QQ音乐手机版 | com.tencent.qqmusic |
-| 10 | 酷狗音乐手机版 | com.kugou.android |
-| 11 | 酷我音乐手机版 | cn.kuwo.player |
+| 2 | 鼎微车机音乐播放器 | com.tw.music |
+| 3 | 网易云音乐车机版 | com.netease.cloudmusic.iot |
+| 4 | QQ音乐车机版 | com.tencent.qqmusiccar |
+| 5 | 酷狗音乐车机版 | com.kugou.android.auto |
+| 6 | 酷我音乐车机版 | cn.kuwo.kwmusiccar |
+| 7 | 酷我音乐车简版 | cn.kuwo.autolite |
+| 8 | 网易云音乐手机版 | com.netease.cloudmusic |
+| 9 | 汽水音乐 | com.luna.music |
+| 10 | QQ音乐手机版 | com.tencent.qqmusic |
+| 11 | 酷狗音乐手机版 | com.kugou.android |
+| 12 | 酷我音乐手机版 | cn.kuwo.player |
 
 ## 设置页功能
 
@@ -357,7 +358,7 @@ APP 会自动选择优先级最高的已安装播放器（车机版优先）：
 - **回声消除**：车机播报时麦克风会收到喇叭声，量产前建议上**双麦阵列 + AEC**，并保持"播报期间不响应唤醒"的策略（已内置）
 - **U盘路径**：鼎微/全志方案 U 盘通常挂载在 `/storage/usb1`，APP 支持自动检测多个 U 盘路径
 - **开机自启**：部分车机 ROM 限制第三方应用自启，APP 已使用 WorkManager + BootReceiver 双重兜底，仍需在系统设置中手动允许自启
-- **导航 App 兼容性**：不同车机 ROM 对 URI scheme 的支持不同，APP 已做多层降级（专门URI → 普通搜索 → 启动主界面 → geo兜底）
+- **导航 App 兼容性**：不同车机 ROM 对 URI scheme 的支持不同，APP 已做多层降级（专门URI → 普通搜索 → 交给下一个导航 App → geo兜底）。注意高德车机版**不再**做"启动主界面"兜底——否则它会抢在搜索其实可用的百度/高德手机版之前接管，用户只看到一个没有搜索结果的空地图
 
 ## 扩展：接入车机厂商 SDK（空调/车窗等）
 
@@ -410,9 +411,10 @@ skillExecutor.carControlProvider = object : SkillExecutor.CarControlProvider {
 
 ## 已知限制
 
+- **RNNoise 当前未启用**：`AudioNoiseReducer.process()` 的四个调用点全部传 `enableRnNoise = false`。原因是实测唤醒线程开 RNNoise 时每帧耗时 1.5~1.9s 而帧长仅 1.005s（欠实时），会把"唤醒→提示音"延迟拉长 1~2.5s。`RnNoiseDenoiser` + JNA + 4 个 ABI 的 `librnnoise.so` 仍随包发布，要启用只需把调用点改成 `true`，但需先解决欠实时（例如只在识别阶段启用、或降采样后处理）
 - 自由听写模式下 small 模型对复杂句准确率有限——车控指令简短，配合百度在线识别可显著提升
 - 天气等需要外部数据的技能需要网络连接，离线模式下返回友好提示
-- 音乐控制通过系统级媒体按键 + 广播，部分车机 ROM 可能不响应，建议接厂商媒体 SDK
+- 音乐控制通过系统级媒体按键（MediaSession），部分车机 ROM 可能不响应，建议接厂商媒体 SDK
 - 腾讯车机版仅支持启动主界面，不支持 URI 直接搜索跳转（URI scheme 限制）
 - 首次下载依赖你的模型托管服务器可用性；生产环境建议支持断点续传（已实现）与失败重试
 - 百度语音识别需要网络连接，无网络时自动回退到 sherpa-onnx 离线识别
