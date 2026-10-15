@@ -24,7 +24,7 @@ import java.util.Locale;
  *     与旧"逐帧 sigmoid 概率"不同——日志/回调已相应调整为触发驱动。
  *
  * 对外接口保持兼容：process(short[])/setSensitivity/setGainAndThreshold/setAsrGain/
- * getDetectionThreshold/getAudioGain/resetSkipCounter/DetectionListener 等签名均不变。
+ * getDetectionThreshold/getAudioGain/resetSkipCounter 等签名均不变。
  *
  * 注意：
  *   - 增益/阈值修改采用"惰性重建"：唤醒线程下次 process() 时重建引擎（KWS 阈值在构造时
@@ -48,7 +48,7 @@ public class WakeWordEngine {
     /** 录音帧大小（保持旧 mel 方案的 16080≈1秒，WakeAudioThread 依赖此值分配缓冲） */
     public static final int AUDIO_SAMPLES_NEEDED = 16080;
 
-    // ===== 可调参数（静态字段，UI/校准逻辑兼容） =====
+    // ===== 可调参数（静态字段，设置页读写） =====
     /** 音频增益系数：放大输入幅度，提高小声说话的检测率（唤醒阶段专用）。 */
     private static volatile float audioGain = 4.5f;
     /** 识别专用增益：指令识别阶段使用（与唤醒无关，sherpa-onnx 离线识别用）。 */
@@ -88,18 +88,6 @@ public class WakeWordEngine {
         void onLog(String line);
     }
 
-    /** 实时检测回调接口（校准向导用） */
-    public interface DetectionListener {
-        /**
-         * 每帧检测结果回调
-         * @param word 触发的唤醒词（null=未触发）
-         * @param prob 触发概率（KWS 触发式语义：触发=1.0，未触发=0.0，非逐帧 sigmoid）
-         * @param melMean 音频能量指标（KWS 无 mel，此参数为 RMS 音量）
-         * @param triggered 是否触发
-         */
-        void onDetection(String word, float prob, float melMean, boolean triggered);
-    }
-    private static DetectionListener detectionListener = null;
     private static TestLogListener testLogListener = null;
     private static final java.util.List<String> testLogs = new java.util.ArrayList<>();
     private static boolean testLogging = false;
@@ -178,11 +166,6 @@ public class WakeWordEngine {
     public static void setTempThresholdOverride(float threshold) {
         tempThresholdOverride = threshold;
         LogUtils.i(TAG, "临时阈值覆盖(仅显示，KWS引擎不支持运行时生效): " + (threshold < 0 ? "清除" : threshold));
-    }
-
-    /** 设置实时检测回调 */
-    public static void setDetectionListener(DetectionListener listener) {
-        detectionListener = listener;
     }
 
     /** 设置测试日志监听器 */
@@ -343,7 +326,7 @@ public class WakeWordEngine {
             return null;
         }
         // 启动保护期：前5帧忽略触发（KWS 阈值编译进 ContextGraph 无法临时放大，等效旧"阈值1.5倍"），
-        // 但保持喂音频与回调，校准向导/音量显示不中断
+        // 但唤醒线程照常推理并打印音量日志
         boolean protectPeriod = frameCounter < 5;
 
         try {
@@ -391,9 +374,6 @@ public class WakeWordEngine {
             }
 
             if (protectPeriod) {
-                if (detectionListener != null) {
-                    detectionListener.onDetection(null, 0f, rms, false);
-                }
                 return null;
             }
 
@@ -418,18 +398,9 @@ public class WakeWordEngine {
                     }
                 }
 
-                // 实时检测回调（触发时）
-                if (detectionListener != null) {
-                    detectionListener.onDetection(kw, 1.0f, rms, true);
-                }
-
                 return new DetectionResult(kw, 1.0f, 0f, 1);
             }
 
-            // 未触发：每帧回调（校准向导需要持续数据）
-            if (detectionListener != null) {
-                detectionListener.onDetection(null, 0f, rms, false);
-            }
             return null;
         } catch (Exception e) {
             LogUtils.e(TAG, "KWS inference error", e);

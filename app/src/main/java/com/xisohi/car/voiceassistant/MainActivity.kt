@@ -170,9 +170,6 @@ class MainActivity : AppCompatActivity() {
         binding.btnSensLow.setOnClickListener { fillPresetToSliders(0) }
         binding.btnSensMedium.setOnClickListener { fillPresetToSliders(1) }
         binding.btnSensHigh.setOnClickListener { fillPresetToSliders(2) }
-        binding.btnCalibration.setOnClickListener {
-            startActivity(android.content.Intent(this, CalibrationActivity::class.java))
-        }
 
         // 地名管理按钮：打开地名管理页面
         binding.btnPlaceManager.setOnClickListener {

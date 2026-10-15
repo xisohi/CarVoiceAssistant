@@ -27,6 +27,10 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <!-- ★ 悬浮窗服务声明了 foregroundServiceType="specialUse"，Android 14(API 34) 起必须
+         同时声明对应的前台服务类型权限，否则 startForeground() 抛 SecurityException
+         （悬浮球起不来）。API 29 车机上该权限未知，声明后被系统忽略，无副作用。 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!-- 开机自启 -->
@@ -46,6 +50,51 @@
     <!-- Android 11+ 所有文件访问权限（用于U盘读写） -->
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
         tools:ignore="ScopedStorage" />
+
+    <!-- ★ 包可见性（Android 11 / API 30 起强制）：不声明则 getPackageInfo /
+         getLaunchIntentForPackage / queryIntentActivities / getInstalledApplications
+         只能看到自己和已声明可见的包，导航与播放器探测会全部误判"未安装"。
+         刻意不申请 QUERY_ALL_PACKAGES（受限权限，上架会被拒审）。 -->
+    <queries>
+        <!-- 导航 App（对应 core/nav/*Launcher.kt 的 packageName） -->
+        <package android:name="com.autonavi.amapauto" />
+        <package android:name="com.baidu.BaiduMap" />
+        <package android:name="com.autonavi.minimap" />
+        <package android:name="com.tencent.map" />
+        <package android:name="com.baidu.naviauto" />
+        <package android:name="com.tencent.wecarnavi" />
+
+        <!-- 音乐播放器（对应 MusicPlayerManager.musicPlayerPackages 优先级列表，共 12 个） -->
+        <package android:name="fun.upup.musicfree" />
+        <package android:name="com.tw.music" />
+        <package android:name="com.netease.cloudmusic.iot" />
+        <package android:name="com.tencent.qqmusiccar" />
+        <package android:name="com.kugou.android.auto" />
+        <package android:name="cn.kuwo.kwmusiccar" />
+        <package android:name="cn.kuwo.autolite" />
+        <package android:name="com.netease.cloudmusic" />
+        <package android:name="com.luna.music" />
+        <package android:name="com.tencent.qqmusic" />
+        <package android:name="com.kugou.android" />
+        <package android:name="cn.kuwo.player" />
+
+        <!-- 打开应用技能（AppLaunchSkill 用 getInstalledApplications 做名称模糊匹配）：
+             声明"可启动应用"查询，使所有带启动图标的常规 App 可见。 -->
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+
+        <!-- TTS：Android 11+ 下不声明 TTS_SERVICE 查询，TextToSpeech 会找不到任何引擎 -->
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+
+        <!-- 导出 U 盘：MainActivity 用 ACTION_OPEN_DOCUMENT_TREE 探测 DocumentsUI 可用性 -->
+        <intent>
+            <action android:name="android.intent.action.OPEN_DOCUMENT_TREE" />
+        </intent>
+    </queries>
 
     <application
         android:name=".VoiceAssistantApp"
@@ -70,11 +119,6 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-
-        <activity
-            android:name=".CalibrationActivity"
-            android:exported="false"
-            android:label="唤醒灵敏度校准" />
 
         <activity
             android:name=".PlaceManagerActivity"

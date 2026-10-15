@@ -7,14 +7,13 @@
 - **双引擎识别**：百度在线识别（优先，识别率更高）+ sherpa-onnx 离线识别（兜底，无网络自动切换）
 - **谁使用谁的 Key**：百度语音识别的 App ID/API Key/Secret Key 由用户在设置页自行填写，不内置开发者 Key
 - **首次联网仅用于初始化**：检测到本地无模型时引导下载（断点续传 + MD5 校验）
-- **三唤醒词常驻监听**：支持"小娜"、"你好小娜"、"小娜小娜"，前台服务 + 低功耗唤醒，播报期间自动暂停监听（防回声误触发）
+- **三唤醒词常驻监听**：支持"小飞"、"小飞小飞"、"您好小飞"，前台服务 + 低功耗唤醒，播报期间自动暂停监听（防回声误触发）
 - **车控封闭域语义**：本地规则引擎（模板 + 槽位 + 正则），30+ 内置意图，意图模板可热更新
 - **地名拼音模糊匹配**：pinyin4j + Levenshtein 距离，支持 57 个内置地名，可自行扩展
 - **同音字纠正**：内置同音字纠正机制，提高识别准确率
 - **RNNoise 深度学习降噪**：唤醒阶段启用 RNNoise 降噪，提高嘈杂环境下的唤醒率
 - **自适应静音判定**：RMS 能量端点检测 + 动态静音阈值（无识别1000ms/有识别1500ms），长句中间停顿不截断
 - **可调增益**：唤醒阈值、音频增益、识别增益三档可调，支持低/中/高 预设
-- **自动校准**：一键自动校准环境噪音阈值和增益参数
 - **多导航支持**：支持 6 个导航 App（高德车机/手机、百度车机/手机、腾讯车机/手机），自动选择优先级最高的已安装导航
 - **附近搜索**：支持"附近的加油站""找个厕所""搜索附近的XX"，各导航 App 有专门 URI
 - **回家/去公司**：直接调用导航 App 内置的家/公司地址，无需在本 App 重复设置
@@ -40,7 +39,7 @@
 
 | 模块 | 方案 | 说明 |
 | --- | --- | --- |
-| 唤醒词 KWS | ONNX 自定义模型 | `multi_xiaona.onnx`，三唤醒词（小娜/你好小娜/小娜小娜），低功耗常驻监听 |
+| 唤醒词 KWS | sherpa-onnx KeywordSpotter | 官方 3M 中英 KWS 模型（zipformer2-int8，约 5.4MB），关键词由 `assets/kws/keywords.txt` 定义（小飞/小飞小飞/您好小飞），免训练可改；低功耗常驻监听 |
 | 语音识别 ASR（在线） | 百度语音识别 SDK | `bdasr_aipd_V3_20250717`，AipeEventManagerFactory 动态传入用户 Key，infile 模式识别 |
 | 语音识别 ASR（离线） | sherpa-onnx（流式 Zipformer） | 离线中文识别，模型约 31MB；支持 armv7；无网络时自动回退 |
 | 降噪 | RNNoise + AudioRecord 内置 | RNNoise 深度学习降噪（唤醒阶段）；NoiseSuppressor/AutomaticGainControl（硬件支持时） |
@@ -63,7 +62,6 @@
 ```
 ┌─ 应用层 ─────────────────────────────────────┐
 │ MainActivity（设置页：状态/配置/灵敏度/日志）  │
-│ CalibrationActivity（自动校准）                │
 │ LogViewerActivity（日志查看）                  │
 │ PlaceManagerActivity（地名词库管理）            │
 └──────────────┬───────────────────────────────┘
@@ -111,9 +109,9 @@
 └──────────────┬───────────────────────────────┘
 ┌─ 模型层（filesDir/va/，私有目录）─────────────┐
 │ models/asr/   sherpa-onnx 模型（识别用）              │
-│ assets/       ONNX 唤醒模型 + 配置             │
-│   multi_xiaona.onnx  唤醒词模型                │
-│   melspectrogram.onnx  梅尔频谱模型            │
+│ assets/       KWS 唤醒模型 + 配置              │
+│   kws/encoder|decoder|joiner.onnx + tokens.txt │
+│   kws/keywords.txt  三唤醒词定义               │
 │   intents.json  意图定义（30+个）              │
 │   places.json   地名词库（57个）               │
 └───────────────────────────────────────────────┘
@@ -134,14 +132,14 @@ CarVoiceAssistant/
 │       ├── assets/
 │       │   ├── intents.json     # 意图模板（30+个，正则 + 槽位）
 │       │   ├── places.json      # 地名词库（57个，拼音匹配）
-│       │   ├── multi_xiaona.onnx  # 唤醒词模型（小娜/你好小娜/小娜小娜）
-│       │   ├── melspectrogram.onnx  # 梅尔频谱模型
-│       │   └── model_info.json  # 模型信息
+│       │   └── kws/             # 唤醒词 KWS 模型 + 关键词表
+│       │       ├── encoder.onnx / decoder.onnx / joiner.onnx
+│       │       ├── tokens.txt
+│       │       └── keywords.txt # 三唤醒词定义（小飞/小飞小飞/您好小飞）
 │       ├── java/com/xisohi/car/voiceassistant/
 │       │   ├── MainActivity.kt            # 设置页（状态/配置/灵敏度/日志）
 │       │   ├── VoiceAssistantApp.kt       # Application 类
 │       │   ├── BootReceiver.kt            # 开机自启广播
-│       │   ├── CalibrationActivity.kt     # 自动校准页面
 │       │   ├── LogViewerActivity.kt       # 日志查看页面
 │       │   ├── PlaceManagerActivity.kt    # 地名词库管理页面
 │       │   ├── core/
@@ -219,7 +217,7 @@ CarVoiceAssistant/
 - 国内加速镜像（hf-mirror）：https://hf-mirror.com/csukuangfj/sherpa-onnx-streaming-zipformer-zh-14M-2023-02-23
 
 解压后确认目录内包含 `encoder*.onnx`、`decoder*.onnx`、`joiner*.onnx`、`tokens.txt`（单文件 CTC 模型则包含 `model*.onnx` + `tokens.txt`），目录整体重命名为 `model/`
-- 唤醒词当前为"小娜"、"你好小娜"、"小娜小娜"（ONNX 模型，可自行训练替换）
+- 唤醒词当前为"小飞"、"小飞小飞"、"您好小飞"，定义在 `assets/kws/keywords.txt`（sherpa-onnx KWS 支持免训练自定义关键词，改该文件即可替换唤醒词）
 
 ### 2. 模型包打包与托管（必须）
 把 sherpa-onnx 模型根目录重命名为 `model/`，打包为 `models.zip`，**目录结构必须如下**：
@@ -245,9 +243,9 @@ models.zip
 **配置文件格式**（任意文件名，`.json` 后缀）：
 ```json
 {
-  "app_id": "198506079",
-  "api_key": "QRfgvs5lvNfT7Gg8Aevzx88L",
-  "secret_key": "qkAAIhhvMtPZIHVIIz6lNWKnTeTfJZlPr"
+  "app_id": "你的App ID（9位数字）",
+  "api_key": "你的API Key（24位）",
+  "secret_key": "你的Secret Key（32位）"
 }
 ```
 
@@ -337,7 +335,7 @@ APP 会自动选择优先级最高的已安装播放器（车机版优先）：
 - 检测阈值滑块（0.001~0.1）
 - 音频增益滑块（1.0~10.0x）
 - 识别增益滑块（3.0~8.0x）
-- 自动校准 / 应用参数 / 恢复默认 / 同音字词库 / 查看日志 五个功能按钮
+- 应用参数 / 恢复默认 / 同音字词库 / 查看日志 四个功能按钮
 
 ### 百度语音识别配置
 - App ID 输入框（整行）

@@ -62,28 +62,6 @@
     <string name="dialog_auto_start_message">无法自动打开系统设置，请手动操作：\n\n1. 打开系统「设置」\n2. 找到「应用」或「应用管理」\n3. 找到「CarVoiceAssistant」\n4. 开启「自启动」或「后台运行」权限\n5. 电池设置选择「不受限」\n\n不同车机系统设置路径可能不同，请在系统设置中搜索「自启动」或「后台」。</string>
     <string name="dialog_got_it">我知道了</string>
 
-    <!-- ===== CalibrationActivity 相关 ===== -->
-    <string name="calib_remaining_seconds">剩余 %1$d秒</string>
-    <string name="calib_30_seconds">30秒</string>
-    <string name="calib_reset_default">已重置为默认参数（中档）</string>
-    <string name="calib_params_extreme">⚠️ 当前参数较极端，可能影响校准准确性，建议重置为默认</string>
-    <string name="calib_params_recommended">✅ 当前参数在推荐范围内，适合校准测试</string>
-    <string name="calib_params_not_recommended">⚠️ 当前参数偏离推荐范围，建议重置为默认</string>
-    <string name="calib_live_data_waiting">实时数据：等待开始</string>
-    <string name="calib_live_data_testing">实时数据：测试中...</string>
-    <string name="calib_step_triggered">✅触发</string>
-    <string name="calib_step_complete">✅ 本步完成，点击下一步继续</string>
-    <string name="calib_finished">校准完成！</string>
-    <string name="calib_apply_params">应用推荐参数</string>
-    <string name="calib_back">返回</string>
-    <string name="calib_params_applied">参数已应用！建议重启语音助手服务使完全生效</string>
-
-    <!-- 校准步骤标题 -->
-    <string name="calib_step1_title">第1步/共4步：静音测试</string>
-    <string name="calib_step2_title">第2步/共4步：正常音量测试</string>
-    <string name="calib_step3_title">第3步/共4步：小声测试</string>
-    <string name="calib_step4_title">第4步/共4步：干扰测试</string>
-
     <!-- ===== VoiceAssistantService 相关 ===== -->
     <string name="notification_running">语音助手运行中</string>
     <string name="notification_channel_name">语音助手</string>

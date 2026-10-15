@@ -1892,6 +1892,10 @@ class VoiceAssistantService : Service() {
     override fun onDestroy() {
         instance = null
         currentState = State.IDLE
+        // ★ 修复：服务销毁时无条件恢复音频流音量。识别阶段会把 MUSIC/ALARM/SYSTEM/NOTIFICATION
+        // 四路流置 0（AudioFocusManager.muteMediaVolume），而原先只有 ACTION_STOP 分支会恢复；
+        // 服务被系统回收/低内存杀死（不走 ACTION_STOP）时四路音量会永久停在 0，只能手动调回。
+        restoreMediaVolume()
         // ★ P1（审计 v6 追加）：不再 runBlocking 等待识别协程（主线程阻塞 ≤1.5s 有 ANR 风险，车机 CPU 慢时更甚）。
         // 释放流程改为：先置 serviceDestroyed（协程 finally/catch 检测后跳过资源释放），再 scope.cancel()，
         // 然后主线程直接 stop/release 活动资源（record/recognizer/noiseReducer），协程在 IO 线程自行退出。

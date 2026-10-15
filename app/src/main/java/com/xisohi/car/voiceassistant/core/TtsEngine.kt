@@ -6,6 +6,8 @@ import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.util.Log
@@ -46,6 +48,45 @@ class TtsEngine(private val context: Context) : TextToSpeech.OnInitListener {
     private var currentEngineIndex = -1
     /** 预热标志：首次合成（加载声库）已触发，避免唤醒时 TTS 冷启动出声慢 */
     private var prewarmed = false
+
+    // ===== 播报看门狗：引擎不回调 onDone 时主动收尾 =====
+    // 背景：调用方（VoiceAssistantService）完全依赖 onSpeakDone 推进状态机。
+    // 一旦引擎不回调（合成被拒 / 引擎进程被杀 / 驱动异常），服务会永久卡在 SPEAKING，
+    // 唤醒监听不再启动、TTS 音频焦点不再释放，只能杀进程恢复。
+    // 兜底：按文本长度估算播报时长，到点自行收尾（释放焦点 + onSpeakDone）。
+    // 回调来自主线程（TextToSpeech 在服务 onCreate 的主线程构造，其内部 Handler 绑定该线程）。
+    private val handler = Handler(Looper.getMainLooper())
+
+    /** 当前进行中的播报 id；null = 已收尾（看门狗据此判断是否还需要兜底） */
+    @Volatile
+    private var activeUtteranceId: String? = null
+
+    /** 最近一次播报文本长度，用于估算看门狗时长 */
+    private var lastSpokenLength = 0
+
+    private val speakWatchdog = Runnable {
+        val id = activeUtteranceId ?: return@Runnable
+        Log.w("TtsEngine", "TTS 播报超时未收到 onDone（id=$id），主动收尾（释放焦点 + 回调 onSpeakDone）")
+        activeUtteranceId = null
+        releaseAudioFocus()
+        listener?.onSpeakDone()
+    }
+
+    /** 看门狗时长：1.5x 语速约 250ms/字，加 3 秒余量，限幅 [5s, 30s] */
+    private fun watchdogMs(): Long =
+        (3_000L + lastSpokenLength * 250L).coerceIn(5_000L, 30_000L)
+
+    /** 布防/重新布防看门狗（onStart 时重新计时，冷启动延迟不吃播报预算） */
+    private fun armWatchdog() {
+        handler.removeCallbacks(speakWatchdog)
+        handler.postDelayed(speakWatchdog, watchdogMs())
+    }
+
+    /** 撤防看门狗并标记本次播报已收尾 */
+    private fun cancelWatchdog() {
+        handler.removeCallbacks(speakWatchdog)
+        activeUtteranceId = null
+    }
 
     // 音频焦点管理：TTS 播报时请求音频焦点，让音乐自动降低音量（duck）
     private val audioManager = appContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
@@ -134,12 +175,15 @@ class TtsEngine(private val context: Context) : TextToSpeech.OnInitListener {
             override fun onStart(utteranceId: String?) {
                 // 预热合成不回调 listener（避免污染服务状态机：currentState=SPEAKING）
                 if (utteranceId?.startsWith(PREWARM_PREFIX) == true) return
+                // ★ 真正开始出声时重新布防：冷启动延迟不计入播报预算
+                armWatchdog()
                 listener?.onSpeakStart()
             }
 
             override fun onDone(utteranceId: String?) {
                 // 预热合成不回调 listener（避免误触发 resumeWake() 等流程）
                 if (utteranceId?.startsWith(PREWARM_PREFIX) == true) return
+                cancelWatchdog()  // ★ 正常收尾，撤防看门狗
                 // TTS 播报完成，释放音频焦点，音乐恢复正常音量
                 releaseAudioFocus()
                 listener?.onSpeakDone()
@@ -150,6 +194,7 @@ class TtsEngine(private val context: Context) : TextToSpeech.OnInitListener {
                 // 出错时也释放音频焦点
                 releaseAudioFocus()
                 if (utteranceId?.startsWith(PREWARM_PREFIX) == true) return
+                cancelWatchdog()  // ★ 异常收尾，撤防看门狗
                 listener?.onSpeakDone()
             }
         })
@@ -193,7 +238,19 @@ class TtsEngine(private val context: Context) : TextToSpeech.OnInitListener {
         params.putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, 1.0f)
         params.putFloat(TextToSpeech.Engine.KEY_PARAM_PAN, 0.0f)  // 左右声道平衡
         val utteranceId = UUID.randomUUID().toString()
-        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, params, utteranceId)
+        lastSpokenLength = text.length
+        activeUtteranceId = utteranceId
+        val result = tts?.speak(text, TextToSpeech.QUEUE_FLUSH, params, utteranceId)
+        if (result == null || result == TextToSpeech.ERROR) {
+            // ★ 引擎当场拒绝合成（tts 为 null 或返回 ERROR）：不会再有 onStart/onDone，
+            //   立即按"播报完成"收尾，否则调用方状态机会卡死在 SPEAKING。
+            Log.w("TtsEngine", "TTS 未受理本次合成（result=$result），立即按完成处理")
+            cancelWatchdog()
+            releaseAudioFocus()
+            listener?.onSpeakDone()
+            return
+        }
+        armWatchdog()
     }
 
     /**
@@ -257,11 +314,15 @@ class TtsEngine(private val context: Context) : TextToSpeech.OnInitListener {
 
     fun stopSpeaking() {
         tts?.stop()
+        cancelWatchdog()  // ★ 避免看门狗与下面的 onSpeakDone 重复触发
         releaseAudioFocus()
         listener?.onSpeakDone()
     }
 
     fun shutdown() {
+        // ★ 服务销毁：先撤防看门狗并摘掉 listener，避免销毁后回调已失效的服务实例
+        cancelWatchdog()
+        listener = null
         try {
             tts?.stop()
             tts?.shutdown()

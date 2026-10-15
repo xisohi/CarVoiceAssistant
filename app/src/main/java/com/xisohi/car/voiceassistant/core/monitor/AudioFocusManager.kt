@@ -158,13 +158,30 @@ class AudioFocusManager(private val context: Context) {
     fun isMuted(): Boolean = isMediaVolumeMuted
 
     /**
-     * 重置状态（强制清空保存的原始音量）。
-     * 在异常恢复或服务销毁时调用，避免下次 muteMediaVolume() 不更新音量。
+     * 重置状态：先恢复音量并放弃音频焦点，再清空记录。
+     *
+     * ★ 修复：原实现只清状态、不恢复音量也不 abandonAudioFocus —— 这是个危险函数。
+     * 若在静音中被调用：四路流留在 0，而"原始音量"这份唯一记录已被丢弃，下次
+     * muteMediaVolume() 会把当前值 0 当成原始音量存下来，之后 restore 恢复的也是 0，
+     * 最终永久静音。
+     *
+     * 现在的语义：
+     *  - 先走 [restoreMediaVolume]（恢复音量 + 放弃焦点 + 成功时自行清状态）；
+     *  - 仅在已恢复正常音量（isMediaVolumeMuted 已复位）时才补清残留记录；
+     *  - 恢复失败则**保留** originalVolumes，交给 restoreMediaVolume() 的
+     *    restoreFailCount/MAX_RESTORE_FAILS 重试逻辑继续尝试，不能在这里把记录抹掉。
+     *
+     * 必须 @Synchronized：与 muteMediaVolume()/restoreMediaVolume() 共用同一把锁，
+     * 否则"恢复 → 清状态"之间可能被 muteMediaVolume() 插入，同样会丢掉原始音量。
      */
+    @Synchronized
     fun reset() {
-        originalVolumes.clear()
-        isMediaVolumeMuted = false
-        audioFocusGranted = false
+        restoreMediaVolume()
+        if (!isMediaVolumeMuted) {
+            // 兜底：正常路径上 restoreMediaVolume() 已清过，这里只防御未来改动
+            originalVolumes.clear()
+            audioFocusGranted = false
+        }
     }
 
     /**
