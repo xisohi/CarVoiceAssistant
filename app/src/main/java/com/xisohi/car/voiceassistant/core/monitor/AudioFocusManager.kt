@@ -25,8 +25,20 @@ import kotlin.jvm.Synchronized
  * 3. 音量控制：先试 adjustStreamVolume，再试 setStreamVolume，再试发送音量按键
  */
 class AudioFocusManager(private val context: Context) {
-    /** 保存的原始媒体音量（-1表示未保存） */
-    private var originalMediaVolume: Int = -1
+    /**
+     * 保存的原始音量（按音频流），null/空表示未保存。
+     * 车机导航播报走 ALARM/SYSTEM 而非 MUSIC，只压 MUSIC 压不住导航，
+     * 故对 MUSIC/ALARM/SYSTEM/NOTIFICATION 四流一起保存并静音。
+     */
+    private val originalVolumes = mutableMapOf<Int, Int>()
+
+    /** 参与静音/恢复的音频流列表 */
+    private val mutedStreams = intArrayOf(
+        AudioManager.STREAM_MUSIC,
+        AudioManager.STREAM_ALARM,
+        AudioManager.STREAM_SYSTEM,
+        AudioManager.STREAM_NOTIFICATION
+    )
 
     /** 标记是否已经降低了媒体音量 */
     private var isMediaVolumeMuted = false
@@ -69,21 +81,21 @@ class AudioFocusManager(private val context: Context) {
                 }
             }
 
-            // === 第二步：直接改 STREAM_MUSIC 音量（有些车机允许，有些不允许） ===
-            if (originalMediaVolume < 0) {
-                originalMediaVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
-            }
+            // === 第二步：直接改多音频流音量到 0（车机导航播报走 ALARM/SYSTEM，只压 MUSIC 压不住） ===
             if (!isMediaVolumeMuted) {
-                try {
-                    audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, 0, 0)
-                    isMediaVolumeMuted = true
-                    restoreFailCount = 0  // 新周期开始，重置失败计数
-                    Log.d(TAG, "✅ 已直接降低媒体音量到 0（原始音量: $originalMediaVolume）")
-                } catch (e: SecurityException) {
-                    Log.w(TAG, "❌ 车机系统禁止直接改音量: ${e.message}")
-                    Log.d(TAG, "💡 但音频焦点应该已经生效，音乐 App 会自动降低音量")
-                    isMediaVolumeMuted = true // 标记为已静音，避免重复尝试
+                for (stream in mutedStreams) {
+                    if (!originalVolumes.containsKey(stream)) {
+                        originalVolumes[stream] = audioManager.getStreamVolume(stream)
+                    }
+                    try {
+                        audioManager.setStreamVolume(stream, 0, 0)
+                        Log.d(TAG, "✅ 已直接降低流 $stream 音量到 0（原始音量: ${originalVolumes[stream]}）")
+                    } catch (e: SecurityException) {
+                        Log.w(TAG, "❌ 车机系统禁止直接改流 $stream 音量: ${e.message}")
+                    }
                 }
+                isMediaVolumeMuted = true
+                restoreFailCount = 0  // 新周期开始，重置失败计数
             }
         } catch (e: Exception) {
             Log.w(TAG, "降低媒体音量失败: ${e.message}")
@@ -105,25 +117,32 @@ class AudioFocusManager(private val context: Context) {
                 Log.d(TAG, "✅ 已放弃音频焦点，音乐 App 应恢复正常音量")
             }
 
-            // === 第二步：恢复 STREAM_MUSIC 音量 ===
-            if (isMediaVolumeMuted && originalMediaVolume >= 0) {
-                try {
-                    audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, originalMediaVolume, 0)
-                    Log.d(TAG, "✅ 已直接恢复媒体音量到: $originalMediaVolume")
-                    // 恢复成功才清状态
+            // === 第二步：恢复多音频流音量 ===
+            if (isMediaVolumeMuted && originalVolumes.isNotEmpty()) {
+                var restoreOk = true
+                for ((stream, volume) in originalVolumes.entries) {
+                    try {
+                        audioManager.setStreamVolume(stream, volume, 0)
+                        Log.d(TAG, "✅ 已直接恢复流 $stream 音量到: $volume")
+                    } catch (e: SecurityException) {
+                        Log.w(TAG, "⚠️ 车机系统禁止恢复流 $stream 音量: ${e.message}")
+                        restoreOk = false
+                    }
+                }
+                if (restoreOk) {
+                    // 全部恢复成功才清状态
+                    originalVolumes.clear()
                     isMediaVolumeMuted = false
-                    originalMediaVolume = -1
                     restoreFailCount = 0
-                } catch (e: SecurityException) {
-                    Log.w(TAG, "⚠️ 车机系统禁止直接改音量: ${e.message}")
+                } else {
                     // 恢复失败保持状态重试；但连续 MAX_RESTORE_FAILS 次失败说明车机 ROM 永久禁止，
                     // 放弃重试并清状态——否则 isMediaVolumeMuted 永久为 true，
                     // 用户手动调回音量后下次识别不再静音（识别率下降）且每次识别结束都打失败日志
                     restoreFailCount++
                     if (restoreFailCount >= MAX_RESTORE_FAILS) {
                         Log.w(TAG, "连续 ${MAX_RESTORE_FAILS} 次恢复失败，放弃重试并清状态（车机可能永久禁止改音量）")
+                        originalVolumes.clear()
                         isMediaVolumeMuted = false
-                        originalMediaVolume = -1
                         restoreFailCount = 0
                     }
                 }
@@ -143,7 +162,7 @@ class AudioFocusManager(private val context: Context) {
      * 在异常恢复或服务销毁时调用，避免下次 muteMediaVolume() 不更新音量。
      */
     fun reset() {
-        originalMediaVolume = -1
+        originalVolumes.clear()
         isMediaVolumeMuted = false
         audioFocusGranted = false
     }
