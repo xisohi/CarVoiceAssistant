@@ -29,8 +29,7 @@ import java.util.Locale;
  * 注意：
  *   - 增益/阈值修改采用"惰性重建"：唤醒线程下次 process() 时重建引擎（KWS 阈值在构造时
  *     编译进 ContextGraph），避免与正在运行的唤醒线程竞态。
- *   - KWS 阈值只在构造时编译进 ContextGraph，**不存在运行时覆盖**：原 tempThresholdOverride /
- *     setTempThresholdOverride 接口已删除（0 调用方的死接口），日志阈值直接用 detectionThreshold。
+ *   - 阈值只在构造时编译进 ContextGraph，**不存在运行时覆盖**；日志阈值取自 detectionThreshold。
  */
 public class WakeWordEngine {
 
