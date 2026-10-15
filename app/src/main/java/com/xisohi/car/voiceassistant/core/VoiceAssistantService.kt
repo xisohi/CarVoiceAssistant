@@ -80,7 +80,7 @@ class VoiceAssistantService : Service() {
         // 环境残留声（音乐/行驶噪声）原始 RMS 66~149 与静音阈值 150 临界抖动，静音计数永远凑不齐，
         // 只靠"静音累计"会拖到 20s 超时。识别器已出过字且这么久不再出新字 = 用户说完了，直接收尾。
         // 取 1500ms：比静音结束（1200ms）略长，正常长句停顿不会误切；比 20s 超时短得多。
-        private const val PARTIAL_STABLE_END_MS = 1_500L
+        private const val PARTIAL_STABLE_END_MS = 2_000L
 
         @Volatile
         private var instance: VoiceAssistantService? = null
@@ -292,6 +292,10 @@ class VoiceAssistantService : Service() {
     // 小模型加载快（<1秒），不需要预加载，每次识别时直接创建即可
 
     // 唤醒音频采集线程
+    // ★ @Volatile：主线程赋值（startWakeListening/stopWakeListening）与唤醒线程读取
+    //   （resetWakeStateIfCurrent 的 === 比较、while(isWakeListening) 循环）跨线程，须保证可见性；
+    //   搭配 startWakeListening 里"先赋值再 start"，唤醒线程任何时刻早退都能匹配到自身引用。
+    @Volatile
     private var wakeAudioThread: WakeAudioThread? = null
     @Volatile
     private var isWakeListening = false
@@ -652,7 +656,13 @@ class VoiceAssistantService : Service() {
             LogUtils.d("VoiceService", "唤醒引擎懒加载（首次唤醒时加载 KWS 模型）")
         }
         isWakeListening = true
-        wakeAudioThread = WakeAudioThread().apply { start() }
+        // ★ 竞态修复：先赋值再 start。原写法 `WakeAudioThread().apply { start() }` 是先 start 后赋值，
+        //   若线程 start 后立即早退（minBufSize<=0 / AudioRecord 初始化失败等），resetWakeStateIfCurrent(this)
+        //   可能读到 wakeAudioThread 尚为 null/旧值 → === 比较失败 → isWakeListening 不复位，
+        //   随后主线程把已死的线程赋给 wakeAudioThread → 唤醒永久失效（isWakeListening=true 但线程已死）。
+        val thread = WakeAudioThread()
+        wakeAudioThread = thread
+        thread.start()
         LogUtils.d("VoiceService", "唤醒监听已启动")
     }
 
@@ -1412,7 +1422,7 @@ class VoiceAssistantService : Service() {
                         // ★ VAD修复④（2026-10-15）：识别文本稳定作为独立结束条件（与上方静音条件 OR）——
                         // 环境残留声原始 RMS 66~149 与新阈值 150 临界抖动时，静音计数反复清零、永远凑不齐 1216ms，
                         // 录音会拖到 20s 超时（实车日志"拜拜下一曲"等 3 次，partial 静置 5~12s 仍在录）。
-                        // 识别器已出过字且 1.5s 不再出新字 = 用户说完了，即使残留声 RMS 高于静音阈值也收尾。
+                        // 识别器已出过字且 2s 不再出新字 = 用户说完了，即使残留声 RMS 高于静音阈值也收尾。
                         // 要求 lastPartial 非空：识别器从未出字（拾音弱/开口后无识别）时不能提前切，避免丢话。
                         if (lastPartial.isNotEmpty()
                             && recordDuration >= MIN_RECORD_MS
