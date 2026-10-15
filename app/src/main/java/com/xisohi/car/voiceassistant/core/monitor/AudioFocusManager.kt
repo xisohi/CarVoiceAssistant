@@ -67,11 +67,14 @@ class AudioFocusManager(private val context: Context) {
             val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
             // === 第一步：申请音频焦点（标准 API，音乐 App 会自动降低音量） ===
+            // ★ 2026-10-15：车机导航播报走独立"导航音量"通道，流静音压不住；MAY_DUCK
+            //   焦点只要求对方"降低音量"，导航照播不误。改 EXCLUSIVE：遵循焦点的
+            //   导航/音乐 App 在识别期间会主动暂停播报，识别结束放弃焦点后恢复。
             if (!audioFocusGranted) {
                 val result = audioManager.requestAudioFocus(
                     focusListener,
                     AudioManager.STREAM_MUSIC,
-                    AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK
+                    AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE
                 )
                 audioFocusGranted = (result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED)
                 if (audioFocusGranted) {
