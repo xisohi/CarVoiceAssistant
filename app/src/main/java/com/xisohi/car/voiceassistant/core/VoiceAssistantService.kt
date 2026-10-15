@@ -696,7 +696,11 @@ class VoiceAssistantService : Service() {
                         // 音乐动态阈值保护已禁用（用户反馈会导致唤不醒）
                         // 保持固定阈值0.18，误唤醒靠AEC+RNNoise+高通滤波解决
                         // 应用降噪处理（高通滤波，去除低频发动机噪音）
-                        noiseReducer.process(audioBuffer, read)
+                        // ★ 2026-10-15 实测：唤醒线程开着 RNNoise 时每帧处理 1.5~1.9s（帧长仅 1.005s），
+                        //   线程欠实时 → 用户喊完唤醒词到 TRIGGER 排队 1~2.5s。RNNoise 是唤醒线程最重负载，
+                        //   关闭后帧率有望回到 ~1s，显著缩短"唤醒→提示音"延迟。误唤醒此前反馈"没有"，
+                        //   余量足够；保留高通滤波+AEC 兜底。
+                        noiseReducer.process(audioBuffer, read, enableRnNoise = false)
                         // process 可能在 service 销毁时访问已关闭的 session，捕获异常防止线程崩溃
                         val result = try {
                             wakeWordEngine.process(audioBuffer)
