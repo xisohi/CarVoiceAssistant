@@ -2,7 +2,7 @@ package com.xisohi.car.voiceassistant.core.monitor
 
 import android.content.Context
 import android.media.AudioManager
-import android.util.Log
+import com.xisohi.car.voiceassistant.core.LogUtils
 import android.view.KeyEvent
 import kotlin.jvm.Synchronized
 
@@ -75,9 +75,9 @@ class AudioFocusManager(private val context: Context) {
                 )
                 audioFocusGranted = (result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED)
                 if (audioFocusGranted) {
-                    Log.d(TAG, "✅ 音频焦点申请成功，音乐 App 应自动降低音量")
+                    LogUtils.d(TAG, "✅ 音频焦点申请成功，音乐 App 应自动降低音量")
                 } else {
-                    Log.w(TAG, "⚠️ 音频焦点申请失败，尝试直接改音量")
+                    LogUtils.w(TAG, "⚠️ 音频焦点申请失败，尝试直接改音量")
                 }
             }
 
@@ -89,16 +89,16 @@ class AudioFocusManager(private val context: Context) {
                     }
                     try {
                         audioManager.setStreamVolume(stream, 0, 0)
-                        Log.d(TAG, "✅ 已直接降低流 $stream 音量到 0（原始音量: ${originalVolumes[stream]}）")
+                        LogUtils.d(TAG, "✅ 已直接降低流 $stream 音量到 0（原始音量: ${originalVolumes[stream]}）")
                     } catch (e: SecurityException) {
-                        Log.w(TAG, "❌ 车机系统禁止直接改流 $stream 音量: ${e.message}")
+                        LogUtils.w(TAG, "❌ 车机系统禁止直接改流 $stream 音量: ${e.message}")
                     }
                 }
                 isMediaVolumeMuted = true
                 restoreFailCount = 0  // 新周期开始，重置失败计数
             }
         } catch (e: Exception) {
-            Log.w(TAG, "降低媒体音量失败: ${e.message}")
+            LogUtils.w(TAG, "降低媒体音量失败: ${e.message}")
         }
     }
 
@@ -114,7 +114,7 @@ class AudioFocusManager(private val context: Context) {
             if (audioFocusGranted) {
                 audioManager.abandonAudioFocus(focusListener)
                 audioFocusGranted = false
-                Log.d(TAG, "✅ 已放弃音频焦点，音乐 App 应恢复正常音量")
+                LogUtils.d(TAG, "✅ 已放弃音频焦点，音乐 App 应恢复正常音量")
             }
 
             // === 第二步：恢复多音频流音量 ===
@@ -123,9 +123,9 @@ class AudioFocusManager(private val context: Context) {
                 for ((stream, volume) in originalVolumes.entries) {
                     try {
                         audioManager.setStreamVolume(stream, volume, 0)
-                        Log.d(TAG, "✅ 已直接恢复流 $stream 音量到: $volume")
+                        LogUtils.d(TAG, "✅ 已直接恢复流 $stream 音量到: $volume")
                     } catch (e: SecurityException) {
-                        Log.w(TAG, "⚠️ 车机系统禁止恢复流 $stream 音量: ${e.message}")
+                        LogUtils.w(TAG, "⚠️ 车机系统禁止恢复流 $stream 音量: ${e.message}")
                         restoreOk = false
                     }
                 }
@@ -140,7 +140,7 @@ class AudioFocusManager(private val context: Context) {
                     // 用户手动调回音量后下次识别不再静音（识别率下降）且每次识别结束都打失败日志
                     restoreFailCount++
                     if (restoreFailCount >= MAX_RESTORE_FAILS) {
-                        Log.w(TAG, "连续 ${MAX_RESTORE_FAILS} 次恢复失败，放弃重试并清状态（车机可能永久禁止改音量）")
+                        LogUtils.w(TAG, "连续 ${MAX_RESTORE_FAILS} 次恢复失败，放弃重试并清状态（车机可能永久禁止改音量）")
                         originalVolumes.clear()
                         isMediaVolumeMuted = false
                         restoreFailCount = 0
@@ -148,7 +148,7 @@ class AudioFocusManager(private val context: Context) {
                 }
             }
         } catch (e: Exception) {
-            Log.w(TAG, "恢复媒体音量失败: ${e.message}")
+            LogUtils.w(TAG, "恢复媒体音量失败: ${e.message}")
         }
     }
 
@@ -187,7 +187,7 @@ class AudioFocusManager(private val context: Context) {
             val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
             audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
         } catch (e: Exception) {
-            Log.w(TAG, "获取媒体音量失败: ${e.message}")
+            LogUtils.w(TAG, "获取媒体音量失败: ${e.message}")
             0
         }
     }
@@ -200,7 +200,7 @@ class AudioFocusManager(private val context: Context) {
             val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
             audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
         } catch (e: Exception) {
-            Log.w(TAG, "获取最大音量失败: ${e.message}")
+            LogUtils.w(TAG, "获取最大音量失败: ${e.message}")
             15
         }
     }
@@ -218,17 +218,17 @@ class AudioFocusManager(private val context: Context) {
         val targetVolume = volume.coerceIn(0, maxVolume)
         val currentVolume = getCurrentVolume()
 
-        Log.d(TAG, "尝试设置音量: $targetVolume (当前: $currentVolume, 最大: $maxVolume)")
+        LogUtils.d(TAG, "尝试设置音量: $targetVolume (当前: $currentVolume, 最大: $maxVolume)")
 
         // === 第一级：setStreamVolume ===
         try {
             audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, targetVolume, 0)
-            Log.d(TAG, "✅ setStreamVolume 成功，音量已设置为: $targetVolume")
+            LogUtils.d(TAG, "✅ setStreamVolume 成功，音量已设置为: $targetVolume")
             return
         } catch (e: SecurityException) {
-            Log.w(TAG, "⚠️ setStreamVolume 被禁止: ${e.message}")
+            LogUtils.w(TAG, "⚠️ setStreamVolume 被禁止: ${e.message}")
         } catch (e: Exception) {
-            Log.w(TAG, "⚠️ setStreamVolume 失败: ${e.message}")
+            LogUtils.w(TAG, "⚠️ setStreamVolume 失败: ${e.message}")
         }
 
         // === 第二级：adjustStreamVolume（多次调整到目标值） ===
@@ -237,7 +237,7 @@ class AudioFocusManager(private val context: Context) {
             if (diff != 0) {
                 val direction = if (diff > 0) AudioManager.ADJUST_RAISE else AudioManager.ADJUST_LOWER
                 val steps = kotlin.math.abs(diff)
-                Log.d(TAG, "尝试 adjustStreamVolume，方向: ${if (direction == AudioManager.ADJUST_RAISE) "增大" else "减小"}, 步数: $steps")
+                LogUtils.d(TAG, "尝试 adjustStreamVolume，方向: ${if (direction == AudioManager.ADJUST_RAISE) "增大" else "减小"}, 步数: $steps")
                 repeat(steps) {
                     audioManager.adjustStreamVolume(
                         AudioManager.STREAM_MUSIC,
@@ -245,13 +245,13 @@ class AudioFocusManager(private val context: Context) {
                         AudioManager.FLAG_SHOW_UI
                     )
                 }
-                Log.d(TAG, "✅ adjustStreamVolume 完成")
+                LogUtils.d(TAG, "✅ adjustStreamVolume 完成")
                 return
             }
         } catch (e: SecurityException) {
-            Log.w(TAG, "⚠️ adjustStreamVolume 被禁止: ${e.message}")
+            LogUtils.w(TAG, "⚠️ adjustStreamVolume 被禁止: ${e.message}")
         } catch (e: Exception) {
-            Log.w(TAG, "⚠️ adjustStreamVolume 失败: ${e.message}")
+            LogUtils.w(TAG, "⚠️ adjustStreamVolume 失败: ${e.message}")
         }
 
         // === 第三级：发送音量按键（模拟用户按音量键） ===
@@ -260,22 +260,22 @@ class AudioFocusManager(private val context: Context) {
             if (diff != 0) {
                 val keyCode = if (diff > 0) KeyEvent.KEYCODE_VOLUME_UP else KeyEvent.KEYCODE_VOLUME_DOWN
                 val steps = kotlin.math.abs(diff)
-                Log.d(TAG, "尝试发送音量按键，按键码: $keyCode, 次数: $steps")
+                LogUtils.d(TAG, "尝试发送音量按键，按键码: $keyCode, 次数: $steps")
                 repeat(steps) {
                     val down = KeyEvent(KeyEvent.ACTION_DOWN, keyCode)
                     val up = KeyEvent(KeyEvent.ACTION_UP, keyCode)
                     audioManager.dispatchMediaKeyEvent(down)
                     audioManager.dispatchMediaKeyEvent(up)
                 }
-                Log.d(TAG, "✅ 音量按键发送完成")
+                LogUtils.d(TAG, "✅ 音量按键发送完成")
                 return
             }
         } catch (e: Exception) {
-            Log.w(TAG, "⚠️ 音量按键发送失败: ${e.message}")
+            LogUtils.w(TAG, "⚠️ 音量按键发送失败: ${e.message}")
         }
 
-        Log.e(TAG, "❌ 所有音量控制方式都失败了！车机系统限制太严格")
-        Log.e(TAG, "💡 建议用户直接用车机物理按键或方向盘按键调音量")
+        LogUtils.e(TAG, "❌ 所有音量控制方式都失败了！车机系统限制太严格")
+        LogUtils.e(TAG, "💡 建议用户直接用车机物理按键或方向盘按键调音量")
     }
 
     /**
