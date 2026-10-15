@@ -47,6 +47,8 @@ public class WakeWordEngine {
     public static final int SAMPLE_RATE = 16000;
     /** 录音帧大小（保持旧 mel 方案的 16080≈1秒，WakeAudioThread 依赖此值分配缓冲） */
     public static final int AUDIO_SAMPLES_NEEDED = 16080;
+    /** 流式处理块大小：0.1s = 1600 采样（与 sherpa KWS 内部子块粒度一致） */
+    public static final int CHUNK_SAMPLES = SAMPLE_RATE / 10;
 
     // ===== 可调参数（静态字段，设置页读写） =====
     /** 音频增益系数：放大输入幅度，提高小声说话的检测率（唤醒阶段专用）。 */
@@ -65,9 +67,16 @@ public class WakeWordEngine {
 
     // 冷启动防误唤醒：跳过前 N 帧（每帧≈1秒，2帧≈2秒，滤麦克风启动爆音）
     private static final int STARTUP_SKIP_FRAMES = 2;
+    /** 流式冷启动跳过块数（20块 = 2秒，等价原2帧语义；块=0.1s） */
+    private static final int STARTUP_SKIP_BLOCKS = 20;
     private int framesProcessed = 0;
     /** 帧号计数器，用于调试日志时序定位 */
     private int frameCounter = 0;
+    /** 流式块计数器（0.1s/块）；块号/10 ≈ 帧号，保持 [WakeProb] frame=N 的秒级语义 */
+    private int blockCounter = 0;
+    /** RMS 累计（流式调试日志：每 500 块 ≈ 50s 打印一次平均） */
+    private double rmsAccum = 0;
+    private int rmsBlocks = 0;
 
     // ===== KWS 引擎 =====
     private KeywordSpotter spotter;
@@ -216,6 +225,9 @@ public class WakeWordEngine {
         stream = spotter.createStream("");
         framesProcessed = 0;
         frameCounter = 0;
+        blockCounter = 0;
+        rmsAccum = 0;
+        rmsBlocks = 0;
     }
 
     public boolean isLoaded() { return loaded; }
@@ -242,6 +254,9 @@ public class WakeWordEngine {
         framesProcessed = 0;
         debugLogCount = 0;
         frameCounter = 0;
+        blockCounter = 0;
+        rmsAccum = 0;
+        rmsBlocks = 0;
         LogUtils.d(TAG, "冷启动跳过计数已重置");
     }
 
@@ -344,6 +359,102 @@ public class WakeWordEngine {
             return null;
         }
     }
+
+    /**
+     * 流式处理（2026-10-15 新增）：每次喂 0.1s（1600 采样）音频块，块末立即检查触发。
+     *
+     * 相比 process(整帧批处理)，检测粒度从"帧末（≤1s 帧对齐 + 整帧推理）"降到"块末（0.1s）"：
+     * 用户说完"小飞"约 0.1~0.2s 即可触发，消除唤醒线程欠实时时 1~2.5s 的排队延迟。
+     * 推理总量不变（模型流式状态机连续推进，喂入内容相同），CPU 负载与原来一致。
+     *
+     * KWS 触发式语义不变：命中关键词返回 DetectionResult，未命中返回 null。
+     * 冷启动跳过（20块=2s）与保护期（前50块=5s）保持原帧级语义（2帧/5帧）。
+     */
+    public DetectionResult processChunk(short[] chunk) {
+        if (!ensureLoaded()) return null;
+
+        // 惰性重建：增益/阈值修改后，下次 process 时重建引擎（单线程安全）
+        if (rebuildRequested) {
+            try {
+                rebuildInternal(appContext);
+                rebuildRequested = false;
+                LogUtils.i(TAG, "KWS 引擎已重建（新参数生效）: threshold=" + detectionThreshold + ", gain=" + audioGain);
+            } catch (Exception e) {
+                LogUtils.e(TAG, "KWS 引擎重建失败，保持旧引擎", e);
+                rebuildRequested = false;
+            }
+        }
+
+        // 冷启动跳过前 20 块（约2秒，滤麦克风启动爆音；原2帧语义等价）
+        if (framesProcessed < STARTUP_SKIP_BLOCKS) {
+            framesProcessed++;
+            return null;
+        }
+        // 启动保护期：前 50 块（≈5s）忽略触发（原前5帧语义等价，防启动误唤醒）
+        blockCounter++;
+        boolean protectPeriod = blockCounter < 50;
+
+        try {
+            // short → float（-1~1），×音频增益（保持旧增益语义）
+            if (reuseFloatAudio == null || reuseFloatAudio.length != chunk.length) {
+                reuseFloatAudio = new float[chunk.length];
+            }
+            float[] floatAudio = reuseFloatAudio;
+            for (int i = 0; i < chunk.length; i++) {
+                floatAudio[i] = chunk[i] * audioGain / 32768.0f;
+            }
+
+            // 喂入 + 立即解码 + 立即取结果（keyword result 在 decode 内部实时更新，
+            // 命中即 reset 防止同词连续触发）
+            String hitKw = null;
+            stream.acceptWaveform(floatAudio, SAMPLE_RATE);
+            while (spotter.isReady(stream)) {
+                spotter.decode(stream);
+                KeywordSpotterResult rr = spotter.getResult(stream);
+                if (rr != null && rr.getKeyword() != null && !rr.getKeyword().isEmpty()) {
+                    spotter.reset(stream);
+                    hitKw = rr.getKeyword();
+                    break;
+                }
+            }
+
+            // RMS 累计（调试日志：每 500 块 ≈ 50s 打印一次平均环境音量）
+            float rms = 0;
+            for (short s : chunk) rms += s * s;
+            rms = (float) Math.sqrt(rms / chunk.length);
+            rmsAccum += rms;
+            rmsBlocks++;
+            if (rmsBlocks >= 500) {
+                LogUtils.d(TAG, String.format(Locale.US,
+                        "[WakeFrame] frame=%d rms=%.0f gain=%.1f",
+                        blockCounter / 10, rmsAccum / rmsBlocks, audioGain));
+                rmsAccum = 0;
+                rmsBlocks = 0;
+            }
+
+            if (protectPeriod) {
+                return null;
+            }
+
+            if (hitKw != null) {
+                String kw = hitKw;
+                String logLine = String.format(Locale.US,
+                        "[WakeProb] frame=%d word=%s prob=1.0000 threshold=%.4f gain=%.1f rms=%.0f TRIGGER",
+                        blockCounter / 10, kw, getEffectiveThreshold(), audioGain, rms);
+                LogUtils.d(TAG, logLine);
+
+                return new DetectionResult(kw, 1.0f, 0f, 1);
+            }
+
+            return null;
+        } catch (Exception e) {
+            LogUtils.e(TAG, "KWS inference error", e);
+            return null;
+        }
+    }
+
+    /** 流式块大小（0.1s，WakeAudioThread 分配缓冲用） */
+    public int getChunkSamples() { return CHUNK_SAMPLES; }
 
     public void close() {
         try {

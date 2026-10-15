@@ -702,8 +702,10 @@ class VoiceAssistantService : Service() {
                 return
             }
 
-            // 官方引擎需要的帧大小（由 engine.audioSamplesNeeded 获取）
-            val frameSize = wakeWordEngine.audioSamplesNeeded
+            // 流式 KWS 的块大小（0.1s = 1600 采样）。★ 2026-10-15：由整帧(16080)改小块，
+            // 检测粒度从"帧末"降到"块末"——用户说完唤醒词约 0.1~0.2s 即触发，
+            // 不再等整帧读满+整帧推理（此前"唤醒→提示音"体感 2~3s 的主因）。
+            val frameSize = wakeWordEngine.chunkSamples
             if (frameSize <= 0) {
                 LogUtils.e("WakeAudioThread", "无效的帧大小")
                 record.release()
@@ -760,9 +762,9 @@ class VoiceAssistantService : Service() {
                         //   关闭后帧率有望回到 ~1s，显著缩短"唤醒→提示音"延迟。误唤醒此前反馈"没有"，
                         //   余量足够；保留高通滤波+AEC 兜底。
                         noiseReducer.process(audioBuffer, read, enableRnNoise = false)
-                        // process 可能在 service 销毁时访问已关闭的 session，捕获异常防止线程崩溃
+                        // processChunk 可能在 service 销毁时访问已关闭的 session，捕获异常防止线程崩溃
                         val result = try {
-                            wakeWordEngine.process(audioBuffer)
+                            wakeWordEngine.processChunk(audioBuffer)
                         } catch (e: IllegalStateException) {
                             LogUtils.w("WakeAudioThread", "session 已关闭，停止处理: ${e.message}")
                             break
