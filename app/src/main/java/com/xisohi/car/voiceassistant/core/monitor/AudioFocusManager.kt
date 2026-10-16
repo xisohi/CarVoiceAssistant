@@ -35,11 +35,14 @@ class AudioFocusManager(private val context: Context) {
      */
     private val originalVolumes = mutableMapOf<Int, Int>()
 
-    /** 参与静音/恢复的音频流列表 */
+    /** 参与静音/恢复的音频流列表。
+     *  ★ 2026-10-16：移除 STREAM_SYSTEM——实测日志显示车机在 TTS 播报期间会把
+     *    SYSTEM 流音量改为 0（10:43:48 恢复流1=12 → 10:43:51 再读已是 0）。
+     *    若继续静音它，"0 被当原始值存下"会造成系统提示音永久静音（原始值污染）。
+     *    且系统提示音短促、对识别无实质干扰，不值得为压它承担污染风险。 */
     private val mutedStreams = intArrayOf(
         AudioManager.STREAM_MUSIC,
         AudioManager.STREAM_ALARM,
-        AudioManager.STREAM_SYSTEM,
         AudioManager.STREAM_NOTIFICATION
     )
 
