@@ -49,7 +49,7 @@ class AudioFocusManager(private val context: Context) {
     /** 音频焦点申请结果 */
     private var audioFocusGranted = false
 
-    /** 识别期独占焦点请求（API 26+，导航用途）——随 restoreMediaVolume() 统一释放 */
+    /** 识别期焦点请求（API 26+，媒体用途 MAY_DUCK）——随 restoreMediaVolume() 统一释放 */
     private var recognitionFocusRequest: AudioFocusRequest? = null
 
     /** 恢复媒体音量失败计数（仅用于日志降频；失败时保留原始音量记录继续尝试，不清状态） */
@@ -72,23 +72,21 @@ class AudioFocusManager(private val context: Context) {
             val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
             // === 第一步：申请音频焦点（标准 API，音乐 App 会自动降低音量） ===
-            // ★ 2026-10-15：车机导航播报走独立"导航音量"通道，流静音压不住；MAY_DUCK
-            //   焦点只要求对方"降低音量"，导航照播不误。改 EXCLUSIVE：遵循焦点的
-            //   导航/音乐 App 在识别期间会主动暂停播报，识别结束放弃焦点后恢复。
-            // ★ 2026-10-15（二次）：焦点用途声明成"导航指引"（与导航 App 同通道）——
-            //   车机"导航播报优先"策略会把导航用途的独占焦点视为最高优先级：
-            //   1) 识别期系统自动压低音乐等其它音频（无需依赖手动静音）
-            //   2) 导航 App 想播报需申请同一通道焦点，被独占时让位 → 解决"压不住导航"
-            //   播报/识别结束统一 abandon（restoreMediaVolume），导航恢复正常。
+            // ★ 2026-10-16 回退：原 b3a9c81 改 EXCLUSIVE、fc54db5 再声明成"导航指引"用途，
+            //   试图借车机'导航播报优先'机制压住导航+音乐。实测副作用严重：
+            //   唤醒后导航 App 永久无声（车机把"导航通道被占"状态保持住，abandon 后
+            //   不把播报权还给导航 App，重启车机才恢复；四流静音回读已证实无罪）。
+            //   回退为最普通的媒体用途 MAY_DUCK：只让遵循焦点的 App 降低音量，
+            //   不剥夺任何播报权、不碰导航通道状态；压音乐靠下面的四流静音（回读验证可靠）。
             if (!audioFocusGranted) {
                 val result = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     if (recognitionFocusRequest == null) {
                         val attrs = AudioAttributes.Builder()
-                            .setUsage(AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
+                            .setUsage(AudioAttributes.USAGE_MEDIA)
                             .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                             .build()
                         recognitionFocusRequest = AudioFocusRequest.Builder(
-                            AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE
+                            AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK
                         )
                             .setAudioAttributes(attrs)
                             .setWillPauseWhenDucked(false)
@@ -100,12 +98,12 @@ class AudioFocusManager(private val context: Context) {
                     audioManager.requestAudioFocus(
                         focusListener,
                         AudioManager.STREAM_MUSIC,
-                        AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE
+                        AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK
                     )
                 }
                 audioFocusGranted = (result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED)
                 if (audioFocusGranted) {
-                    LogUtils.d(TAG, "✅ 音频焦点申请成功（导航通道独占），导航/音乐 App 应暂停播报")
+                    LogUtils.d(TAG, "✅ 音频焦点申请成功（媒体流 MAY_DUCK），音乐 App 应自动降低音量")
                 } else {
                     LogUtils.w(TAG, "⚠️ 音频焦点申请失败，尝试直接改音量")
                 }
@@ -156,7 +154,7 @@ class AudioFocusManager(private val context: Context) {
                     audioManager.abandonAudioFocus(focusListener)
                 }
                 audioFocusGranted = false
-                LogUtils.d(TAG, "✅ 已放弃音频焦点，导航/音乐 App 应恢复正常播报")
+                LogUtils.d(TAG, "✅ 已放弃音频焦点，音乐 App 应恢复正常音量")
             }
 
             // === 第二步：恢复多音频流音量 ===

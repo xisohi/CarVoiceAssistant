@@ -128,15 +128,15 @@ class TtsEngine(private val context: Context) : TextToSpeech.OnInitListener {
                     // 音调 1.1x：稍微调高一点，声音更清晰
                     currentTts.setSpeechRate(1.5f)
                     currentTts.setPitch(1.1f)
-                    // ★ 2026-10-15：TTS 输出走导航通道（车机实测导航播报走独立导航音量，
-                    //   且导航播报时系统自动压低其它音频）。声明成导航用途后：
-                    //   1) 助手播报时系统自动压低音乐，无需依赖 MAY_DUCK 焦点
-                    //   2) 播报音量跟随车机"导航音量"调节
-                    //   3) 播报完释放焦点（onDone/onError/看门狗路径都有 releaseAudioFocus），导航恢复正常
+                    // ★ 2026-10-16 回退：TTS 输出改回普通媒体通道。
+                    //   原 fc54db5 尝试"输出走导航通道"借车机'导航播报优先'机制压音乐，
+                    //   但实测唤醒后导航永久无声（车机导航通道状态被占用后不恢复导航 App，
+                    //   重启车机才恢复）——收益(压音乐)远小于代价(破坏导航)。
+                    //   改回 USAGE_MEDIA：不碰导航通道，播报音量跟随媒体音量。
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
                         currentTts.setAudioAttributes(
                             AudioAttributes.Builder()
-                                .setUsage(AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
+                                .setUsage(AudioAttributes.USAGE_MEDIA)
                                 .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                                 .build()
                         )
@@ -270,6 +270,8 @@ class TtsEngine(private val context: Context) : TextToSpeech.OnInitListener {
      * 请求音频焦点：TTS 播报时让音乐自动降低音量（duck）
      * 使用 AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK，系统会让其他音频降低音量
      * TTS 用完整的系统音量播放，音乐自动降到 15% 左右
+     * ★ 2026-10-16：attrs 从导航用途改回媒体用途（同 setAudioAttributes 的回退）——
+     *   不再以"导航"身份申请任何焦点，避免车机导航通道状态错乱。
      */
     private fun requestAudioFocus() {
         try {
@@ -277,7 +279,7 @@ class TtsEngine(private val context: Context) : TextToSpeech.OnInitListener {
                 // API 26+ 使用 AudioFocusRequest
                 if (audioFocusRequest == null) {
                     val audioAttributes = AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
+                        .setUsage(AudioAttributes.USAGE_MEDIA)
                         .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                         .build()
                     audioFocusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
