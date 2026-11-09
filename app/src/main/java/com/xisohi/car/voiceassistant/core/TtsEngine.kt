@@ -128,15 +128,19 @@ class TtsEngine(private val context: Context) : TextToSpeech.OnInitListener {
                     // 音调 1.1x：稍微调高一点，声音更清晰
                     currentTts.setSpeechRate(1.5f)
                     currentTts.setPitch(1.1f)
-                    // ★ 2026-10-16 回退：TTS 输出改回普通媒体通道。
-                    //   原 fc54db5 尝试"输出走导航通道"借车机'导航播报优先'机制压音乐，
-                    //   但实测唤醒后导航永久无声（车机导航通道状态被占用后不恢复导航 App，
-                    //   重启车机才恢复）——收益(压音乐)远小于代价(破坏导航)。
-                    //   改回 USAGE_MEDIA：不碰导航通道，播报音量跟随媒体音量。
+                    // ★ 2026-11-09 实验：只把 TTS【输出】属性改到"导航用途"，
+                    //   借车机 DSP 给导航通道的独立增益，尝试提高提示音响度。
+                    //   背景：实测 STREAM_MUSIC 已恒为满格 15/15，代码层再无抬高空间，
+                    //   响度瓶颈在 DSP/通道权重，故换通道验证。
+                    //   ★★ 本次只动输出属性：requestAudioFocus() 仍保持 USAGE_MEDIA + MAY_DUCK，
+                    //   不碰导航 App 的播报权。fc54db5 的教训是"焦点改成导航用途 EXCLUSIVE"
+                    //   导致车机进入导航播报优先态后不还给导航 App（导航永久无声，需重启车机）。
+                    //   验证点：①"在呢"是否变响 ②高德/车机导航播报是否正常 ③音乐是否仍被 duck。
+                    //   若任一项异常，回退：把 USAGE_ASSISTANCE_NAVIGATION_GUIDANCE 改回 USAGE_MEDIA。
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
                         currentTts.setAudioAttributes(
                             AudioAttributes.Builder()
-                                .setUsage(AudioAttributes.USAGE_MEDIA)
+                                .setUsage(AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
                                 .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                                 .build()
                         )
