@@ -135,7 +135,7 @@ class TtsEngine(private val context: Context) : TextToSpeech.OnInitListener {
                     //   ★★ 本次只动输出属性：requestAudioFocus() 仍保持 USAGE_MEDIA + MAY_DUCK，
                     //   不碰导航 App 的播报权。fc54db5 的教训是"焦点改成导航用途 EXCLUSIVE"
                     //   导致车机进入导航播报优先态后不还给导航 App（导航永久无声，需重启车机）。
-                    //   验证点：①"在呢"是否变响 ②高德/车机导航播报是否正常 ③音乐是否仍被 duck。
+                    //   验证点：①唤醒提示音是否变响 ②高德/车机导航播报是否正常 ③音乐是否仍被 duck。
                     //   若任一项异常，回退：把 USAGE_ASSISTANCE_NAVIGATION_GUIDANCE 改回 USAGE_MEDIA。
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
                         currentTts.setAudioAttributes(
@@ -229,7 +229,10 @@ class TtsEngine(private val context: Context) : TextToSpeech.OnInitListener {
         try {
             val params = Bundle()
             params.putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, 0.0f)  // 静音合成，不出声
-            val result = engine.speak("在呢", TextToSpeech.QUEUE_FLUSH, params, "$PREWARM_PREFIX${UUID.randomUUID()}")
+            // 预热文本必须与 strings.xml 的 tts_wake_prompt 保持一致：
+            // 预热时已合成过的这段文本在引擎内就绪，正式播报可直接出声；
+            // 文本不一致会退化成"重新合成"，首字延迟回到 300~800ms。
+            val result = engine.speak("主人您请说", TextToSpeech.QUEUE_FLUSH, params, "$PREWARM_PREFIX${UUID.randomUUID()}")
             // 只在调用成功后置 true；失败（返回 ERROR 或抛异常）保持 false，下次 init 可重试
             prewarmed = result == TextToSpeech.SUCCESS
             if (prewarmed) {
