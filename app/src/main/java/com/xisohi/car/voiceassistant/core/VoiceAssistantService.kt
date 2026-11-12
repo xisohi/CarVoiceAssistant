@@ -62,6 +62,15 @@ class VoiceAssistantService : Service() {
         private const val WAIT_SPEECH_TIMEOUT_MS = 8_000L  // 用户开口前的等待上限（8秒没有效声音就自动退出，避免无限循环"没有听清"）
         private const val EXTERNAL_NAV_PAUSE_MS = 30_000L   // 拉起支持语音选择的导航后，暂停唤醒监听的时长（给导航让出麦克风）
 
+        /**
+         * 录音落盘开关（调试用）：
+         * true  = 每次识别后把识别器收到的 PCM 存成 wav（AudioSaver，保留最近 10 条约 3MB），
+         *         用于回听判断录音质量/环境噪音。
+         * false = 不落盘，识别流程完全不受影响（识别用的是内存 PCM 流）。
+         * 排查识别或拾音问题时改 true 重新编译即可，无需改其他代码。
+         */
+        private const val SAVE_RECORDINGS = false
+
 
         // ===== 自适应静音阈值参数 =====
         // 不再使用固定阈值，改为启动时采样环境噪音动态计算
@@ -1506,13 +1515,15 @@ class VoiceAssistantService : Service() {
                 finalText = recognizer.finish()
                 LogUtils.d("VoiceService", "sherpa-onnx 识别文本: '$finalText'")
 
-                // 保存本次录音为 WAV 文件
-                try {
-                    val saveLabel = finalText.ifEmpty { "未识别" }
-                    // ★ 保存的就是识别器实际收到的完整音频（和识别器完全一致）
-                    AudioSaver.saveRecording(audioBuffer.toByteArray(), saveLabel)
-                } catch (e: Exception) {
-                    LogUtils.w("VoiceService", "保存录音失败: ${e.message}")
+                // 保存本次录音为 WAV 文件（调试开关 SAVE_RECORDINGS，默认关闭）
+                if (SAVE_RECORDINGS) {
+                    try {
+                        val saveLabel = finalText.ifEmpty { "未识别" }
+                        // ★ 保存的就是识别器实际收到的完整音频（和识别器完全一致）
+                        AudioSaver.saveRecording(audioBuffer.toByteArray(), saveLabel)
+                    } catch (e: Exception) {
+                        LogUtils.w("VoiceService", "保存录音失败: ${e.message}")
+                    }
                 }
 
                 LogUtils.d("VoiceService", "最终识别文本（sherpa-onnx离线）: '$finalText'")

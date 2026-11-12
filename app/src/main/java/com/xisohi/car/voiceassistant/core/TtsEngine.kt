@@ -93,6 +93,38 @@ class TtsEngine(private val context: Context) : TextToSpeech.OnInitListener {
     private var audioFocusRequest: AudioFocusRequest? = null
     private var hasAudioFocus = false
 
+    // ===== 播报期诊断采样（2026-11-12 新增，只写日志，不改行为） =====
+    // 目的：区分"根本没出声"与"出声了但被系统/车机吞掉"。
+    // 依据：requestAudioFocus() 返回 FAILED 时旧代码仍继续 speak，
+    //       若导航 App 正持独占焦点，会出现 onStart/onDone 正常却完全无声。
+    private var volumeSampler: Runnable? = null
+    private var sampleCount = 0
+
+    private fun streamMusicState(): String {
+        val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+        val cur = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+        return "流3=${cur}/${max}, hasFocus=$hasAudioFocus, isMusicActive=${audioManager.isMusicActive}"
+    }
+
+    private fun startVolumeSampling() {
+        stopVolumeSampling()
+        sampleCount = 0
+        val sampler = object : Runnable {
+            override fun run() {
+                sampleCount++
+                LogUtils.d("TtsEngine", "[播报采样#${sampleCount}] ${streamMusicState()}")
+                if (sampleCount < 10) handler.postDelayed(this, 200)
+            }
+        }
+        volumeSampler = sampler
+        handler.postDelayed(sampler, 0)
+    }
+
+    private fun stopVolumeSampling() {
+        volumeSampler?.let { handler.removeCallbacks(it) }
+        volumeSampler = null
+    }
+
     init {
         val preferred = BuildConfig.PREFERRED_TTS_ENGINE.ifBlank { null }
         if (preferred != null) {
@@ -193,6 +225,7 @@ class TtsEngine(private val context: Context) : TextToSpeech.OnInitListener {
                 // 预热合成不回调 listener（避免污染服务状态机：currentState=SPEAKING）
                 if (utteranceId?.startsWith(PREWARM_PREFIX) == true) return
                 // ★ 真正开始出声时重新布防：冷启动延迟不计入播报预算
+                LogUtils.d("TtsEngine", "onStart 开始出声，${streamMusicState()}")
                 armWatchdog()
                 listener?.onSpeakStart()
             }
@@ -200,6 +233,8 @@ class TtsEngine(private val context: Context) : TextToSpeech.OnInitListener {
             override fun onDone(utteranceId: String?) {
                 // 预热合成不回调 listener（避免误触发 resumeWake() 等流程）
                 if (utteranceId?.startsWith(PREWARM_PREFIX) == true) return
+                stopVolumeSampling()
+                LogUtils.d("TtsEngine", "onDone 播报结束，${streamMusicState()}")
                 cancelWatchdog()  // ★ 正常收尾，撤防看门狗
                 // TTS 播报完成，释放音频焦点，音乐恢复正常音量
                 releaseAudioFocus()
@@ -209,6 +244,8 @@ class TtsEngine(private val context: Context) : TextToSpeech.OnInitListener {
             @Deprecated("Deprecated in Java")
             override fun onError(utteranceId: String?) {
                 // 出错时也释放音频焦点
+                stopVolumeSampling()
+                LogUtils.w("TtsEngine", "onError 播报出错，${streamMusicState()}")
                 releaseAudioFocus()
                 if (utteranceId?.startsWith(PREWARM_PREFIX) == true) return
                 cancelWatchdog()  // ★ 异常收尾，撤防看门狗
@@ -260,16 +297,18 @@ class TtsEngine(private val context: Context) : TextToSpeech.OnInitListener {
         val utteranceId = UUID.randomUUID().toString()
         lastSpokenLength = text.length
         activeUtteranceId = utteranceId
+        LogUtils.d("TtsEngine", "开始播报'$text'（${text.length}字），${streamMusicState()}")
         val result = tts?.speak(text, TextToSpeech.QUEUE_FLUSH, params, utteranceId)
         if (result == null || result == TextToSpeech.ERROR) {
             // ★ 引擎当场拒绝合成（tts 为 null 或返回 ERROR）：不会再有 onStart/onDone，
             //   立即按"播报完成"收尾，否则调用方状态机会卡死在 SPEAKING。
-            Log.w("TtsEngine", "TTS 未受理本次合成（result=$result），立即按完成处理")
+            LogUtils.w("TtsEngine", "TTS 未受理本次合成（result=$result），立即按完成处理")
             cancelWatchdog()
             releaseAudioFocus()
             listener?.onSpeakDone()
             return
         }
+        startVolumeSampling()
         armWatchdog()
     }
 
@@ -296,7 +335,7 @@ class TtsEngine(private val context: Context) : TextToSpeech.OnInitListener {
                 }
                 val result = audioManager.requestAudioFocus(audioFocusRequest!!)
                 hasAudioFocus = result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
-                Log.d("TtsEngine", "请求音频焦点: ${if (hasAudioFocus) "成功" else "失败"}")
+                LogUtils.d("TtsEngine", "请求音频焦点: ${if (hasAudioFocus) "成功" else "失败"}（result=$result）")
             } else {
                 // API 26 以下使用旧 API
                 @Suppress("DEPRECATION")
@@ -306,10 +345,10 @@ class TtsEngine(private val context: Context) : TextToSpeech.OnInitListener {
                     AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK
                 )
                 hasAudioFocus = result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
-                Log.d("TtsEngine", "请求音频焦点(旧API): ${if (hasAudioFocus) "成功" else "失败"}")
+                LogUtils.d("TtsEngine", "请求音频焦点(旧API): ${if (hasAudioFocus) "成功" else "失败"}（result=$result）")
             }
         } catch (e: Exception) {
-            Log.w("TtsEngine", "请求音频焦点失败: ${e.message}")
+            LogUtils.w("TtsEngine", "请求音频焦点失败: ${e.message}")
         }
     }
 
@@ -336,6 +375,7 @@ class TtsEngine(private val context: Context) : TextToSpeech.OnInitListener {
 
     fun stopSpeaking() {
         tts?.stop()
+        stopVolumeSampling()
         cancelWatchdog()  // ★ 避免看门狗与下面的 onSpeakDone 重复触发
         releaseAudioFocus()
         listener?.onSpeakDone()
@@ -343,6 +383,7 @@ class TtsEngine(private val context: Context) : TextToSpeech.OnInitListener {
 
     fun shutdown() {
         // ★ 服务销毁：先撤防看门狗并摘掉 listener，避免销毁后回调已失效的服务实例
+        stopVolumeSampling()
         cancelWatchdog()
         listener = null
         try {
