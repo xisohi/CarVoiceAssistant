@@ -100,10 +100,85 @@ class TtsEngine(private val context: Context) : TextToSpeech.OnInitListener {
     private var volumeSampler: Runnable? = null
     private var sampleCount = 0
 
+    /**
+     * 提示音输出通道：false = 媒体流(流3) + 音量保底；true = 通知流(流5)。
+     * 媒体流通路会被导航 duck（压到 1/15），通知流是绕行方案但满格只有 12。
+     */
+    private val USE_NOTIFICATION_STREAM = false
+
+    // ===== 播报期音量保底（2026-11-12）=====
+    // 背景（用户实测）：导航 duck 媒体音量后留下 1/15，且只有"下一次导航完整播报"才会恢复 15。
+    // 于是助手从 1 起步播报听不见；播报中导航再压一次，声音突然变小。
+    private var promptVolBackup: Int? = null
+    private var promptVolRaised = false
+
+    private fun promptStream(): Int =
+        if (USE_NOTIFICATION_STREAM) AudioManager.STREAM_NOTIFICATION else AudioManager.STREAM_MUSIC
+
+    private fun promptFloor(stream: Int): Int {
+        val max = audioManager.getStreamMaxVolume(stream)
+        return (max * 0.8f).toInt().coerceAtLeast(1)
+    }
+
+    /** 播报前抬到下限（满格 80%），并记下被抬前的原值 */
+    private fun raiseForPrompt() {
+        val stream = promptStream()
+        val max = audioManager.getStreamMaxVolume(stream)
+        val cur = audioManager.getStreamVolume(stream)
+        val floor = promptFloor(stream)
+        if (cur < floor) {
+            promptVolBackup = cur
+            promptVolRaised = true
+            audioManager.setStreamVolume(stream, floor, 0)
+            LogUtils.d("TtsEngine", "播报前抬升流$stream: $cur → $floor（回读=${audioManager.getStreamVolume(stream)}）")
+        } else {
+            promptVolBackup = null
+            promptVolRaised = false
+        }
+    }
+
+    /** 播报中被外部压低（导航 duck）时补抬，由 200ms 采样调用 */
+    private fun guardPromptVolume() {
+        if (!promptVolRaised) return
+        val stream = promptStream()
+        val floor = promptFloor(stream)
+        val cur = audioManager.getStreamVolume(stream)
+        if (cur < floor) {
+            audioManager.setStreamVolume(stream, floor, 0)
+            LogUtils.w("TtsEngine", "播报期流$stream 被压到 $cur，已补抬到 $floor")
+        }
+    }
+
+    /**
+     * 播报结束还原。
+     * ★ 关键：原值若异常低（<60% 满格）= 导航 duck 留下的中间值，不写回，直接还给满格。
+     *   否则把 1 固化成"正常值"，导航不完整播报一次就永远卡在 1。
+     * ★ 必须在 listener.onSpeakDone() 之前调用：之后服务会走 muteMediaVolume()，
+     *   它会把当前值当"原始音量"存下（顺序反了会静默改掉音量）。
+     */
+    private fun restoreAfterPrompt() {
+        if (!promptVolRaised) return
+        val backup = promptVolBackup
+        if (backup == null) {
+            promptVolRaised = false
+            return
+        }
+        val stream = promptStream()
+        val max = audioManager.getStreamMaxVolume(stream)
+        val abnormal = backup < (max * 0.6f).toInt()
+        val target = if (abnormal) max else backup
+        audioManager.setStreamVolume(stream, target, 0)
+        LogUtils.d("TtsEngine", "播报后还原流$stream: $target（原值=$backup, ${if (abnormal) "原值异常低已还原满格" else "还原原值"}，回读=${audioManager.getStreamVolume(stream)}）")
+        promptVolRaised = false
+        promptVolBackup = null
+    }
+
     private fun streamMusicState(): String {
         val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
         val cur = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
-        return "流3=${cur}/${max}, hasFocus=$hasAudioFocus, isMusicActive=${audioManager.isMusicActive}"
+        val maxN = audioManager.getStreamMaxVolume(AudioManager.STREAM_NOTIFICATION)
+        val curN = audioManager.getStreamVolume(AudioManager.STREAM_NOTIFICATION)
+        return "流3=${cur}/${max}, 流5=${curN}/${maxN}, hasFocus=$hasAudioFocus, isMusicActive=${audioManager.isMusicActive}"
     }
 
     private fun startVolumeSampling() {
@@ -112,6 +187,7 @@ class TtsEngine(private val context: Context) : TextToSpeech.OnInitListener {
         val sampler = object : Runnable {
             override fun run() {
                 sampleCount++
+                guardPromptVolume()
                 LogUtils.d("TtsEngine", "[播报采样#${sampleCount}] ${streamMusicState()}")
                 if (sampleCount < 10) handler.postDelayed(this, 200)
             }
@@ -160,19 +236,16 @@ class TtsEngine(private val context: Context) : TextToSpeech.OnInitListener {
                     // 音调 1.1x：稍微调高一点，声音更清晰
                     currentTts.setSpeechRate(1.5f)
                     currentTts.setPitch(1.1f)
-                    // ★ 2026-11-09 实验：只把 TTS【输出】属性改到"导航用途"，
-                    //   借车机 DSP 给导航通道的独立增益，尝试提高提示音响度。
-                    //   背景：实测 STREAM_MUSIC 已恒为满格 15/15，代码层再无抬高空间，
-                    //   响度瓶颈在 DSP/通道权重，故换通道验证。
-                    //   ★★ 本次只动输出属性：requestAudioFocus() 仍保持 USAGE_MEDIA + MAY_DUCK，
-                    //   不碰导航 App 的播报权。fc54db5 的教训是"焦点改成导航用途 EXCLUSIVE"
-                    //   导致车机进入导航播报优先态后不还给导航 App（导航永久无声，需重启车机）。
-                    //   验证点：①唤醒提示音是否变响 ②高德/车机导航播报是否正常 ③音乐是否仍被 duck。
-                    //   若任一项异常，回退：把 USAGE_ASSISTANCE_NAVIGATION_GUIDANCE 改回 USAGE_MEDIA。
+                    // ★ 2026-11-12：默认回到【媒体流】USAGE_MEDIA，配合播报期音量保底。
+                    //   导航用途（11-09 实验）已证实在导航播报时同样被压到 1，没有增益。
+                    //   把 USE_NOTIFICATION_STREAM 改 true 可切通知流做对照。
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
                         currentTts.setAudioAttributes(
                             AudioAttributes.Builder()
-                                .setUsage(AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
+                                .setUsage(
+                                    if (USE_NOTIFICATION_STREAM) AudioAttributes.USAGE_NOTIFICATION
+                                    else AudioAttributes.USAGE_MEDIA
+                                )
                                 .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                                 .build()
                         )
@@ -236,6 +309,7 @@ class TtsEngine(private val context: Context) : TextToSpeech.OnInitListener {
                 stopVolumeSampling()
                 LogUtils.d("TtsEngine", "onDone 播报结束，${streamMusicState()}")
                 cancelWatchdog()  // ★ 正常收尾，撤防看门狗
+                restoreAfterPrompt()  // ★ 必须在 onSpeakDone 之前还原，否则服务静音会拍到抬升值
                 // TTS 播报完成，释放音频焦点，音乐恢复正常音量
                 releaseAudioFocus()
                 listener?.onSpeakDone()
@@ -246,6 +320,7 @@ class TtsEngine(private val context: Context) : TextToSpeech.OnInitListener {
                 // 出错时也释放音频焦点
                 stopVolumeSampling()
                 LogUtils.w("TtsEngine", "onError 播报出错，${streamMusicState()}")
+                restoreAfterPrompt()  // ★ 异常也要还原，避免抬升值残留
                 releaseAudioFocus()
                 if (utteranceId?.startsWith(PREWARM_PREFIX) == true) return
                 cancelWatchdog()  // ★ 异常收尾，撤防看门狗
@@ -297,6 +372,7 @@ class TtsEngine(private val context: Context) : TextToSpeech.OnInitListener {
         val utteranceId = UUID.randomUUID().toString()
         lastSpokenLength = text.length
         activeUtteranceId = utteranceId
+        raiseForPrompt()
         LogUtils.d("TtsEngine", "开始播报'$text'（${text.length}字），${streamMusicState()}")
         val result = tts?.speak(text, TextToSpeech.QUEUE_FLUSH, params, utteranceId)
         if (result == null || result == TextToSpeech.ERROR) {
@@ -377,6 +453,7 @@ class TtsEngine(private val context: Context) : TextToSpeech.OnInitListener {
         tts?.stop()
         stopVolumeSampling()
         cancelWatchdog()  // ★ 避免看门狗与下面的 onSpeakDone 重复触发
+        restoreAfterPrompt()  // ★ 打断播报也要还原音量
         releaseAudioFocus()
         listener?.onSpeakDone()
     }
@@ -384,6 +461,7 @@ class TtsEngine(private val context: Context) : TextToSpeech.OnInitListener {
     fun shutdown() {
         // ★ 服务销毁：先撤防看门狗并摘掉 listener，避免销毁后回调已失效的服务实例
         stopVolumeSampling()
+        restoreAfterPrompt()  // ★ 兜底：播报中被杀不能把音量留在抬升值
         cancelWatchdog()
         listener = null
         try {
