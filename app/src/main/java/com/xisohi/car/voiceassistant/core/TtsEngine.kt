@@ -102,9 +102,10 @@ class TtsEngine(private val context: Context) : TextToSpeech.OnInitListener {
 
     /**
      * 提示音输出通道：false = 媒体流(流3) + 音量保底；true = 通知流(流5)。
-     * 媒体流通路会被导航 duck（压到 1/15），通知流是绕行方案但满格只有 12。
+     * 2026-11-16 定论：导航播报期车机在通路层整体静音 STREAM_MUSIC（焦点成功、
+     * isMusicActive=true、流3=15/15 仍无声），因此改走通知流验证是否绕过闪避。
      */
-    private val USE_NOTIFICATION_STREAM = false
+    private val USE_NOTIFICATION_STREAM = true
 
     // ===== 播报期音量保底（2026-11-12）=====
     // 背景（用户实测）：导航 duck 媒体音量后留下 1/15，且只有"下一次导航完整播报"才会恢复 15。
