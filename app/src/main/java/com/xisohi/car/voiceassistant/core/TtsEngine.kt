@@ -3,7 +3,9 @@ package com.xisohi.car.voiceassistant.core
 import android.content.Context
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
+import android.media.AudioFormat
 import android.media.AudioManager
+import android.media.AudioTrack
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -12,6 +14,7 @@ import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.util.Log
 import com.xisohi.car.voiceassistant.BuildConfig
+import com.xisohi.car.voiceassistant.R
 import java.util.Locale
 import java.util.UUID
 
@@ -112,6 +115,110 @@ class TtsEngine(private val context: Context) : TextToSpeech.OnInitListener {
     // 于是助手从 1 起步播报听不见；播报中导航再压一次，声音突然变小。
     private var promptVolBackup: Int? = null
     private var promptVolRaised = false
+
+    // ===== 唤醒提示音 wav 直放（2026-11-16）=====
+    // 绕开 TTS 引擎的合成与路由：预先把 res/raw/wake_prompt.wav 解码进 MODE_STATIC AudioTrack，
+    // 唤醒时只调 play()，首字延迟可压到 50ms 内，且不受车机 TTS 路由影响。
+    private var promptTrack: AudioTrack? = null
+    private var promptDurationMs: Long = 0
+    private var promptPlaying = false
+
+    /** 从 WAV 字节中截出裸 PCM：定位 "data" chunk，兼容带 LIST 等附加块的头部 */
+    private fun extractPcm(bytes: ByteArray): ByteArray {
+        var off = 12  // 跳过 RIFF/size/WAVE
+        while (off + 8 <= bytes.size) {
+            val id = String(bytes, off, 4, Charsets.US_ASCII)
+            val sz = (bytes[off + 4].toInt() and 0xFF) or
+                ((bytes[off + 5].toInt() and 0xFF) shl 8) or
+                ((bytes[off + 6].toInt() and 0xFF) shl 16) or
+                ((bytes[off + 7].toInt() and 0xFF) shl 24)
+            if (id == "data") {
+                val start = off + 8
+                val end = minOf(bytes.size, start + sz)
+                return bytes.copyOfRange(start, end)
+            }
+            off += 8 + sz + (sz and 1)
+        }
+        return if (bytes.size > 44) bytes.copyOfRange(44, bytes.size) else bytes
+    }
+
+    private fun ensurePromptTrack(): Boolean {
+        if (promptTrack != null) return true
+        return try {
+            val bytes = appContext.resources.openRawResource(R.raw.wake_prompt).use { it.readBytes() }
+            val pcm = extractPcm(bytes)
+            if (pcm.isEmpty()) {
+                LogUtils.w("TtsEngine", "提示音 wav 解析后 PCM 为空")
+                return false
+            }
+            val track = AudioTrack.Builder()
+                .setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(
+                            if (USE_NOTIFICATION_STREAM) AudioAttributes.USAGE_NOTIFICATION
+                            else AudioAttributes.USAGE_MEDIA
+                        )
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                        .build()
+                )
+                .setAudioFormat(
+                    AudioFormat.Builder()
+                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                        .setSampleRate(16000)
+                        .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                        .build()
+                )
+                .setBufferSizeInBytes(pcm.size)
+                .setTransferMode(AudioTrack.MODE_STATIC)
+                .build()
+            val written = track.write(pcm, 0, pcm.size)
+            promptTrack = track
+            promptDurationMs = pcm.size.toLong() * 1000L / 2L / 16000L
+            LogUtils.d("TtsEngine", "提示音 wav 预加载完成: 写入 $written / ${pcm.size} bytes, 约 ${promptDurationMs}ms")
+            true
+        } catch (e: Exception) {
+            LogUtils.w("TtsEngine", "提示音 wav 预加载失败: ${e.message}")
+            promptTrack = null
+            false
+        }
+    }
+
+    /**
+     * 播放唤醒提示音 wav（绕开 TTS 合成）。
+     * @return false 表示 wav 不可用，调用方应回退到 speak()
+     */
+    fun playWakePrompt(): Boolean {
+        if (!ensurePromptTrack()) return false
+        val track = promptTrack ?: return false
+        return try {
+            raiseForPrompt()
+            requestAudioFocus()
+            try { track.stop() } catch (_: Exception) {}
+            try { track.reloadStaticData() } catch (_: Exception) {}
+            track.play()
+            promptPlaying = true
+            LogUtils.d("TtsEngine", "播放提示音 wav（约 ${promptDurationMs}ms），${streamMusicState()}")
+            startVolumeSampling()
+            listener?.onSpeakStart()
+            handler.postDelayed({
+                if (!promptPlaying) return@postDelayed
+                promptPlaying = false
+                try { track.stop() } catch (_: Exception) {}
+                stopVolumeSampling()
+                LogUtils.d("TtsEngine", "提示音 wav 播放结束，${streamMusicState()}")
+                restoreAfterPrompt()
+                releaseAudioFocus()
+                listener?.onSpeakDone()
+            }, promptDurationMs + 80L)
+            true
+        } catch (e: Exception) {
+            LogUtils.w("TtsEngine", "播放提示音 wav 失败: ${e.message}，回退 TTS")
+            promptPlaying = false
+            stopVolumeSampling()
+            restoreAfterPrompt()
+            false
+        }
+    }
 
     private fun promptStream(): Int =
         if (USE_NOTIFICATION_STREAM) AudioManager.STREAM_NOTIFICATION else AudioManager.STREAM_MUSIC
@@ -257,6 +364,8 @@ class TtsEngine(private val context: Context) : TextToSpeech.OnInitListener {
                     // 若等用户唤醒时才首次 speak，会显著拉长"唤醒→提示音出声"延迟。
                     // 服务启动即用零音量合成一次，静默加载声库；正式播报时直接出声。
                     prewarm(currentTts)
+                    // 同时把提示音 wav 解码进 AudioTrack，首次唤醒不再有解码开销
+                    ensurePromptTrack()
                     return
                 } else {
                     Log.w("TtsEngine", "当前引擎不支持中文，切换...")

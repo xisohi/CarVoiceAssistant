@@ -844,16 +844,22 @@ class VoiceAssistantService : Service() {
         // 注意：TTS播报前会恢复音量，让用户听到提示音
         // （已删除开头的 muteMediaVolume()，因为后面马上 restoreMediaVolume()，中间无作用）
         if (ttsEngine.isReady) {
-            // TTS 可用：用语音说 tts_wake_prompt（当前"主人您请说"），更人性化
-            // 恢复系统音量到原始值，TTS 播报时请求音频焦点，音乐自动降低（duck）
-            // 播报完成后（onSpeakDone）保持原始音量值，不降到0
+            // 优先直放预置 wav（绕开 TTS 合成与路由，首字延迟最低）；
+            // 失败（资源缺失 / AudioTrack 创建失败）再回退 TTS 合成播报。
             restoreMediaVolume()
-            // 立即切换悬浮窗为聆听状态（视觉提示，不用等TTS播报完）
+            // 立即切换悬浮窗为聆听状态（视觉提示，不用等播报完）
             currentState = State.LISTENING
             isWakePromptSpeaking = true
-            ttsEngine.speak(getString(R.string.tts_wake_prompt))
+            val playedWav = ttsEngine.playWakePrompt()
+            if (!playedWav) {
+                ttsEngine.speak(getString(R.string.tts_wake_prompt))
+            }
             // 日志直接取资源文本，避免再出现"文案改了、日志还是旧词"这种排查误导
-            LogUtils.d("VoiceService", "唤醒提示：TTS播报'" + getString(R.string.tts_wake_prompt) + "'，播报完成后开始录音")
+            LogUtils.d(
+                "VoiceService",
+                "唤醒提示：" + (if (playedWav) "wav直放" else "TTS播报") +
+                    "'" + getString(R.string.tts_wake_prompt) + "'，播报完成后开始录音"
+            )
         } else {
             // TTS 不可用：兜底用哔哔声提示音
             LogUtils.w("VoiceService", "TTS不可用，使用哔哔声作为唤醒提示")
