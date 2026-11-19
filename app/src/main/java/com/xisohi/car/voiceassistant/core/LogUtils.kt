@@ -21,7 +21,7 @@ import java.util.concurrent.locks.ReentrantLock
  */
 object LogUtils {
     private const val LOG_DIR = "logs"
-    private const val KEEP_DAYS = 7
+    private const val KEEP_DAYS = 7 // 日志保留天数
     private const val MAX_LOG_SIZE = 5 * 1024 * 1024L // 单个日志文件最大5MB
 
     private val lock = ReentrantLock()

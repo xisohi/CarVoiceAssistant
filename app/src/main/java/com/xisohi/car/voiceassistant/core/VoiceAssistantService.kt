@@ -703,6 +703,9 @@ class VoiceAssistantService : Service() {
     // 唤醒音频采集与推理线程
     private inner class WakeAudioThread : Thread("WakeAudioThread") {
         override fun run() {
+            // ★ 2026-11-19：唤醒线程是实时音频任务，默认优先级会被 UI/TTS/百度 SDK 抢占。
+            //   实测 KWS 推理 p90 达 240ms（帧长仅 100ms），提到 URGENT_AUDIO 减少调度抖动。
+            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_URGENT_AUDIO)
             // 重置冷启动跳过计数，跳过麦克风刚启动时的爆音
             wakeWordEngine.resetSkipCounter()
 
