@@ -169,8 +169,12 @@ public class WakeWordEngine {
         LogUtils.i(TAG, "KWS 引擎懒加载模式（首次唤醒时加载模型，唤醒词: " + getWakeWordDisplay() + "）");
     }
 
-    /** 确保 KWS 引擎已加载（唤醒线程 process 前调用；WakeAudioThread 单线程调用，安全） */
-    private boolean ensureLoaded() {
+    /**
+     * 确保 KWS 引擎已加载。
+     * 2026-11-18：改为 synchronized —— 服务启动的后台预热线程与唤醒录音线程可能同时进入，
+     * 并发 rebuildInternal 会 release 同一个 spotter 导致 native 崩溃。
+     */
+    private synchronized boolean ensureLoaded() {
         if (spotter != null) return true;
         try {
             rebuildInternal(appContext);
@@ -187,6 +191,15 @@ public class WakeWordEngine {
             loaded = false;
             return false;
         }
+    }
+
+    /**
+     * 后台预热入口（服务 onCreate 起后台线程调用）。
+     * 提前把 KWS 模型载入，避免唤醒线程第一帧同步加载造成的十余秒盲区。
+     * 幂等：已加载则立即返回 true。
+     */
+    public boolean warmUp() {
+        return ensureLoaded();
     }
 
     /** 重建 KWS 引擎（阈值/增益变更时由唤醒线程惰性调用，单线程安全） */

@@ -404,6 +404,17 @@ class VoiceAssistantService : Service() {
         WakeWordEngine.setAsrGain(savedAsrGain)
         LogUtils.i("VoiceService", "识别增益: ${WakeWordEngine.getAsrGain()}")
 
+        // ★ 2026-11-18：KWS 模型后台预热。此前模型在唤醒线程第一帧同步加载，
+        //   录音线程被卡住 15s 左右，环形缓冲溢出、之后帧率持续错乱（实测 0.1s 音频耗 2.3s）。
+        //   改为服务启动即后台加载，录音线程只丢帧不阻塞；预热完成前唤不醒属预期。
+        Thread {
+            val t0 = SystemClock.elapsedRealtime()
+            val ok = wakeWordEngine.warmUp()
+            val cost = SystemClock.elapsedRealtime() - t0
+            LogUtils.i("VoiceService", "KWS 预热完成: ok=$ok 耗时=${cost}ms")
+        }.apply { name = "KwsWarmup"; isDaemon = true }.start()
+        LogUtils.i("VoiceService", "KWS 预热线程已启动（后台加载模型，完成后唤醒才生效）")
+
         // 初始化录音保存工具（保存最近10条录音，方便回听判断录音质量）
         AudioSaver.init(this)
 
@@ -765,14 +776,25 @@ class VoiceAssistantService : Service() {
             val noiseReducer = AudioNoiseReducer.create(record)
             LogUtils.d("WakeAudioThread", "开始录音，帧大小=$frameSize")
 
+            var frameCostCount = 0
+            var partialReadCount = 0
             try {
                 while (isWakeListening && !isInterrupted()) {
+                    val tRead0 = SystemClock.elapsedRealtime()
                     val read = record.read(audioBuffer, 0, frameSize, AudioRecord.READ_BLOCKING)
+                    val tRead1 = SystemClock.elapsedRealtime()
                     if (read < 0) {
                         LogUtils.e("WakeAudioThread", "AudioRecord.read() 错误: $read，退出循环")
                         break
                     }
+                    if (read in 1 until frameSize) {
+                        // ★ 2026-11-18 诊断：read 返回不足一帧本身就是线索（缓冲不足 / 驱动速率异常）
+                        partialReadCount++
+                    }
                     if (read == frameSize) {
+                        // ★ 2026-11-18：模型仍在后台预热时只丢帧、不阻塞，
+                        //   避免录音线程卡在模型加载上导致环形缓冲溢出
+                        if (!wakeWordEngine.isLoaded) continue
                         // 音乐动态阈值保护已禁用（用户反馈会导致唤不醒）
                         // 保持固定阈值0.18，误唤醒靠AEC+RNNoise+高通滤波解决
                         // 应用降噪处理（高通滤波，去除低频发动机噪音）
@@ -781,6 +803,7 @@ class VoiceAssistantService : Service() {
                         //   关闭后帧率有望回到 ~1s，显著缩短"唤醒→提示音"延迟。误唤醒此前反馈"没有"，
                         //   余量足够；保留高通滤波+AEC 兜底。
                         noiseReducer.process(audioBuffer, read, enableRnNoise = false)
+                        val tDenoise = SystemClock.elapsedRealtime()
                         // processChunk 可能在 service 销毁时访问已关闭的 session，捕获异常防止线程崩溃
                         val result = try {
                             wakeWordEngine.processChunk(audioBuffer)
@@ -790,6 +813,12 @@ class VoiceAssistantService : Service() {
                         } catch (e: Exception) {
                             LogUtils.w("WakeAudioThread", "处理异常: ${e.message}")
                             continue
+                        }
+                        val tKws = SystemClock.elapsedRealtime()
+                        frameCostCount++
+                        if (frameCostCount % 10 == 0) {
+                            // ★ 2026-11-18 诊断：把每次读/降噪/推理的耗时分开，定位"欠实时"到底卡在哪一段
+                            LogUtils.d("WakeAudioThread", "[FrameCost] read=${tRead1 - tRead0}ms denoise=${tDenoise - tRead1}ms kws=${tKws - tDenoise}ms total=${tKws - tRead0}ms partial=$partialReadCount")
                         }
                         if (result != null && result.wakeWord != null) {
                             LogUtils.i("WakeAudioThread", "唤醒词检测到: ${result.wakeWord} (${result.probability})")
